@@ -1,0 +1,78 @@
+{
+  "status": "finalisiert",
+  "thema": "Offene Entscheidungen zur Kraft- und Momentendarstellung in der GUI",
+  "spezifikation": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md",
+  "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu allen Punkten übernommen. Übernommene Punkte verweisen auf ihre A-Kennung; zurückgestellte Punkte sind keine Anforderungen.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00008",
+      "status": "übernommen",
+      "thema": "Stufung V1/V2",
+      "frage": "Soll die GUI zuerst mit dem heutigen Ergebnisvertrag (Version 1) umgesetzt werden und die V2-Teile nach der Core-Erweiterung folgen, oder wird auf die Core-Erweiterung gewartet?",
+      "vorschlag": "Zuerst V1-Teile (Pfeile, Bögen, Skalierung, Auswahl, Wertefenster mit vorhandenen Werten), danach V2.",
+      "herkunft": "Aufteilung Core/GUI",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "Stufung V1/V2 in Spezifikation und Umsetzungsplan G-0.2"
+    },
+    {
+      "id": "IDEE-G-00009",
+      "status": "übernommen",
+      "thema": "Skalenwerte",
+      "frage": "Werden die Altwerte übernommen (Log-Modus mit m0 = R/100, Neu einpassen = 1,1 x Maximum, R_F mindestens m*g bzw. 1 N)? Welcher Modus ist Standard?",
+      "vorschlag": "Altwerte übernehmen; Standard logarithmisch.",
+      "herkunft": "A-V0.11-00013 bis -00016",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00011"
+    },
+    {
+      "id": "IDEE-G-00010",
+      "status": "übernommen",
+      "thema": "Bildschirmgrößen und Farben",
+      "frage": "Gelten Kopf 10 px, Strich 3 px, Kraftpfeil max. 180 px, Momentradius max. 48 px und die Altfarben unverändert?",
+      "vorschlag": "Unverändert übernehmen.",
+      "herkunft": "A-V0.11-00017 bis -00019",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00012, A-G-00013"
+    },
+    {
+      "id": "IDEE-G-00011",
+      "status": "zurückgestellt",
+      "thema": "Wirkungslinie in der GUI",
+      "frage": "Soll die GUI eine äquivalente Wirkungslinie mit Restmoment darstellen? Wenn ja, rein geometrisch aus Wrench und Bezug (abhängig von IDEE-C-00016)?",
+      "vorschlag": "Zunächst nicht; erst wenn verteilte Kräfte ohne echten Angriffspunkt auftreten.",
+      "herkunft": "A-V0.11-00008, -00041",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen – zunächst keine Wirkungslinie; erneut prüfen, wenn Beiträge ohne realen Angriffspunkt auftreten."
+    },
+    {
+      "id": "IDEE-G-00012",
+      "status": "übernommen",
+      "thema": "Umfang des Wertefensters",
+      "frage": "Werden Bilanzkarten, Hierarchie und Detailbereich wie im Mockup umgesetzt? Gibt es Export (CSV/Zwischenablage)?",
+      "vorschlag": "Wie Mockup; Kopieren in die Zwischenablage, kein Dateiexport in der ersten Stufe.",
+      "herkunft": "A-V0.11-00023 bis -00027; Mockup_Wertefenster.html",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00016"
+    },
+    {
+      "id": "IDEE-G-00013",
+      "status": "übernommen",
+      "thema": "Rückblick und Kräfte",
+      "frage": "Sollen beim Rückblick (Zeitregler, A-G-00005) Pfeile und Wertefenster den gewählten gespeicherten Zustand zeigen?",
+      "vorschlag": "Ja; die gespeicherten Zustände enthalten die Vektoren bereits.",
+      "herkunft": "A-G-00005",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00018"
+    },
+    {
+      "id": "IDEE-G-00014",
+      "status": "teilweise übernommen",
+      "thema": "Sichtbare Abnahme",
+      "frage": "Werden DPI-Tests (100/150/200 %) und Laufzeitvergleich (Anzeige ein/aus) als Abnahme gefordert, und mit welchen Grenzwerten?",
+      "vorschlag": "Ja; Grenzwerte nach erster Messung durch die Nutzerin festlegen.",
+      "herkunft": "A-V0.11-00032, -00033",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00012, A-G-00018",
+      "restpunkt": "Grenzwerte für Laufzeit legt die Nutzerin nach der ersten Messung fest."
+    }
+  ]
+}

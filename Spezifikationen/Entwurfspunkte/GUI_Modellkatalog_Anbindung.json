@@ -1,0 +1,35 @@
+{
+  "status": "finalisiert",
+  "thema": "Offene Entscheidungen zur Anbindung der GUI an die Modellkatalog-Schnittstelle",
+  "spezifikation": "../Spezifikation_GUI_Modellkatalog_Anbindung.md",
+  "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu allen Punkten übernommen. Übernommene Punkte verweisen auf ihre A-Kennung; zurückgestellte Punkte sind keine Anforderungen.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00015",
+      "status": "übernommen",
+      "thema": "Zeitpunkt der Umstellung",
+      "frage": "Wird die GUI umgestellt, sobald der Core die Schnittstelle liefert, oder bleibt der heutige Dateileser als Übergang parallel erhalten?",
+      "vorschlag": "Direkte Umstellung ohne Parallelpfad, um zwei Leser zu vermeiden.",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00020"
+    },
+    {
+      "id": "IDEE-G-00016",
+      "status": "übernommen",
+      "thema": "Anzeige fehlerhafter Modelle",
+      "frage": "Wie werden fehlerhafte Modelle angezeigt (ausgegraut mit Symbol, eigener Abschnitt) und wo erscheinen ihre Diagnosen?",
+      "vorschlag": "Ausgegraut mit Warnsymbol; Diagnosen als Tooltip und im Statusbereich.",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00020"
+    },
+    {
+      "id": "IDEE-G-00017",
+      "status": "übernommen",
+      "thema": "Aktualisierung des Katalogs",
+      "frage": "A-G-00002 verlangt die Aktualisierung bei Änderungen des Ordners. Bleibt die Überwachung des Ordners in der GUI (die dann den Katalog neu abruft), oder meldet der Core Änderungen?",
+      "vorschlag": "Überwachung bleibt in der GUI (Ordnerwahl ist GUI-Sache); bei Änderung ruft sie modellkatalog erneut ab.",
+      "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
+      "uebernommen_als": "A-G-00019"
+    }
+  ]
+}

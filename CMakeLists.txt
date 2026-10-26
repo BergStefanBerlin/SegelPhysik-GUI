@@ -40,8 +40,10 @@ add_executable(segelphysik_gui WIN32
     Code/src/model_catalog.hpp
     Code/src/core_adapter.cpp
     Code/src/core_adapter.hpp
-    Code/src/obj_mesh.cpp
-    Code/src/obj_mesh.hpp
+    Code/src/display_geometry.cpp
+    Code/src/display_geometry.hpp
+    Code/src/force_display.cpp
+    Code/src/force_display.hpp
     Code/src/vtk_scene.cpp
     Code/src/vtk_scene.hpp)
 target_include_directories(segelphysik_gui PRIVATE Code/src)
@@ -105,23 +107,36 @@ if(BUILD_TESTING)
         Code/src/model_catalog.hpp
         Code/tests/model_catalog_tests.cpp)
     target_include_directories(segelphysik_gui_catalog_tests PRIVATE Code/src)
-    target_link_libraries(segelphysik_gui_catalog_tests PRIVATE Qt6::Core)
+    target_link_libraries(segelphysik_gui_catalog_tests PRIVATE
+        Qt6::Core
+        segelphysik_core)
     add_test(NAME gui_model_catalog
         COMMAND segelphysik_gui_catalog_tests
             "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle")
 
     add_executable(segelphysik_gui_mesh_tests
-        Code/src/obj_mesh.cpp
-        Code/src/obj_mesh.hpp
-        Code/tests/obj_mesh_tests.cpp)
+        Code/src/display_geometry.cpp
+        Code/src/display_geometry.hpp
+        Code/src/model_catalog.cpp
+        Code/src/model_catalog.hpp
+        Code/tests/display_geometry_tests.cpp)
     target_include_directories(segelphysik_gui_mesh_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_mesh_tests PRIVATE
         Qt6::Core
+        segelphysik_core
         VTK::CommonCore
         VTK::CommonDataModel)
     add_test(NAME gui_display_mesh
         COMMAND segelphysik_gui_mesh_tests
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle/quader/modell.json")
+            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle")
+
+    add_executable(segelphysik_gui_force_display_tests
+        Code/src/force_display.cpp
+        Code/src/force_display.hpp
+        Code/tests/force_display_tests.cpp)
+    target_include_directories(segelphysik_gui_force_display_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_force_display_tests PRIVATE Qt6::Core)
+    add_test(NAME gui_force_display COMMAND segelphysik_gui_force_display_tests)
 endif()
 
 if(MSVC)
@@ -133,6 +148,8 @@ if(MSVC)
             /W4 /WX /permissive- /utf-8)
         target_compile_options(segelphysik_gui_mesh_tests PRIVATE
             /W4 /WX /permissive- /utf-8)
+        target_compile_options(segelphysik_gui_force_display_tests PRIVATE
+            /W4 /WX /permissive- /utf-8)
     endif()
 else()
     target_compile_options(segelphysik_gui PRIVATE
@@ -143,6 +160,8 @@ else()
         target_compile_options(segelphysik_gui_catalog_tests PRIVATE
             -Wall -Wextra -Wpedantic -Werror)
         target_compile_options(segelphysik_gui_mesh_tests PRIVATE
+            -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(segelphysik_gui_force_display_tests PRIVATE
             -Wall -Wextra -Wpedantic -Werror)
     endif()
 endif()

@@ -12,6 +12,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -65,6 +66,46 @@ QString formatDiagnostics(const QJsonObject& object)
     return messages.join(QLatin1Char('\n'));
 }
 
+template<std::size_t N>
+std::array<double, N> finiteArray(const QJsonObject& state, const QString& field)
+{
+    const auto values = state.value(field).toArray();
+    if (values.size() != static_cast<qsizetype>(N)) {
+        throw std::runtime_error(QStringLiteral("Startzustand ohne gültiges Feld %1.")
+                                     .arg(field).toStdString());
+    }
+    std::array<double, N> result{};
+    for (std::size_t i = 0; i < N; ++i) {
+        const auto value = values.at(static_cast<qsizetype>(i));
+        if (!value.isDouble() || !std::isfinite(value.toDouble())) {
+            throw std::runtime_error(QStringLiteral("Startzustand ohne gültiges Feld %1.")
+                                         .arg(field).toStdString());
+        }
+        result[i] = value.toDouble();
+    }
+    return result;
+}
+
+// Übernimmt einen angezeigten Core-Zustand als Startwert eines neuen Laufs.
+segelphysik::Zustand startState(const QJsonObject& state, bool keepMotion)
+{
+    segelphysik::Zustand result;
+    if (state.isEmpty()) {
+        return result;
+    }
+    result.pose = segelphysik::Pose(finiteArray<3>(state, QStringLiteral("position_m")),
+        finiteArray<4>(state, QStringLiteral("orientierung_xyzw")));
+    if (keepMotion) {
+        result.geschwindigkeit_welt_m_s =
+            finiteArray<3>(state, QStringLiteral("geschwindigkeit_welt_m_s"));
+        result.omega_modell_rad_s = finiteArray<3>(state, QStringLiteral("omega_modell_rad_s"));
+    }
+    for (const auto& id : state.value(QStringLiteral("geflutete_elemente")).toArray()) {
+        result.geflutet.push_back(id.toString().toStdString());
+    }
+    return result;
+}
+
 } // namespace
 
 ModelValidation validateModel(const QString& modelPath)
@@ -102,7 +143,7 @@ ModelValidation validateModel(const QString& modelPath)
 
 SimulationResult runSimulation(const QString& modelPath,
     const ModelValidation& validation, bool dynamic, double durationSeconds,
-    double stepSeconds, std::atomic_bool* cancellation)
+    double stepSeconds, std::atomic_bool* cancellation, const QJsonObject& start)
 {
     SimulationResult result;
     if (!validation.valid) {
@@ -134,6 +175,7 @@ SimulationResult runSimulation(const QString& modelPath,
         options.dt_s = stepSeconds;
         options.jsonl = true;
         options.abbruch = cancellation;
+        options.start = startState(start, dynamic);
 
         const auto report = segelphysik::simulieren(
             nativePath(modelPath), nativePath(outputPath), options);
@@ -155,8 +197,9 @@ SimulationResult runSimulation(const QString& modelPath,
                 continue;
             }
             const auto state = parseObject(line, QStringLiteral("Core-Zustand"));
-            if (state.value(QStringLiteral("vertragsversion")).toString()
-                    != QStringLiteral("1")
+            const auto contract =
+                state.value(QStringLiteral("vertragsversion")).toString();
+            if ((contract != QStringLiteral("1") && contract != QStringLiteral("2"))
                 || state.value(QStringLiteral("modell_id")).toString()
                     != validation.modelId
                 || state.value(QStringLiteral("modell_fassung")).toString()
@@ -200,6 +243,7 @@ struct LiveSimulation::Impl {
     double durationSeconds = 0.0;
     double stepSeconds = 0.01;
     bool realtimePacing = true;
+    segelphysik::Zustand start;
 
     mutable std::mutex mutex;
     std::vector<segelphysik::Zustand> states;
@@ -238,7 +282,7 @@ LiveSimulation::~LiveSimulation() = default;
 
 std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     const ModelValidation& validation, double durationSeconds,
-    double stepSeconds, bool realtimePacing, QString* error)
+    double stepSeconds, bool realtimePacing, QString* error, const QJsonObject& start)
 {
     auto fail = [error](const QString& message) {
         if (error != nullptr) {
@@ -264,6 +308,7 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     }
     std::unique_ptr<LiveSimulation> live(new LiveSimulation);
     try {
+        live->impl_->start = startState(start, true);
         live->impl_->workerModel = segelphysik::lade_modell(nativePath(modelPath));
         live->impl_->displayModel = live->impl_->workerModel;
     } catch (const std::exception& exception) {
@@ -294,7 +339,7 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
     }
     const bool endless = d.durationSeconds == 0.0;
     try {
-        segelphysik::Zustand state;
+        segelphysik::Zustand state = d.start;
         d.publish(state, 0.0);
         const double begin = state.zeit_s;
         const double end = begin + d.durationSeconds;

@@ -168,6 +168,47 @@ void testLiveRun(const QString& modelPath, const ModelValidation& validation)
         "Open-ended paced run did not follow real time.");
 }
 
+// Moduswechsel: der neue Lauf übernimmt den angezeigten Zustand.
+void testStartState(const QString& modelPath, const ModelValidation& validation)
+{
+    std::atomic_bool cancellation{false};
+    const auto statik = runSimulation(modelPath, validation, false, 0.0, 0.01, &cancellation);
+    require(statik.completed, "Static run for start-state test failed.");
+    const auto ruhe = statik.states.constLast();
+
+    QString error;
+    auto live = LiveSimulation::create(modelPath, validation, 0.05, 0.01, false, &error, ruhe);
+    require(live != nullptr, "Live run from static state could not be created.");
+    live->run(cancellation);
+    const auto first = live->stateJson(0, &error);
+    const auto a = first.value(QStringLiteral("position_m")).toArray();
+    const auto b = ruhe.value(QStringLiteral("position_m")).toArray();
+    for (int axis = 0; axis < 3; ++axis) {
+        require(a.at(axis).toDouble() == b.at(axis).toDouble(),
+            "Live run did not start from the static state.");
+    }
+    require(number(first, QStringLiteral("zeit_s")) == 0.0, "Start state kept its old time.");
+    const auto last = live->stateJson(live->progress().states - 1, &error);
+    require(std::abs(last.value(QStringLiteral("position_m")).toArray().at(2).toDouble()
+                - b.at(2).toDouble()) < 1e-3,
+        "Live run from equilibrium drifted away.");
+
+    auto moved = ruhe;
+    moved.insert(QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0.0, 0.0, 1.0});
+    moved.insert(QStringLiteral("geflutete_elemente"), QJsonArray{QStringLiteral("x")});
+    const auto again = runSimulation(modelPath, validation, false, 0.0, 0.01, &cancellation, moved);
+    require(again.completed, "Static run from a moving state failed.");
+    const auto s = again.states.constLast();
+    require(s.value(QStringLiteral("geschwindigkeit_welt_m_s")).toArray().at(2).toDouble() == 0.0,
+        "Static run kept the start velocity.");
+    require(s.value(QStringLiteral("geflutete_elemente")).toArray().size() == 1,
+        "Static run lost the flooding state.");
+
+    moved.insert(QStringLiteral("position_m"), QJsonArray{0.0, 0.0});
+    require(!LiveSimulation::create(modelPath, validation, 0.05, 0.01, false, &error, moved),
+        "Broken start state was accepted.");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -184,6 +225,7 @@ int main(int argc, char* argv[])
         testStaticRun(modelPath, validation);
         testDynamicRun(modelPath, validation);
         testLiveRun(modelPath, validation);
+        testStartState(modelPath, validation);
         std::cout << "Core adapter validation, static hydrostatics and "
                      "dynamic run passed.\n";
         return 0;

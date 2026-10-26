@@ -13,7 +13,8 @@ A-C-00024. Die Core-Zeitmessungspunkte werden hier als GUI-Anforderung (A-G-0000
 Diese Spezifikation beschreibt eine erste Desktop-GUI für die Auswahl eines
 Modells sowie die Darstellung statischer und dynamischer Simulationen. Sie
 leitet keine Anforderungen aus dem Altprojekt ab. Die aktiven Anforderungen
-tragen die Kennungen A-G-00001 bis A-G-00008. Die Herkunft aus den
+tragen die Kennungen A-G-00001 bis A-G-00008 sowie den Nachtrag A-G-00025
+(G-0.2). Die Herkunft aus den
 Entwurfspunkten und deren weiterhin offene Restfragen stehen in der
 [Entwurfspunkteliste](Entwurfspunkte/GUI_Erstausbau.json); Restfragen sind
 keine Anforderungen dieser Version.
@@ -89,6 +90,7 @@ kein vorgeschriebener Transport.
 | A-G-00006 | Laufzeitmessung und Zeitanzeige | Spezifikationsentwurf, A-C-00021 bis A-C-00024 | G-0.1 | umgesetzt; Fehler-/Abbruchpfad ohne Referenzfall |
 | A-G-00007 | Kraftpfeile anzeigen | Spezifikationsentwurf | G-0.1 | umgesetzt |
 | A-G-00008 | Wechsel zwischen den Modi | Spezifikationsentwurf | G-0.1 | umgesetzt |
+| A-G-00025 | Startzustand beim Moduswechsel | Nutzerauftrag 27.10.2026 | G-0.2 | umgesetzt, Abnahme offen |
 
 ### A-G-00001 – GUI ruft den Core selbständig auf
 
@@ -276,6 +278,23 @@ zugeordnet; sie dürfen nicht unbemerkt mit dem neuen Modus vermischt werden.
 **Abnahme:** Nach jedem Wechsel sind aktiver Modus und
 zugehöriger Modell-/Ergebnisstand erkennbar. Ein statisches Ergebnis kann
 nicht versehentlich als dynamischer Zustand oder umgekehrt angezeigt werden.
+
+### A-G-00025 – Startzustand beim Moduswechsel
+
+**Version:** G-0.2 (Nachtrag auf Nutzerauftrag 27.10.2026) · **Status:** umgesetzt, Abnahme offen
+
+Wird nach einem Lauf in den anderen Modus gewechselt und neu gestartet,
+beginnt der neue Lauf beim aktuell angezeigten Zustand, nicht bei den
+Initialwerten des Modells: Pose, Geschwindigkeiten und Flutungsstand werden
+an den Core übergeben (`Laufoptionen::start`); die Zeit beginnt wieder bei 0.
+Die Statik übernimmt nur Pose und Flutung, keine Geschwindigkeiten.
+Gleicher Modus erneut oder ein neu geladenes Modell starten mit den
+Initialwerten. Die Statuszeile nennt die Herkunft des Startzustands.
+A-G-00008 bleibt gültig: Ergebnisse beider Modi werden nicht vermischt.
+
+**Abnahme:** Statik des Optimisten, dann Dynamik: Das Boot bleibt in
+Ruhelage (ΣF ≈ 0). Ungültige Startfelder werden mit Fehlermeldung
+abgelehnt (Test `testStartState`).
 
 ## 3. Softwarestruktur
 
