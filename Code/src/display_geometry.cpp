@@ -6,6 +6,7 @@
 #include <vtkPolyData.h>
 
 #include <stdexcept>
+#include <utility>
 
 QVector<DisplayPart> toDisplayParts(const segelphysik::Darstellungsgeometrie& geometry)
 {
@@ -43,6 +44,19 @@ QVector<DisplayPart> toDisplayParts(const segelphysik::Darstellungsgeometrie& ge
             display.hasColor = true;
             for (std::size_t i = 0; i < 3; ++i) {
                 display.color[i] = (*part.farbe_rgb)[i];
+            }
+        }
+        if (part.oberflaeche) {
+            using S = DisplayPart::Surface;
+            static const std::pair<const char*, S> names[] = {{"matt", S::Matte},
+                {"glaenzend", S::Glossy}, {"metall", S::Metal}, {"chrom", S::Chrome},
+                {"lack", S::Lacquer}, {"glas", S::Glass}, {"leuchtend", S::Glow},
+                {"schillernd", S::Iridescent}, {"facettiert", S::Faceted},
+                {"drahtgitter", S::Wireframe}, {"perlmutt", S::Pearl}};
+            for (const auto& [name, value] : names) {
+                if (*part.oberflaeche == name) {
+                    display.surface = value;
+                }
             }
         }
         parts.push_back(display);

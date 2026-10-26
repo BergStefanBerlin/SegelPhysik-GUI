@@ -16,6 +16,10 @@ if(NOT EXISTS "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/CMakeLists.txt")
         "CORE source not found. Set SEGELPHYSIK_CORE_SOURCE_DIR to its checkout.")
 endif()
 
+set(SEGELPHYSIK_MODELLE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../Modelle"
+    CACHE PATH "Model folder (sibling of the CORE and GUI checkouts)")
+
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets)
 find_package(VTK CONFIG REQUIRED COMPONENTS
     CommonCore
@@ -26,7 +30,9 @@ find_package(VTK CONFIG REQUIRED COMPONENTS
     FiltersSources
     GUISupportQt
     InteractionStyle
+    RenderingAnnotation
     RenderingCore
+    RenderingFreeType
     RenderingOpenGL2)
 
 add_subdirectory("${SEGELPHYSIK_CORE_SOURCE_DIR}/Code"
@@ -47,11 +53,8 @@ add_executable(segelphysik_gui WIN32
     Code/src/vtk_scene.cpp
     Code/src/vtk_scene.hpp)
 target_include_directories(segelphysik_gui PRIVATE Code/src)
-set(SEGELPHYSIK_MODEL_DIR
-    "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle"
-    CACHE PATH "Default model folder shown by the GUI")
 target_compile_definitions(segelphysik_gui PRIVATE
-    "SEGELPHYSIK_DEFAULT_MODEL_DIR=\"${SEGELPHYSIK_MODEL_DIR}\"")
+    "SEGELPHYSIK_DEFAULT_MODEL_DIR=\"${SEGELPHYSIK_MODELLE_DIR}\"")
 target_link_libraries(segelphysik_gui PRIVATE
     Qt6::Widgets
     segelphysik_core
@@ -63,11 +66,14 @@ target_link_libraries(segelphysik_gui PRIVATE
     VTK::FiltersSources
     VTK::GUISupportQt
     VTK::InteractionStyle
+    VTK::RenderingAnnotation
     VTK::RenderingCore
+    VTK::RenderingFreeType
     VTK::RenderingOpenGL2)
 
 vtk_module_autoinit(TARGETS segelphysik_gui MODULES
     VTK::RenderingOpenGL2
+    VTK::RenderingFreeType
     VTK::GUISupportQt)
 
 # Qt findet Plugins zur Laufzeit in <exe>/<plugintyp>; ohne qwindows startet die GUI nicht.
@@ -100,7 +106,7 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_core_integration
         COMMAND segelphysik_gui_core_tests
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle/quader/modell.json")
+            "${SEGELPHYSIK_MODELLE_DIR}/quader/modell.json")
 
     add_executable(segelphysik_gui_catalog_tests
         Code/src/model_catalog.cpp
@@ -112,7 +118,7 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_model_catalog
         COMMAND segelphysik_gui_catalog_tests
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle")
+            "${SEGELPHYSIK_MODELLE_DIR}")
 
     add_executable(segelphysik_gui_mesh_tests
         Code/src/display_geometry.cpp
@@ -128,7 +134,7 @@ if(BUILD_TESTING)
         VTK::CommonDataModel)
     add_test(NAME gui_display_mesh
         COMMAND segelphysik_gui_mesh_tests
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Spezifikationen/Beispiele_Modellformat/modelle")
+            "${SEGELPHYSIK_MODELLE_DIR}")
 
     add_executable(segelphysik_gui_force_display_tests
         Code/src/force_display.cpp

@@ -71,8 +71,9 @@ does not release for simulation are marked „nur Ansicht“.
 
 Folder selection order: first command-line argument if it is a folder, then
 the folder chosen via „Modellordner wählen“ (remembered), then `modelle` next
-to the executable, then the CMake cache value `SEGELPHYSIK_MODEL_DIR`
-(default: the Core example models). A model file passed as first argument is
+to the executable, then the CMake cache value `SEGELPHYSIK_MODELLE_DIR`
+(default: the shared folder `Segelphysik\Modelle` next to the `CORE` and
+`GUI` checkouts). A model file passed as first argument is
 opened directly.
 
 **Static mode** computes the equilibrium and shows it.

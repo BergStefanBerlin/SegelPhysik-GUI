@@ -8,14 +8,14 @@
 
 - [Kraft- und Momentendarstellung](../Spezifikationen/Spezifikation_GUI_Kraft_und_Momentendarstellung.md) (A-G-00009 bis A-G-00018, Nachträge A-G-00023, A-G-00024, A-G-00026)
 - [Modellkatalog-Anbindung](../Spezifikationen/Spezifikation_GUI_Modellkatalog_Anbindung.md) (A-G-00019 bis A-G-00022)
-- Nachtrag [GUI-Erstausbau](../Spezifikationen/Spezifikation_GUI_Erstausbau.md) (A-G-00025)
+- Nachtrag [GUI-Erstausbau](../Spezifikationen/Spezifikation_GUI_Erstausbau.md) (A-G-00025, A-G-00027)
 
 **Entscheidungen:** [GUI_Kraft_und_Momentendarstellung.json](../Spezifikationen/Entwurfspunkte/GUI_Kraft_und_Momentendarstellung.json),
 [GUI_Modellkatalog_Anbindung.json](../Spezifikationen/Entwurfspunkte/GUI_Modellkatalog_Anbindung.json)
 
 Dieser Plan ist der einzige maßgebliche Plan für den Versionsschritt G-0.2.
-Er enthält die Schritte U-G-000011 bis U-G-000023 (U-G-000021 bis
-U-G-000023 als Nachträge vom 27.10.2026). Der Planauftrag ist keine
+Er enthält die Schritte U-G-000011 bis U-G-000024 (U-G-000021 bis
+U-G-000024 als Nachträge vom 27.10.2026). Der Planauftrag ist keine
 Freigabe für Commit, Push, Tag oder Release.
 
 ## 1. Zielbild und Umsetzungsgrenze
@@ -56,6 +56,7 @@ rechnet keine Physik und liest das Modellformat nicht mehr selbst.
 | U-G-000021 | Nachtrag Modellfehler: Diagnose aus `modelldiagnose` und Fehlerkatalog im Wertefenster (Bilanzkarte, Fehlerzeilen, Detail, Kopieren). | A-G-00023 | U-G-000015, U-G-000018 | G-0.2 | umgesetzt, getestet (`gui_model_catalog`, Sichtprüfung) |
 | U-G-000022 | Nachtrag Startzustand und Flutung: Zustand beim Moduswechsel an den Core übergeben (`runSimulation`/`LiveSimulation` mit `start`), Zeile „Vollgelaufen“ in der Bilanzkarte. | A-G-00024, A-G-00025 | U-G-000017; extern Core U-C-000031 | G-0.2 | umgesetzt, getestet (`gui_core_integration`, Sichtprüfung) |
 | U-G-000023 | Nachtrag Vektorauswahl: zwei Rubriken Kräfte/Momente mit Gewicht, Auftrieb (gesamt/Teile) und Summe; `derivedContributions` bildet Gesamtwerte und Teilmomente aus Core-Beiträgen; Einstellungen gespeichert. | A-G-00026 | U-G-000014, U-G-000016 | G-0.2 | umgesetzt, getestet (`gui_force_display` `testDerived`, Sichtprüfung) |
+| U-G-000024 | Nachtrag Szenendarstellung: kameramitlaufende Wasserfläche bis zum Horizont mit Fresnel, Luftperspektive, Tiefenebene und Raster; Himmel (Skybox, IBL); PBR-Materialien aus `oberflaeche`; FXAA, glatte Normalen, LightKit, SSAO, Tiefenschälung, Achsenkreuz, Kursspur. | A-G-00027 | U-G-000019; extern Core U-C-000033 | G-0.2 | umgesetzt, getestet (ctest, Sichtprüfung) |
 
 ## 4. Technische Leitlinien
 
@@ -106,6 +107,7 @@ unabhängig.
 | A-G-00024 | U-G-000022 | Sichtprüfung Optimist-Dynamik | umgesetzt; Nutzerabnahme offen |
 | A-G-00025 | U-G-000022 | `testStartState`, Sichtprüfung Statik → Dynamik | umgesetzt; Nutzerabnahme offen |
 | A-G-00026 | U-G-000023 | `testDerived`, Sichtprüfung Optimist-Statik | umgesetzt; Nutzerabnahme offen |
+| A-G-00027 | U-G-000024 | ctest, Sichtprüfung Optimist/Kugel | umgesetzt; Nutzerabnahme offen |
 
 ## 7. Offene Punkte
 
@@ -148,8 +150,10 @@ Katalog, Wertefenster-Dock, Darstellungsoptionen, QSettings);
   aktualisiert) statt reinem `QTreeView`-Modell.
 - R_M: erster gültiger Zustand max |M|; ist dieser ≈ 0, Ersatzwert
   R_F × halbe Hüllquader-Diagonale (mind. 1 N·m).
-- Das Modellformat liefert keine Farben (`farbe_rgb` immer null);
-  Standardfarben der GUI.
+- Farben: Ohne Angabe im Modell gelten die Standardfarben der GUI. Seit
+  Core-Nachtrag A-C-00048 liefert `Darstellung.farbe` Elementfarben
+  (`farbe_rgb`), die die GUI ohne Codeänderung übernimmt (Optimist
+  eingefärbt, Sichtprüfung 26.10.2026).
 
 **Offen:** DPI-Prüfung 100/150/200 %, Laufzeitvergleich Anzeige ein/aus
 mit Grenzwerten (IDEE-G-00014), manuelle Prüfung Picking/Auswahl-
@@ -185,3 +189,26 @@ Ordnerwechsel, Sicht- und Nutzerabnahme.
   über Wasser, nicht geflutet). Der Flutungsnachweis A-G-00024 braucht
   daher künftig eine Startlage mit eingetauchtem Bordrand.
 - ctest 17/17 grün.
+
+**Nachtrag 27.10.2026 (U-G-000024, Szenendarstellung):**
+
+- `vtk_scene`: polares Wassernetz um den Kamerafußpunkt (Radius 90 ×
+  Kameraabstand, exponentielle Ringe, Auslauf zum Horizont),
+  Fresnel-Deckkraft und Luftperspektive als Punktfarben, Tiefenebene,
+  weltfestes Raster (1-2-5-Teilung); Wasser, Raster und Spur ohne Einfluss
+  auf Grenzen und Picking; Fernebene bis zum Horizont, Nahebene höchstens
+  0,1 × Kameraabstand (Verhältnis ≤ 1000, sonst verdunkelt SSAO die Szene).
+- Himmeltextur (äquirektangulär, Sonnenschein) als Skybox und
+  Umgebungslicht; LightKit; FXAA; Tiefenschälung; SSAO (Radius 0,06 ×
+  Szenengröße); `vtkPolyDataNormals` vor jedem Teil; PBR-Material je
+  `DisplayPart::Surface` (`display_geometry` liest `oberflaeche`).
+- Achsenkreuz in eigenem Renderer unten links (110 px), Kamera mit der
+  Hauptkamera synchronisiert. CMake: VTK `RenderingAnnotation`,
+  `RenderingFreeType`.
+- Kursspur: Netzmitte in Weltlage je Zustand, sichtbar bis zum
+  angezeigten Zeitpunkt, ausblendend; wird bei neuem Lauf/Modell geleert.
+- Sichtprüfung: Optimist statisch von oben und flach (Horizont ohne Kante,
+  Unterwasserteile sichtbar, Metallspieren), Kugel dynamisch (Spur).
+  ctest 17/17 grün, Core 13/13.
+- Bekannt: Kamerablick unter Wasser zeigt die Unterseite der Wasserfläche
+  und die Tiefenebene (abgedunkelt); keine Schatten (ausgenommen).

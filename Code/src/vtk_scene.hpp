@@ -18,13 +18,15 @@
 
 class QVTKOpenGLNativeWidget;
 class vtkActor;
+class vtkAxesActor;
 class vtkCutter;
 class vtkGenericOpenGLRenderWindow;
 class vtkObject;
 class vtkPlane;
-class vtkPlaneSource;
 class vtkPolyData;
 class vtkRenderer;
+class vtkSkybox;
+class vtkTexture;
 
 class VtkSceneWidget final : public QWidget {
 public:
@@ -84,6 +86,7 @@ private:
     struct BodyActor {
         vtkSmartPointer<vtkPolyData> mesh;
         vtkSmartPointer<vtkActor> body;
+        double opacity = 1.0;
         vtkSmartPointer<vtkActor> waterline;
         vtkSmartPointer<vtkPlane> localWaterPlane;
         vtkSmartPointer<vtkCutter> cutter;
@@ -110,6 +113,9 @@ private:
     void requestRender();
     void applyBodyStyle();
     void updateWaterPlane();
+    void rebuildEnvironment();
+    void updateTrail();
+    void addEnvironmentActors();
     bool bodyBounds(double bounds[6]) const;
     double bodyHalfDiagonal() const;
     void frameBodies();
@@ -120,8 +126,28 @@ private:
     vtkSmartPointer<vtkGenericOpenGLRenderWindow> renderWindow_;
     vtkSmartPointer<vtkRenderer> renderer_;
     vtkSmartPointer<vtkRenderer> overlay_;
+    vtkSmartPointer<vtkRenderer> axesRenderer_;
+    vtkSmartPointer<vtkAxesActor> axesActor_;
+    vtkSmartPointer<vtkTexture> skyTexture_;
+    vtkSmartPointer<vtkSkybox> skybox_;
+    // Wasser: Polarnetz um den Kamerafußpunkt mit Fresnel-Deckkraft und
+    // Auslauf zum Horizont, Tiefenebene und weltfestes Raster.
+    vtkSmartPointer<vtkPolyData> waterMesh_;
     vtkSmartPointer<vtkActor> waterActor_;
-    vtkSmartPointer<vtkPlaneSource> waterPlane_;
+    vtkSmartPointer<vtkPolyData> deepMesh_;
+    vtkSmartPointer<vtkActor> deepActor_;
+    vtkSmartPointer<vtkPolyData> gridMesh_;
+    vtkSmartPointer<vtkActor> gridActor_;
+    vtkSmartPointer<vtkPolyData> trailMesh_;
+    vtkSmartPointer<vtkActor> trailActor_;
+    struct TrackPoint {
+        double time = 0.0;
+        forcedisplay::Vec3 point{};
+    };
+    QVector<TrackPoint> track_;
+    double currentTime_ = 0.0;
+    double sceneSpan_ = 1.0;
+    double horizonRadius_ = 0.0;
     vtkSmartPointer<vtkPolyData> leverLines_;
     vtkSmartPointer<vtkActor> leverActor_;
     std::vector<BodyActor> bodies_;

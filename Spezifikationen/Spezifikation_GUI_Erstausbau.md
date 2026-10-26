@@ -13,8 +13,8 @@ A-C-00024. Die Core-Zeitmessungspunkte werden hier als GUI-Anforderung (A-G-0000
 Diese Spezifikation beschreibt eine erste Desktop-GUI für die Auswahl eines
 Modells sowie die Darstellung statischer und dynamischer Simulationen. Sie
 leitet keine Anforderungen aus dem Altprojekt ab. Die aktiven Anforderungen
-tragen die Kennungen A-G-00001 bis A-G-00008 sowie den Nachtrag A-G-00025
-(G-0.2). Die Herkunft aus den
+tragen die Kennungen A-G-00001 bis A-G-00008 sowie die Nachträge A-G-00025
+und A-G-00027 (G-0.2). Die Herkunft aus den
 Entwurfspunkten und deren weiterhin offene Restfragen stehen in der
 [Entwurfspunkteliste](Entwurfspunkte/GUI_Erstausbau.json); Restfragen sind
 keine Anforderungen dieser Version.
@@ -91,6 +91,7 @@ kein vorgeschriebener Transport.
 | A-G-00007 | Kraftpfeile anzeigen | Spezifikationsentwurf | G-0.1 | umgesetzt |
 | A-G-00008 | Wechsel zwischen den Modi | Spezifikationsentwurf | G-0.1 | umgesetzt |
 | A-G-00025 | Startzustand beim Moduswechsel | Nutzerauftrag 27.10.2026 | G-0.2 | umgesetzt, Abnahme offen |
+| A-G-00027 | Szenendarstellung: Wasser bis zum Horizont, Himmel, Effekte | Nutzerauftrag 27.10.2026 | G-0.2 | umgesetzt, Abnahme offen |
 
 ### A-G-00001 – GUI ruft den Core selbständig auf
 
@@ -296,6 +297,42 @@ A-G-00008 bleibt gültig: Ergebnisse beider Modi werden nicht vermischt.
 Ruhelage (ΣF ≈ 0). Ungültige Startfelder werden mit Fehlermeldung
 abgelehnt (Test `testStartState`).
 
+### A-G-00027 – Szenendarstellung: Wasser bis zum Horizont, Himmel, Effekte
+
+**Version:** G-0.2 (Nachtrag auf Nutzerauftrag 27.10.2026) · **Status:** umgesetzt, Abnahme offen
+
+Ergänzt A-G-00003 rein grafisch; Physik und Ergebnisse bleiben unberührt.
+
+- **Wasser bis zum Horizont:** Die Wasserfläche bei `Z = 0` folgt der
+  Kamera und reicht bis etwa zum 90-fachen Kameraabstand; zum Rand läuft
+  sie in den Horizontdunst aus. Sie geht nicht in Grenzen,
+  Kameraeinpassung oder Auswahl ein.
+- **Plastisches Wasser ohne Wellen:** Blickwinkelabhängige Deckkraft
+  (Fresnel: flach deckend, von oben durchsichtig), Luftperspektive zum
+  Horizont, dunkle Tiefenebene unter der Oberfläche und ein mitlaufendes
+  Bezugsraster (1-2-5-Teilung, jede fünfte Linie kräftiger).
+- **Himmel:** Farbverlauf mit Sonnenschein als Hintergrund und
+  Umgebungslicht (IBL) für Spiegelungen.
+- **Materialien:** Die GUI bildet `oberflaeche` aus `darstellungsgeometrie`
+  (Core A-C-00049) auf physikalisch basierte Materialien ab
+  (`matt`, `glaenzend`, `metall`; ohne Angabe Standard) sowie
+  Effektmaterialien: `chrom` (Spiegel), `lack` (Klarlackschicht), `glas`
+  (halbtransparent mit Kanten), `leuchtend` (unbeleuchtetes Neon mit hellen
+  Kanten), `schillernd` (Metall mit Komplementär-Kantenfarbe), `facettiert`
+  (flache Schattierung, dunkle Kanten), `drahtgitter` (Röhrengitter) und
+  `perlmutt` (helle Basis, farbiger Klarlack).
+- **Effekte:** Kantenglättung (FXAA), geglättete Normalen, Lichtset mit
+  mehreren Lichtern, Umgebungsverdeckung (SSAO), Tiefenschälung für
+  korrekte Transparenz, Achsenkreuz unten links und Kursspur des
+  Netzmittelpunkts bis zum angezeigten Zeitpunkt (dynamisch, ausblendend).
+- Schatten sind ausdrücklich nicht Teil dieses Nachtrags.
+
+**Abnahme:** Aus flachem Blickwinkel ist ein Horizont ohne harte Kante
+sichtbar; Unterwasserteile bleiben durch die Wasserfläche erkennbar; der
+Optimist zeigt matten Rumpf, matte Holzteile und Metallspieren; die acht
+einfachen Körper zeigen je ein anderes Effektmaterial; ein
+dynamischer Lauf zeichnet die Kursspur; alle GUI-Tests bleiben grün.
+
 ## 3. Softwarestruktur
 
 Der GUI-Adapter bleibt die einzige Grenze zum Core. Qt-/VTK-Typen gelangen
@@ -388,7 +425,8 @@ sequenceDiagram
 
 Nicht Bestandteil dieser Ausbaustufe sind eine Browser-/Web-GUI, Netzwerk- oder
 Servertransport, ein Live-Abonnement des Core, eine harte Echtzeitgarantie,
-eine Physik-Neuimplementierung in der GUI, fotorealistisches Wasser sowie eine
+eine Physik-Neuimplementierung in der GUI, fotorealistisches Wasser (Wellen,
+Schatten; die grafischen Verbesserungen von A-G-00027 bleiben zulässig) sowie eine
 Änderung der Core-Physik oder des Modellformats. Eine Auswahl mehrerer
 gleichzeitig simulierter Modelle wird nicht zugesagt; die Auswahl bezieht
 sich zunächst auf ein aktives Modell je Lauf. Der direkte, von der GUI
