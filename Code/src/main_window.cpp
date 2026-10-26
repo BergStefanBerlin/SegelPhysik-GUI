@@ -1046,6 +1046,7 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     const ModelValidation& validation)
 {
     QString error;
+    scene_->setElementGroups(opened->data.elementGroups);
     if (!scene_->setModel(opened->parts, &error)) {
         statusLabel_->setText(QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
         statusLabel_->setToolTip(error);

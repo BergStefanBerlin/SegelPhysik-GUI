@@ -7,6 +7,7 @@
 
 #include <segelphysik/katalog.hpp>
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -62,6 +63,8 @@ struct ModelDisplayData {
     segelphysik::Darstellungsgeometrie geometry;
     std::optional<double> totalMassKg;
     std::optional<std::array<std::array<double, 3>, 2>> bounds;
+    // Element-ID → Modellgruppe für alle Elemente, auch unsichtbare (z. B. Luftkörper).
+    QHash<QString, QString> elementGroups;
     QStringList partDiagnostics;
 };
 

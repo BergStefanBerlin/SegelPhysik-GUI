@@ -184,6 +184,12 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
         const auto structure = segelphysik::modellstruktur(catalog, id, fassung);
         data.totalMassKg = structure.gesamtmasse_kg;
         data.bounds = structure.huellquader_m;
+        for (const auto& group : structure.gruppen) {
+            for (const auto& element : group.elemente) {
+                data.elementGroups.insert(QString::fromStdString(element.id),
+                    QString::fromStdString(group.id));
+            }
+        }
     } catch (const std::exception& error) {
         // Fehlerhafte Modelle bleiben ansehbar; dann fehlt nur die Kraftreferenz.
         data.partDiagnostics << QString::fromUtf8(error.what());

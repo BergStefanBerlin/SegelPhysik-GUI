@@ -4,6 +4,7 @@
 #include <QEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QSet>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -15,7 +16,9 @@
 #include <vtkCaptionActor2D.h>
 #include <vtkCellArray.h>
 #include <vtkCommand.h>
+#include <vtkContourTriangulator.h>
 #include <vtkCutter.h>
+#include <vtkDataArray.h>
 #include <vtkFloatArray.h>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkImageData.h>
@@ -30,13 +33,17 @@
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkSkybox.h>
+#include <vtkStripper.h>
 #include <vtkTextProperty.h>
 #include <vtkTexture.h>
 #include <vtkTransform.h>
 #include <vtkUnsignedCharArray.h>
 
 #include <algorithm>
+#include <array>
+#include <map>
 #include <cmath>
+#include <vector>
 #include <limits>
 #include <stdexcept>
 
@@ -71,6 +78,151 @@ Vec3 inverseRotate(const forcedisplay::Pose& pose, const Vec3& v)
     inverse.quaternionXyzw[1] = -pose.quaternionXyzw[1];
     inverse.quaternionXyzw[2] = -pose.quaternionXyzw[2];
     return forcedisplay::toWorldVector(inverse, v);
+}
+
+// Wasserlinie um einen kleinen Betrag entlang der nach außen gerichteten
+// Flächennormalen versetzen. Bei Rümpfen ohne Wanddicke (offene Schalen) liegt
+// die Linie sonst exakt auf der Fläche und scheint von innen durch.
+void offsetWaterline(vtkPolyData* cut, double offset, vtkPolyData* out)
+{
+    out->DeepCopy(cut);
+    vtkDataArray* normals = cut->GetPointData()->GetNormals();
+    vtkPoints* source = cut->GetPoints();
+    if (normals == nullptr || source == nullptr) return;
+    auto moved = vtkSmartPointer<vtkPoints>::New();
+    moved->SetNumberOfPoints(source->GetNumberOfPoints());
+    for (vtkIdType i = 0; i < source->GetNumberOfPoints(); ++i) {
+        double p[3];
+        double n[3];
+        source->GetPoint(i, p);
+        normals->GetTuple(i, n);
+        moved->SetPoint(i, p[0] + offset * n[0], p[1] + offset * n[1], p[2] + offset * n[2]);
+    }
+    out->SetPoints(moved);
+}
+
+// Punktnormalen eines Teils so ausrichten, dass sie im Mittel vom Schwerpunkt
+// weg zeigen (auch für offene Schalen, bei denen AutoOrient nicht greift).
+vtkSmartPointer<vtkPolyData> outwardNormals(vtkPolyData* mesh)
+{
+    auto filter = vtkSmartPointer<vtkPolyDataNormals>::New();
+    filter->SetInputData(mesh);
+    filter->SplittingOff();
+    filter->ConsistencyOn();
+    filter->ComputePointNormalsOn();
+    filter->ComputeCellNormalsOff();
+    filter->Update();
+    auto result = vtkSmartPointer<vtkPolyData>::New();
+    result->DeepCopy(filter->GetOutput());
+    vtkDataArray* normals = result->GetPointData()->GetNormals();
+    vtkPoints* points = result->GetPoints();
+    if (normals == nullptr || points == nullptr || points->GetNumberOfPoints() == 0) return result;
+    double center[3] = {0.0, 0.0, 0.0};
+    const vtkIdType count = points->GetNumberOfPoints();
+    for (vtkIdType i = 0; i < count; ++i) {
+        double p[3];
+        points->GetPoint(i, p);
+        for (int k = 0; k < 3; ++k) center[k] += p[k] / static_cast<double>(count);
+    }
+    double sum = 0.0;
+    for (vtkIdType i = 0; i < count; ++i) {
+        double p[3];
+        double n[3];
+        points->GetPoint(i, p);
+        normals->GetTuple(i, n);
+        sum += n[0] * (p[0] - center[0]) + n[1] * (p[1] - center[1]) + n[2] * (p[2] - center[2]);
+    }
+    if (sum < 0.0) {
+        for (vtkIdType i = 0; i < count; ++i) {
+            double n[3];
+            normals->GetTuple(i, n);
+            n[0] = -n[0];
+            n[1] = -n[1];
+            n[2] = -n[2];
+            normals->SetTuple(i, n);
+        }
+    }
+    return result;
+}
+
+using Loop2 = std::vector<std::array<double, 2>>;
+
+bool insideLoop(const Loop2& loop, double x, double y)
+{
+    bool in = false;
+    const std::size_t n = loop.size();
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+        const auto& a = loop[i];
+        const auto& b = loop[j];
+        if ((a[1] > y) != (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) {
+            in = !in;
+        }
+    }
+    return in;
+}
+
+bool insideAny(const std::vector<Loop2>& loops, double x, double y)
+{
+    for (const auto& loop : loops) {
+        if (insideLoop(loop, x, y)) return true;
+    }
+    return false;
+}
+
+double signedArea(const Loop2& loop)
+{
+    double area = 0.0;
+    for (std::size_t k = 0; k < loop.size(); ++k) {
+        const auto& a = loop[k];
+        const auto& b = loop[(k + 1) % loop.size()];
+        area += a[0] * b[1] - b[0] * a[1];
+    }
+    return 0.5 * area;
+}
+
+// Mehrheit der Punkte von inner liegt in outer.
+bool loopWithin(const Loop2& inner, const Loop2& outer)
+{
+    if (outer.size() < 3 || inner.empty()) return false;
+    std::size_t hits = 0;
+    for (const auto& p : inner) hits += insideLoop(outer, p[0], p[1]) ? 1 : 0;
+    return 2 * hits > inner.size();
+}
+
+// Teilintervalle [t0, t1] der Strecke a-b, die außerhalb aller Schleifen liegen.
+std::vector<std::array<double, 2>> outsideIntervals(
+    const std::vector<Loop2>& loops, const double a[2], const double b[2])
+{
+    std::vector<double> ts{0.0, 1.0};
+    const double d[2] = {b[0] - a[0], b[1] - a[1]};
+    for (const auto& loop : loops) {
+        for (std::size_t k = 0; k < loop.size(); ++k) {
+            const auto& p = loop[k];
+            const auto& q = loop[(k + 1) % loop.size()];
+            const double e[2] = {q[0] - p[0], q[1] - p[1]};
+            const double den = d[0] * e[1] - d[1] * e[0];
+            if (std::abs(den) < 1e-18) continue;
+            const double w[2] = {p[0] - a[0], p[1] - a[1]};
+            const double t = (w[0] * e[1] - w[1] * e[0]) / den;
+            const double u = (w[0] * d[1] - w[1] * d[0]) / den;
+            if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0) ts.push_back(t);
+        }
+    }
+    std::sort(ts.begin(), ts.end());
+    std::vector<std::array<double, 2>> kept;
+    for (std::size_t k = 0; k + 1 < ts.size(); ++k) {
+        const double t0 = ts[k];
+        const double t1 = ts[k + 1];
+        if (t1 - t0 < 1e-9) continue;
+        const double tm = 0.5 * (t0 + t1);
+        if (insideAny(loops, a[0] + tm * d[0], a[1] + tm * d[1])) continue;
+        if (!kept.empty() && std::abs(kept.back()[1] - t0) < 1e-12) {
+            kept.back()[1] = t1;
+        } else {
+            kept.push_back({t0, t1});
+        }
+    }
+    return kept;
 }
 
 vtkSmartPointer<vtkTransform> poseTransform(const forcedisplay::Pose& pose)
@@ -399,6 +551,8 @@ double applySurface(vtkProperty* property, DisplayPart::Surface surface)
         property->SetCoatRoughness(0.08);
         property->SetCoatColor(color);
         break;
+    case DisplayPart::Surface::Invisible:
+        break;
     }
     return 1.0;
 }
@@ -466,7 +620,9 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     skybox_->UseBoundsOff();
 
     waterMesh_ = makePolarMesh(true);
-    waterActor_ = makeColoredActor(waterMesh_);
+    waterDisplay_ = vtkSmartPointer<vtkPolyData>::New();
+    waterDisplay_->ShallowCopy(waterMesh_);
+    waterActor_ = makeColoredActor(waterDisplay_);
     applySurface(waterActor_->GetProperty(), DisplayPart::Surface::Glossy);
     waterActor_->GetProperty()->SetRoughness(0.12);
     deepMesh_ = makePolarMesh(false);
@@ -527,6 +683,7 @@ void VtkSceneWidget::clearModel()
     overlay_->RemoveAllViewProps();
     addEnvironmentActors();
     bodies_.clear();
+    dryLoops_.clear();
     visuals_.clear();
     arcBasis_.clear();
     scaled_.clear();
@@ -573,22 +730,32 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
 
             auto plane = vtkSmartPointer<vtkPlane>::New();
             auto cutter = vtkSmartPointer<vtkCutter>::New();
-            cutter->SetInputData(part.mesh);
+            cutter->SetInputData(outwardNormals(part.mesh));
             cutter->SetCutFunction(plane);
+            auto waterlineData = vtkSmartPointer<vtkPolyData>::New();
             auto waterlineMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-            waterlineMapper->SetInputConnection(cutter->GetOutputPort());
+            waterlineMapper->SetInputData(waterlineData);
             auto waterlineActor = vtkSmartPointer<vtkActor>::New();
             waterlineActor->SetMapper(waterlineMapper);
             waterlineActor->GetProperty()->SetColor(0.12, 0.92, 1.0);
             waterlineActor->GetProperty()->SetLineWidth(3.0);
             waterlineActor->GetProperty()->SetLighting(false);
             renderer_->AddActor(waterlineActor);
+            // Unsichtbare Teile (Luftkörper) zählen weiter für die trockenen Bereiche.
+            if (part.surface == DisplayPart::Surface::Invisible) {
+                bodyActor->VisibilityOff();
+                waterlineActor->VisibilityOff();
+            }
 
             BodyActor body;
             body.mesh = part.mesh;
             body.body = bodyActor;
             body.opacity = opacity;
             body.waterline = waterlineActor;
+            body.waterlineData = waterlineData;
+            body.elementId = part.elementId;
+            body.group = part.group;
+            body.waterlineOffset = 0.004 * std::max(part.mesh->GetLength(), 0.25);
             body.localWaterPlane = plane;
             body.cutter = cutter;
             bodies_.push_back(body);
@@ -623,12 +790,110 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         const Vec3 waterOrigin = inverseRotate(pose,
             {-pose.position[0], -pose.position[1], -pose.position[2]});
         const Vec3 waterNormal = inverseRotate(pose, {0.0, 0.0, 1.0});
-        for (auto& body : bodies_) {
+        // Schnittlinien je Teil zu Schleifen verketten. Trocken ist das Innere der
+        // äußersten geschlossenen Schleifen nicht gefluteter Teile; dort gibt es
+        // weder Wasserfläche noch Wasserlinie (z. B. Cockpit, Schwert im Rumpf).
+        struct CutLoop {
+            std::size_t body = 0;
+            Loop2 world;
+            bool closed = false;
+            bool dry = false;
+            double area = 0.0;
+        };
+        std::vector<CutLoop> loops;
+        // Ein Teil gilt als geflutet, wenn ein Element seiner Gruppe vollgelaufen ist
+        // (z. B. der unsichtbare Cockpit-Luftkörper in der Gruppe des Rumpfs).
+        QSet<QString> floodedGroups;
+        for (const auto& id : forces.flooded) {
+            const auto group = elementGroups_.value(id);
+            if (!group.isEmpty()) floodedGroups.insert(group);
+        }
+        const auto isFlooded = [&](const BodyActor& body) {
+            return forces.flooded.contains(body.elementId)
+                || (!body.group.isEmpty() && floodedGroups.contains(body.group));
+        };
+        std::vector<vtkSmartPointer<vtkPolyData>> joined(bodies_.size());
+        for (std::size_t b = 0; b < bodies_.size(); ++b) {
+            auto& body = bodies_[b];
             body.body->SetUserTransform(transform);
             body.waterline->SetUserTransform(transform);
             body.localWaterPlane->SetOrigin(waterOrigin[0], waterOrigin[1], waterOrigin[2]);
             body.localWaterPlane->SetNormal(waterNormal[0], waterNormal[1], waterNormal[2]);
             body.cutter->Update();
+            auto stripper = vtkSmartPointer<vtkStripper>::New();
+            stripper->SetInputData(body.cutter->GetOutput());
+            stripper->JoinContiguousSegmentsOn();
+            stripper->Update();
+            joined[b] = stripper->GetOutput();
+            vtkPoints* points = joined[b]->GetPoints();
+            vtkCellArray* lines = joined[b]->GetLines();
+            if (points == nullptr || lines == nullptr) continue;
+            const bool flooded = isFlooded(body);
+            lines->InitTraversal();
+            vtkIdType count = 0;
+            const vtkIdType* ids = nullptr;
+            while (lines->GetNextCell(count, ids)) {
+                CutLoop loop;
+                loop.body = b;
+                double perimeter = 0.0;
+                for (vtkIdType k = 0; k < count; ++k) {
+                    double p[3];
+                    points->GetPoint(ids[k], p);
+                    const Vec3 w = forcedisplay::toWorldPoint(pose, {p[0], p[1], p[2]});
+                    if (!loop.world.empty()) {
+                        perimeter += std::hypot(w[0] - loop.world.back()[0], w[1] - loop.world.back()[1]);
+                    }
+                    loop.world.push_back({w[0], w[1]});
+                }
+                if (count >= 3) {
+                    const double gap = std::hypot(loop.world.front()[0] - loop.world.back()[0],
+                        loop.world.front()[1] - loop.world.back()[1]);
+                    loop.closed = gap <= 0.05 * perimeter;
+                    if (ids[0] == ids[count - 1]) loop.world.pop_back();
+                }
+                loop.area = std::abs(signedArea(loop.world));
+                loop.dry = loop.closed && !flooded;
+                loops.push_back(std::move(loop));
+            }
+        }
+        for (auto& loop : loops) {
+            if (!loop.dry) continue;
+            for (const auto& other : loops) {
+                if (&other != &loop && other.closed && !isFlooded(bodies_[other.body])
+                    && other.area > loop.area && loopWithin(loop.world, other.world)) {
+                    loop.dry = false;
+                    break;
+                }
+            }
+        }
+        dryLoops_.clear();
+        for (const auto& loop : loops) {
+            if (loop.dry) dryLoops_.push_back(loop.world);
+        }
+        std::size_t next = 0;
+        for (std::size_t b = 0; b < bodies_.size(); ++b) {
+            auto& body = bodies_[b];
+            offsetWaterline(joined[b], body.waterlineOffset, body.waterlineData);
+            auto kept = vtkSmartPointer<vtkCellArray>::New();
+            if (vtkCellArray* lines = joined[b]->GetLines()) {
+                lines->InitTraversal();
+                vtkIdType count = 0;
+                const vtkIdType* ids = nullptr;
+                while (lines->GetNextCell(count, ids)) {
+                    const auto& loop = loops[next++];
+                    bool hidden = false;
+                    for (const auto& other : loops) {
+                        if (other.dry && &other != &loop && other.area > loop.area
+                            && loopWithin(loop.world, other.world)) {
+                            hidden = true;
+                            break;
+                        }
+                    }
+                    if (!hidden) kept->InsertNextCell(count, ids);
+                }
+            }
+            body.waterlineData->SetLines(kept);
+            body.waterlineData->Modified();
         }
         pose_ = pose;
         forces_ = forces;
@@ -1265,9 +1530,7 @@ void VtkSceneWidget::rebuildEnvironment()
     auto* deepPoints = deepMesh_->GetPoints();
     auto* colors = vtkUnsignedCharArray::SafeDownCast(waterMesh_->GetPointData()->GetScalars());
     auto* deepColors = vtkUnsignedCharArray::SafeDownCast(deepMesh_->GetPointData()->GetScalars());
-    auto setVertex = [&](vtkIdType id, double x, double y) {
-        points->SetPoint(id, x, y, 0.0);
-        deepPoints->SetPoint(id, x, y, -depth);
+    auto waterRgba = [&](double x, double y, unsigned char rgba[4]) {
         const double r = std::hypot(x - cx, y - cy);
         // Auslauf zum Horizont: das Wasser geht in den Himmelsdunst über.
         const double fade = 1.0 - smoothstep(0.2 * radius, radius, r);
@@ -1276,10 +1539,18 @@ void VtkSceneWidget::rebuildEnvironment()
         const Vec3 toCamera = normalized({position[0] - x, position[1] - y, position[2]});
         const double grazing = std::pow(1.0 - std::abs(toCamera[2]), 2.5);
         const double alpha = fade * std::clamp(0.34 + 0.6 * grazing, 0.0, 0.95);
-        const unsigned char rgba[4] = {toByte(mix(waterColor[0], horizonColor[0], haze)),
-            toByte(mix(waterColor[1], horizonColor[1], haze)),
-            toByte(mix(waterColor[2], horizonColor[2], haze)), toByte(alpha)};
+        rgba[0] = toByte(mix(waterColor[0], horizonColor[0], haze));
+        rgba[1] = toByte(mix(waterColor[1], horizonColor[1], haze));
+        rgba[2] = toByte(mix(waterColor[2], horizonColor[2], haze));
+        rgba[3] = toByte(alpha);
+    };
+    auto setVertex = [&](vtkIdType id, double x, double y) {
+        points->SetPoint(id, x, y, 0.0);
+        deepPoints->SetPoint(id, x, y, -depth);
+        unsigned char rgba[4];
+        waterRgba(x, y, rgba);
         colors->SetTypedTuple(id, rgba);
+        const double fade = 1.0 - smoothstep(0.2 * radius, radius, std::hypot(x - cx, y - cy));
         const unsigned char deep[4] = {toByte(deepColor[0]), toByte(deepColor[1]),
             toByte(deepColor[2]), toByte(0.8 * fade)};
         deepColors->SetTypedTuple(id, deep);
@@ -1301,6 +1572,7 @@ void VtkSceneWidget::rebuildEnvironment()
     deepColors->Modified();
     waterMesh_->Modified();
     deepMesh_->Modified();
+    rebuildWaterDisplay(waterRgba);
 
     // Weltfestes Raster mit 1-2-5-Teilung; jede fünfte Linie kräftiger.
     const double step = niceStep(distance / 6.0);
@@ -1317,18 +1589,49 @@ void VtkSceneWidget::rebuildEnvironment()
         for (int line = -gridHalfLines; line <= gridHalfLines; ++line) {
             const double fixed = (direction == 0 ? gx : gy) + line * step;
             const bool major = std::llround(fixed / step) % 5 == 0;
-            ids.clear();
-            for (int k = -gridHalfLines; k <= gridHalfLines; ++k) {
-                const double along = (direction == 0 ? gy : gx) + k * step;
-                const double x = direction == 0 ? fixed : along;
-                const double y = direction == 0 ? along : fixed;
+            const auto addPoint = [&](double x, double y) {
                 const double d = std::hypot(x - focal[0], y - focal[1]);
                 const double alpha = (major ? 0.32 : 0.13) * (1.0 - smoothstep(0.15 * extent, extent, d));
-                ids.push_back(gridPoints->InsertNextPoint(x, y, lift));
                 const unsigned char rgba[4] = {205, 232, 255, toByte(alpha)};
                 gridColors->InsertNextTypedTuple(rgba);
+                return gridPoints->InsertNextPoint(x, y, lift);
+            };
+            const auto flush = [&]() {
+                if (ids.size() >= 2) {
+                    gridLines->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
+                }
+                ids.clear();
+            };
+            ids.clear();
+            double previous[2] = {0.0, 0.0};
+            for (int k = -gridHalfLines; k <= gridHalfLines; ++k) {
+                const double along = (direction == 0 ? gy : gx) + k * step;
+                const double current[2] = {direction == 0 ? fixed : along, direction == 0 ? along : fixed};
+                if (k > -gridHalfLines) {
+                    const bool near = !dryLoops_.empty()
+                        && std::max(previous[0], current[0]) >= dryBox_[0]
+                        && std::min(previous[0], current[0]) <= dryBox_[1]
+                        && std::max(previous[1], current[1]) >= dryBox_[2]
+                        && std::min(previous[1], current[1]) <= dryBox_[3];
+                    if (!near) {
+                        if (ids.empty()) ids.push_back(addPoint(previous[0], previous[1]));
+                        ids.push_back(addPoint(current[0], current[1]));
+                    } else {
+                        flush();
+                        for (const auto& interval : outsideIntervals(dryLoops_, previous, current)) {
+                            const auto at = [&](double t, int c) {
+                                return previous[c] + t * (current[c] - previous[c]);
+                            };
+                            ids.push_back(addPoint(at(interval[0], 0), at(interval[0], 1)));
+                            ids.push_back(addPoint(at(interval[1], 0), at(interval[1], 1)));
+                            if (interval[1] < 1.0) flush();
+                        }
+                    }
+                }
+                previous[0] = current[0];
+                previous[1] = current[1];
             }
-            gridLines->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
+            flush();
         }
     }
     gridMesh_->Initialize();
@@ -1336,6 +1639,130 @@ void VtkSceneWidget::rebuildEnvironment()
     gridMesh_->SetLines(gridLines);
     gridMesh_->GetPointData()->SetScalars(gridColors);
     gridMesh_->Modified();
+}
+
+void VtkSceneWidget::rebuildWaterDisplay(
+    const std::function<void(double, double, unsigned char*)>& waterRgba)
+{
+    const double big = std::numeric_limits<double>::max();
+    dryBox_ = {big, -big, big, -big};
+    for (const auto& loop : dryLoops_) {
+        for (const auto& p : loop) {
+            dryBox_[0] = std::min(dryBox_[0], p[0]);
+            dryBox_[1] = std::max(dryBox_[1], p[0]);
+            dryBox_[2] = std::min(dryBox_[2], p[1]);
+            dryBox_[3] = std::max(dryBox_[3], p[1]);
+        }
+    }
+    waterDisplay_->Initialize();
+    bool holed = false;
+    if (!dryLoops_.empty()) {
+        // Wasserzellen über dem Trockenbereich entfernen und die Lücke zwischen
+        // ihrem Rand und den trockenen Schleifen neu triangulieren.
+        const double margin = 0.03 * sceneSpan_;
+        const double box[4] = {dryBox_[0] - margin, dryBox_[1] + margin, dryBox_[2] - margin,
+            dryBox_[3] + margin};
+        vtkPoints* fanPoints = waterMesh_->GetPoints();
+        auto points = vtkSmartPointer<vtkPoints>::New();
+        points->DeepCopy(fanPoints);
+        auto colors = vtkSmartPointer<vtkUnsignedCharArray>::New();
+        colors->DeepCopy(waterMesh_->GetPointData()->GetScalars());
+        auto normals = vtkSmartPointer<vtkFloatArray>::New();
+        normals->DeepCopy(waterMesh_->GetPointData()->GetNormals());
+        auto polys = vtkSmartPointer<vtkCellArray>::New();
+        std::vector<std::pair<vtkIdType, vtkIdType>> removedEdges;
+        std::map<std::pair<vtkIdType, vtkIdType>, int> edgeUse;
+        vtkCellArray* fanPolys = waterMesh_->GetPolys();
+        fanPolys->InitTraversal();
+        vtkIdType count = 0;
+        const vtkIdType* cell = nullptr;
+        while (fanPolys->GetNextCell(count, cell)) {
+            double lo[2] = {big, big};
+            double hi[2] = {-big, -big};
+            for (vtkIdType k = 0; k < count; ++k) {
+                double p[3];
+                fanPoints->GetPoint(cell[k], p);
+                lo[0] = std::min(lo[0], p[0]);
+                lo[1] = std::min(lo[1], p[1]);
+                hi[0] = std::max(hi[0], p[0]);
+                hi[1] = std::max(hi[1], p[1]);
+            }
+            if (hi[0] < box[0] || lo[0] > box[1] || hi[1] < box[2] || lo[1] > box[3]) {
+                polys->InsertNextCell(count, cell);
+                continue;
+            }
+            for (vtkIdType k = 0; k < count; ++k) {
+                const vtkIdType a = cell[k];
+                const vtkIdType b = cell[(k + 1) % count];
+                removedEdges.emplace_back(a, b);
+                ++edgeUse[{std::min(a, b), std::max(a, b)}];
+            }
+        }
+        std::map<vtkIdType, vtkIdType> next;
+        for (const auto& [a, b] : removedEdges) {
+            if (edgeUse[{std::min(a, b), std::max(a, b)}] == 1) next[a] = b;
+        }
+        auto contourLines = vtkSmartPointer<vtkCellArray>::New();
+        while (!next.empty()) {
+            std::vector<vtkIdType> chain;
+            const vtkIdType start = next.begin()->first;
+            vtkIdType current = start;
+            bool closed = false;
+            while (true) {
+                const auto it = next.find(current);
+                if (it == next.end()) break;
+                chain.push_back(current);
+                current = it->second;
+                next.erase(it);
+                if (current == start) {
+                    closed = true;
+                    break;
+                }
+            }
+            if (closed && chain.size() >= 3) {
+                chain.push_back(start);
+                contourLines->InsertNextCell(static_cast<vtkIdType>(chain.size()), chain.data());
+            }
+        }
+        for (const auto& loop : dryLoops_) {
+            if (loop.size() < 3) continue;
+            const bool counterClockwise = signedArea(loop) > 0.0;
+            std::vector<vtkIdType> chain;
+            for (std::size_t k = 0; k < loop.size(); ++k) {
+                const auto& p = loop[counterClockwise ? loop.size() - 1 - k : k];
+                unsigned char rgba[4];
+                waterRgba(p[0], p[1], rgba);
+                colors->InsertNextTypedTuple(rgba);
+                normals->InsertNextTuple3(0.0, 0.0, 1.0);
+                chain.push_back(points->InsertNextPoint(p[0], p[1], 0.0));
+            }
+            chain.push_back(chain.front());
+            contourLines->InsertNextCell(static_cast<vtkIdType>(chain.size()), chain.data());
+        }
+        auto contour = vtkSmartPointer<vtkPolyData>::New();
+        contour->SetPoints(points);
+        contour->SetLines(contourLines);
+        const double up[3] = {0.0, 0.0, 1.0};
+        auto triangles = vtkSmartPointer<vtkCellArray>::New();
+        if (contourLines->GetNumberOfCells() > 0
+            && vtkContourTriangulator::TriangulateContours(
+                   contour, 0, contourLines->GetNumberOfCells(), triangles, up) == 1
+            && triangles->GetNumberOfCells() > 0) {
+            triangles->InitTraversal();
+            while (triangles->GetNextCell(count, cell)) {
+                polys->InsertNextCell(count, cell);
+            }
+            waterDisplay_->SetPoints(points);
+            waterDisplay_->SetPolys(polys);
+            waterDisplay_->GetPointData()->SetScalars(colors);
+            waterDisplay_->GetPointData()->SetNormals(normals);
+            holed = true;
+        }
+    }
+    if (!holed) {
+        waterDisplay_->ShallowCopy(waterMesh_);
+    }
+    waterDisplay_->Modified();
 }
 
 bool VtkSceneWidget::bodyBounds(double bounds[6]) const

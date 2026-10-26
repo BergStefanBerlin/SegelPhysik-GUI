@@ -55,6 +55,9 @@ public:
     ~VtkSceneWidget() override;
 
     bool setModel(const QVector<DisplayPart>& parts, QString* error);
+    // Gruppenzuordnung aller Elemente; ein Teil gilt als geflutet, sobald ein
+    // Element seiner Gruppe vollgelaufen ist.
+    void setElementGroups(const QHash<QString, QString>& groups) { elementGroups_ = groups; }
     void clearModel();
     bool setState(const QJsonObject& state, const forcedisplay::ForceState& forces,
         QString* error);
@@ -88,6 +91,10 @@ private:
         vtkSmartPointer<vtkActor> body;
         double opacity = 1.0;
         vtkSmartPointer<vtkActor> waterline;
+        vtkSmartPointer<vtkPolyData> waterlineData;
+        double waterlineOffset = 0.0;
+        QString elementId;
+        QString group;
         vtkSmartPointer<vtkPlane> localWaterPlane;
         vtkSmartPointer<vtkCutter> cutter;
     };
@@ -114,6 +121,7 @@ private:
     void applyBodyStyle();
     void updateWaterPlane();
     void rebuildEnvironment();
+    void rebuildWaterDisplay(const std::function<void(double, double, unsigned char*)>& waterRgba);
     void updateTrail();
     void addEnvironmentActors();
     bool bodyBounds(double bounds[6]) const;
@@ -133,6 +141,7 @@ private:
     // Wasser: Polarnetz um den Kamerafußpunkt mit Fresnel-Deckkraft und
     // Auslauf zum Horizont, Tiefenebene und weltfestes Raster.
     vtkSmartPointer<vtkPolyData> waterMesh_;
+    vtkSmartPointer<vtkPolyData> waterDisplay_;
     vtkSmartPointer<vtkActor> waterActor_;
     vtkSmartPointer<vtkPolyData> deepMesh_;
     vtkSmartPointer<vtkActor> deepActor_;
@@ -147,6 +156,10 @@ private:
     QVector<TrackPoint> track_;
     double currentTime_ = 0.0;
     double sceneSpan_ = 1.0;
+    // Trockenbereiche in der Wasserebene (Welt-xy) und ihre Hüllbox.
+    std::vector<std::vector<std::array<double, 2>>> dryLoops_;
+    QHash<QString, QString> elementGroups_;
+    std::array<double, 4> dryBox_{};
     double horizonRadius_ = 0.0;
     vtkSmartPointer<vtkPolyData> leverLines_;
     vtkSmartPointer<vtkActor> leverActor_;
