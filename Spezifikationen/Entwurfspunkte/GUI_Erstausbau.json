@@ -1,0 +1,73 @@
+{
+  "status": "finalisiert",
+  "thema": "GUI-Erstausbau: Simulation und Kräfte darstellen",
+  "spezifikation": "../Spezifikation_GUI_Erstausbau.md",
+  "hinweis": "Spezifikation am 26.10.2026 finalisiert (G-0.1). Übernommene Punkte verweisen auf ihre A-G-ID; Restfragen bleiben offen bzw. zurückgestellt und sind keine Anforderungen.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00001",
+      "status": "teilweise übernommen",
+      "thema": "Bedeutung und Umfang der Körperauswahl",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#modell-auswählen-und-prüfen",
+      "frage": "Soll die Auswahl zwischen verschiedenen Modell-Dateien erfolgen, einzelne Elemente eines Modells ein-/ausblenden oder beides? Ist Mehrfachauswahl bzw. die gleichzeitige Darstellung mehrerer Modelle gewünscht? Welche Modelle sollen zum ersten Ausbau als auswählbar und simulierbar gelten?",
+      "antwort": "Nutzerangabe 26.10.2026 (teilweise): Modelle werden automatisch aus dem Modellordner angezeigt, abhängig von dessen Inhalt (je Unterordner eine modell.json). Elementauswahl und Mehrfachdarstellung bleiben offen.",
+      "uebernommen_als": "A-G-00002",
+      "vermerk_G-0.1": "Automatische Modellliste aus dem Modellordner übernommen. Elementauswahl und Mehrfachdarstellung bleiben offen."
+    },
+    {
+      "id": "IDEE-G-00002",
+      "status": "teilweise übernommen",
+      "thema": "Dynamikparameter und Wiedergabesteuerung",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#dynamische-simulation-und-wiedergabe",
+      "frage": "Welche Laufparameter (insbesondere Startzustand, Dauer, Schrittweite und Ausgabeintervall) sollen Nutzer einstellen können? Welche Wiedergabefunktionen werden für den ersten Ausbau benötigt (Start/Pause, Einzelzustand, Zeitleiste, Wiedergabegeschwindigkeit)? Reicht Wiedergabe nach abgeschlossenem Lauf oder wird Live-Anzeige während der Rechnung verlangt?",
+      "antwort": "Nutzerangabe 26.10.2026 (teilweise): Dynamik wird live in „Echtzeit“ dargestellt, ohne Vorausrechnung. Die Darstellung darf den Core nicht ausbremsen und aktualisiert so schnell wie sinnvoll. Berechnete Zustände werden zum Zurückblicken gespeichert. Startzustand, Ausgabeintervall und Wiedergabegeschwindigkeit bleiben offen.",
+      "uebernommen_als": "A-G-00005",
+      "vermerk_G-0.1": "Live-Dynamik mit Echtzeit-Takt und Rückblick übernommen. Startzustand, Ausgabeintervall und Wiedergabegeschwindigkeit bleiben offen."
+    },
+    {
+      "id": "IDEE-G-00003",
+      "status": "zurückgestellt",
+      "thema": "Darstellungsqualität und Wasser-Schnitt",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#körper-und-wasseroberfläche-darstellen",
+      "frage": "Welche konkreten Qualitätskriterien gelten für Ansicht, Wasserüberlagerung und Schnittkontur? Genügt eine transparente Wasserfläche mit sichtbarer Schnittlinie, oder muss eingetauchtes Volumen zusätzlich als abgeschnittene/anders eingefärbte Geometrie erscheinen? Auf welchen Bildschirmgrößen und mit welcher Mindestbildrate wird abgenommen?",
+      "vermerk_G-0.1": "G-0.1 erfüllt A-G-00003 mit transparenter Wasserfläche und Schnittlinie; weitergehende Qualitätskriterien offen."
+    },
+    {
+      "id": "IDEE-G-00004",
+      "status": "zurückgestellt",
+      "thema": "Kraftpfeile und Momentendarstellung",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#kraftpfeile-anzeigen",
+      "frage": "Welche Farben, Legende, Filter und Skalierungsregel sollen für Gewicht und Auftrieb gelten? Sollen Momente zusätzlich mit einem eigenen Symbol dargestellt werden? Wie sollen überlappende Pfeile oder sehr große Werte behandelt werden, ohne ihre Bedeutung zu verfälschen?",
+      "vermerk_G-0.1": "G-0.1 erfüllt A-G-00007 mit Farbkennzeichnung und relativer Skalierung; Momente und Filter offen."
+    },
+    {
+      "id": "IDEE-G-00005",
+      "status": "zurückgestellt",
+      "thema": "Abbruch und Fehler bei laufender Berechnung",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#ergebnis--und-fehlerbehandlung",
+      "frage": "Welche Bedienung und Rückmeldung werden für Abbruch, Teilaufzeichnungen und Fehler während eines synchronen Gesamtlaufs erwartet? Die Übergabe enthält ein Abbruch-Flag im Laufvertrag, aber keine fertige GUI-Live- oder Sitzungs-API.",
+      "vermerk_G-0.1": "G-0.1 bietet „Lauf stoppen“ mit Status „abgebrochen“; Referenzfall für Fehler- und Teilaufzeichnungspfade offen."
+    },
+    {
+      "id": "IDEE-G-00006",
+      "status": "offen",
+      "thema": "Qt-/VTK-Versionen und Lizenzfreigabe",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#ziel-und-umfang",
+      "frage": "Welche konkreten Qt-6- und VTK-Versionen sollen verwendet werden und welche Lizenz-/Verteilungsbedingungen werden für die tatsächlich eingebundenen Pakete freigegeben? Die Core-Übergabe verlangt diese Prüfung vor Verteilung.",
+      "vermerk_G-0.1": "Lizenzprüfung vor Verteilung steht aus."
+    },
+    {
+      "id": "IDEE-G-00007",
+      "status": "zurückgestellt",
+      "thema": "Anzeige und Abgrenzung von Laufzeiten",
+      "bezug": "../Spezifikation_GUI_Erstausbau.md#laufzeitmessung-und-zeitanzeige",
+      "frage": "Wo und wie prominent soll die reale Gesamtlaufzeit angezeigt werden? Soll sie bei späteren interaktiven Läufen pausierte Wartezeit ein- oder ausschließen, und wie wird diese gegebenenfalls getrennt gekennzeichnet? Welche testaktiven Detailmesswerte sollen in einer Diagnoseansicht sichtbar sein?",
+      "vermerk_G-0.1": "G-0.1 zeigt Simulations-, Echt- und Core-Rechenzeit getrennt; Diagnoseansicht offen."
+    }
+  ],
+  "finalisiert": {
+    "datum": "2026-10-26",
+    "version": "G-0.1",
+    "spezifikation": "../Spezifikation_GUI_Erstausbau.md"
+  }
+}
