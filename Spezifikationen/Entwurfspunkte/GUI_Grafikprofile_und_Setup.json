@@ -1,0 +1,50 @@
+{
+  "status": "technisch implementiert und geprüft; persönliche Sicht-/Releasebewertung getrennt",
+  "thema": "Grafikprofile Technik/Optik und persistentes Setup",
+  "spezifikation": "../Spezifikation_GUI_Grafikprofile_und_Setup.md",
+  "hinweis": "Erneuter vollständiger autonomer Umsetzungsauftrag 27.10.2026: GUI-Implementierung sowie getrennte dauerhafte CORE-/Folkeboot-Materialintegration technisch geprüft; A-G-00028 bis A-G-00036 und U-G-000025 bis U-G-000036 zugeordnet. 22/22 Tests einschließlich GPU bei drei DPI-Stufen erfolgreich. Persönliche Sicht- und Release-Leistungsabnahme werden nicht fingiert. Historische Entscheidungen bleiben nachvollziehbar.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00018",
+      "status": "entschieden",
+      "thema": "Zielversion und Zuordnung zum einzigen Versionsplan",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#1-ziel-quellen-und-abgrenzung",
+      "frage": "Welchem Versionsschritt wird der vollständige Grafikumfang zugeordnet?",
+      "vorschlag": "Vor Finalisierung Zielversion bestimmen und ausschließlich deren einen Umsetzungsplan erweitern oder anlegen; bestehende G-0.2-Abnahmen nicht stillschweigend verändern.",
+      "entscheidung": "Korrigierte Nutzerentscheidung 27.10.2026: eigener Versionsschritt G-0.5, da G-0.4 bereits existiert. Die ursprüngliche Zuordnung zu G-0.3 ist damit abgelöst. Maßgeblicher Planentwurf: Umsetzungsplan_G-0.5.md. Keine Finalisierung oder Implementierungsfreigabe hierdurch.",
+      "umsetzungsplan": "../../Umsetzungsplaene/Umsetzungsplan_G-0.5.md"
+    },
+    {
+      "id": "IDEE-G-00019",
+      "status": "offen",
+      "thema": "Messbare Leistungsabnahme",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#7-szenenqualität-technische-lesbarkeit-und-grenzen",
+      "frage": "Welche Referenzhardware, Modelle, Fensterauflösung, Bildzeit- und Core-Laufzeitgrenzen gelten insbesondere für Optik mit allen Effekten?",
+      "vorschlag": "Folkeboot als vom Nutzer gewähltes Referenzboot und ein komplexes Modell auf benannter Hardware mit Median/P95, Ladezeit und Speicher messen; Grenzen vor Leistungsabnahme freigeben, keine automatische Reduktion als stiller Ersatz.",
+      "teilentscheidung_umsetzung": "Vorhandene AMD Radeon 760M / Ryzen 5 8600G unter Windows; reproduzierbare Renderprüfung bei 1280 x 720. Numerische Leistungsgrenzen und fachliche Bewertung bleiben offen.",
+      "nachweis": "G-0.5-Plan Abschnitt 8: abschließend 22/22 CTest-Fälle in 64,23 s erfolgreich, GPU bei 100/150/200 Prozent mit dauerhaften Folkeboot-Materialien; Render-Median/P95, Lade-/First-Frame-Zeit, kurzer Live-Vergleich und Testprozess-Speicher erfasst. Kein verbindlicher hardwareübergreifender Langzeit-Leistungsabschluss.",
+      "zugeordnet_zu": "A-G-00033, A-G-00036"
+    },
+    {
+      "id": "IDEE-G-00020",
+      "status": "implementiert; fachliche Sichtabnahme getrennt",
+      "thema": "Modellmaterialien, UVs und externe Voraussetzungen",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#6-bootsmaterialien-und-texturen",
+      "frage": "Wie werden Lack, Stoff, Holz, Bürstrichtung, UVs und Texturreferenzen für das Folkeboot eindeutig geliefert?",
+      "teilentscheidung_2026-10-27": "Nutzerentscheidung: Folkeboot als Referenzmodell verwenden, um alle Effekte zu zeigen. Vollständigkeit der Darstellungsdetails, Materialzuordnung und nötige Schnittstellendaten bleiben zu prüfen; der Gesamtentwurf ist dadurch nicht finalisiert.",
+      "vorschlag": "Vorhandene Oberflächenkennungen nutzen, prozedurale Texturen bevorzugen; benötigte Core-/Modellvertragserweiterung separat im Core spezifizieren und freigeben. Kein GUI-eigener Modelldateileser.",
+      "umsetzungsstand": "Nach erneutem autonomen Fortsetzungsauftrag dauerhafte explizite CORE-Oberflächen stoff/holz/metall_gebuerstet rückwärtskompatibel ergänzt (A-C-00049/U-C-000033); GUI bildet diese direkt ab. Folkeboot weist Rumpf lack, Segeln stoff, Ruder holz und Mast metall_gebuerstet zu. Prozedurale lokale Projektion statt allgemeinem externem UV-Import; keine Namensheuristik oder Physikänderung. Temporäre Materialvorschau bleibt zusätzlich erhalten. Fachliche Nutzer-Sichtabnahme wird nicht fingiert.",
+      "zugeordnet_zu": "A-G-00032"
+    },
+    {
+      "id": "IDEE-G-00021",
+      "status": "zur Implementierung angenommen",
+      "thema": "Maximalumfang und Default-Matrix bestätigen",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#4-vollständige-feature--und-default-matrix",
+      "frage": "Werden die vorgeschlagenen Technikdefaults, Optik mit allen kombinierbaren Features einschließlich Hilfen sowie die zusätzliche Szenenreflexion des Boots übernommen?",
+      "vorschlag": "Matrix übernehmen: Technik analytisch, Optik alle Effekte; globale Körperdurchsicht in Optik bei Deckkraft 1,0 neutral, Hilfen einzeln abschaltbar. Szenenreflexion ausdrücklich zusätzlich zu IBL nachweisen; höchste Qualitätsstufe erst nach Messung benennen.",
+      "entscheidung": "Erneuter vollständiger Umsetzungsauftrag: Matrix als Implementierungsvertrag angenommen; keine behauptete erfolgreiche Effekt- oder Leistungsabnahme.",
+      "uebernommen_als": "A-G-00028, A-G-00029, A-G-00030, A-G-00031, A-G-00034, A-G-00035"
+    }
+  ]
+}

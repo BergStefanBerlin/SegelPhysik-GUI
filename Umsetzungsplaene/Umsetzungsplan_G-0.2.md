@@ -4,6 +4,12 @@
 
 **Stand:** 26.10.2026 · **Version:** G-0.2
 
+**Lizenznachweis 27.10.2026:** IDEE-G-00006 aus G-0.1 bleibt offen.
+Die [Lizenzdokumentation](../Dokumentation/Lizenzdokumentation.md) und
+[GitHub-Issue #1](https://github.com/BergStefanBerlin/SegelPhysik-GUI/issues/1)
+halten die Teilprüfung und noch fehlenden Verteilungsnachweise fest.
+Dies ändert weder den Implementierungsstand noch die übrigen Abnahmepunkte.
+
 **Maßgebliche Spezifikationen:**
 
 - [Kraft- und Momentendarstellung](../Spezifikationen/Spezifikation_GUI_Kraft_und_Momentendarstellung.md) (A-G-00009 bis A-G-00018, Nachträge A-G-00023, A-G-00024, A-G-00026)

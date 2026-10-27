@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="580" height="580" viewBox="22 112 580 580" role="img" aria-labelledby="pitch_title pitch_description">
+  <title id="pitch_title">Stampfenanzeige</title>
+  <desc id="pitch_description">Anzeige des Stampfwinkels um die Querachse mit einem einzelnen Kompasszeiger, der gemeinsam mit dem Yacht-Icon rotiert.</desc>
+  <defs>
+    <linearGradient id="pitch_gradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#193448"/>
+      <stop offset="1" stop-color="#11283a"/>
+    </linearGradient>
+    <filter id="pitch_shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000814" flood-opacity=".35"/>
+    </filter>
+    <style id="pitch_styles">
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #f4f8fb; }
+      .card { fill: url(#pitch_gradient); stroke: #315066; stroke-width: 1.5; }
+      .card-title { font-size: 19px; font-weight: 700; letter-spacing: 1.2px; fill: #b8cad5; }
+      .small { font-size: 13px; fill: #8da9bb; }
+      .dial-value { font-size: 48px; font-weight: 700; stroke: #0b1c2a; stroke-width: 3px; paint-order: stroke; stroke-linejoin: round; }
+      .dial-caption { font-size: 17px; fill: #9eb4c2; }
+      .dial-code { font-size: 18px; font-weight: 700; letter-spacing: 2px; fill: #8da9bb; }
+      .tick-minor { stroke: #49667a; stroke-width: 2; }
+      .tick-major { stroke: #7892a3; stroke-width: 2.7; }
+      .camera { fill: #11283a; stroke: #ffdf70; stroke-width: 2.5; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <g id="pitch_widget" filter="url(#pitch_shadow)">
+    <rect id="pitch_card_background" class="card" x="42" y="132" width="540" height="540" rx="24"/>
+    <text id="pitch_card_title" x="82" y="185" class="card-title">STAMPFEN</text>
+    <text id="pitch_card_description" x="70" y="642" class="small">Stampfwinkel um die Querachse</text>
+
+    <g id="pitch_face" transform="translate(0 5)">
+      <circle id="pitch_ring_outer" cx="312" cy="405" r="210" fill="#0b1c2a" stroke="#49667a" stroke-width="2.5"/>
+      <circle id="pitch_ring_inner" cx="312" cy="405" r="166.5" fill="none" stroke="#29485d" stroke-width="1.8"/>
+
+      <line id="pitch_reference_horizontal" x1="145.5" y1="405" x2="478.5" y2="405" stroke="#ffbd16" stroke-width="2.5"/>
+      <line id="pitch_reference_vertical" x1="312" y1="238.5" x2="312" y2="571.5" stroke="#ffbd16" stroke-width="2.5" stroke-dasharray="4 4"/>
+
+      <g id="pitch_scale_ticks" fill="none">
+        <line class="tick-major" x1="312.0" y1="207.0" x2="312.0" y2="195.0"/>
+        <line class="tick-minor" x1="347.3" y1="205.1" x2="348.5" y2="198.2"/>
+        <line class="tick-minor" x1="381.4" y1="214.2" x2="383.8" y2="207.7"/>
+        <line class="tick-major" x1="411.0" y1="233.5" x2="417.0" y2="223.1"/>
+        <line class="tick-minor" x1="442.5" y1="249.5" x2="447.0" y2="244.1"/>
+        <line class="tick-minor" x1="467.5" y1="274.5" x2="472.9" y2="270.0"/>
+        <line class="tick-major" x1="483.5" y1="306.0" x2="493.9" y2="300.0"/>
+        <line class="tick-minor" x1="502.8" y1="335.6" x2="509.3" y2="333.2"/>
+        <line class="tick-minor" x1="511.9" y1="369.7" x2="518.8" y2="368.5"/>
+        <line class="tick-major" x1="510.0" y1="405.0" x2="522.0" y2="405.0"/>
+        <line class="tick-minor" x1="511.9" y1="440.3" x2="518.8" y2="441.5"/>
+        <line class="tick-minor" x1="502.8" y1="474.4" x2="509.3" y2="476.8"/>
+        <line class="tick-major" x1="483.5" y1="504.0" x2="493.9" y2="510.0"/>
+        <line class="tick-minor" x1="467.5" y1="535.5" x2="472.9" y2="540.0"/>
+        <line class="tick-minor" x1="442.5" y1="560.5" x2="447.0" y2="565.9"/>
+        <line class="tick-major" x1="411.0" y1="576.5" x2="417.0" y2="586.9"/>
+        <line class="tick-minor" x1="381.4" y1="595.8" x2="383.8" y2="602.3"/>
+        <line class="tick-minor" x1="347.3" y1="604.9" x2="348.5" y2="611.8"/>
+        <line class="tick-major" x1="312.0" y1="603.0" x2="312.0" y2="615.0"/>
+        <line class="tick-minor" x1="276.7" y1="604.9" x2="275.5" y2="611.8"/>
+        <line class="tick-minor" x1="242.6" y1="595.8" x2="240.2" y2="602.3"/>
+        <line class="tick-major" x1="213.0" y1="576.5" x2="207.0" y2="586.9"/>
+        <line class="tick-minor" x1="181.5" y1="560.5" x2="177.0" y2="565.9"/>
+        <line class="tick-minor" x1="156.5" y1="535.5" x2="151.1" y2="540.0"/>
+        <line class="tick-major" x1="140.5" y1="504.0" x2="130.1" y2="510.0"/>
+        <line class="tick-minor" x1="121.2" y1="474.4" x2="114.7" y2="476.8"/>
+        <line class="tick-minor" x1="112.1" y1="440.3" x2="105.2" y2="441.5"/>
+        <line class="tick-major" x1="114.0" y1="405.0" x2="102.0" y2="405.0"/>
+        <line class="tick-minor" x1="112.1" y1="369.7" x2="105.2" y2="368.5"/>
+        <line class="tick-minor" x1="121.2" y1="335.6" x2="114.7" y2="333.2"/>
+        <line class="tick-major" x1="140.5" y1="306.0" x2="130.1" y2="300.0"/>
+        <line class="tick-minor" x1="156.5" y1="274.5" x2="151.1" y2="270.0"/>
+        <line class="tick-minor" x1="181.5" y1="249.5" x2="177.0" y2="244.1"/>
+        <line class="tick-major" x1="213.0" y1="233.5" x2="207.0" y2="223.1"/>
+        <line class="tick-minor" x1="242.6" y1="214.2" x2="240.2" y2="207.7"/>
+        <line class="tick-minor" x1="276.7" y1="205.1" x2="275.5" y2="198.2"/>
+      </g>
+      <g id="pitch_scale_labels" class="small" text-anchor="middle" font-weight="700">
+        <text transform="translate(312 222) rotate(0)" dominant-baseline="middle">+90°</text>
+        <text transform="translate(403.5 246.5) rotate(30)" dominant-baseline="middle">+60°</text>
+        <text transform="translate(470.5 313.5) rotate(60)" dominant-baseline="middle">+30°</text>
+        <text transform="translate(495 405) rotate(90)" dominant-baseline="middle">0°</text>
+        <text transform="translate(470.5 496.5) rotate(-60)" dominant-baseline="middle">−30°</text>
+        <text transform="translate(403.5 563.5) rotate(-30)" dominant-baseline="middle">−60°</text>
+        <text transform="translate(312 588) rotate(0)" dominant-baseline="middle">−90°</text>
+        <text transform="translate(220.5 563.5) rotate(30)" dominant-baseline="middle">−120°</text>
+        <text transform="translate(153.5 496.5) rotate(60)" dominant-baseline="middle">−150°</text>
+        <text transform="translate(129 405) rotate(90)" dominant-baseline="middle">±180°</text>
+        <text transform="translate(153.5 313.5) rotate(-60)" dominant-baseline="middle">+150°</text>
+        <text transform="translate(220.5 246.5) rotate(-30)" dominant-baseline="middle">+120°</text>
+      </g>
+
+      <g id="pitch_pose" style="transform: rotate(-30deg); transform-origin: 312px 405px; transform-box: view-box;">
+      <g id="pitch_yacht" transform="translate(152 258)">
+        <g id="pitch_pointer" fill="none" stroke="#ffbd16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <g transform="rotate(90 160 147)" fill="#ffc66d" stroke="#ffc66d">
+            <path id="pitch_pointer_tip" d="M160 2 L146 160 L160 141 L174 160 Z" stroke="none"/>
+            <line id="pitch_pointer_shaft" x1="160" y1="147" x2="160" y2="10" stroke-width="3"/>
+          </g>
+        </g>
+        <g transform="translate(160 0) scale(-0.5565217391 1) translate(-160 0)" fill="none" stroke="#f4f8fb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M153 46.3 L82 103 H153 V97 Z"/>
+          <path d="M168 -8.8 L260 99 H168 V119 Z"/>
+          <g transform="translate(0 152.25) scale(1 0.5) translate(0 -147)">
+            <path d="M45 110.5 H275 L269 145 L244 149 L176 160.9 L178 164 Q179 258.9 174 258.9 H160 Q155 258.9 154 258.9 L132 160.9 L83.5 149 Z"/>
+          </g>
+          </g>
+          <path d="M136 134 L141 121.5 Q143.9 118 149.9 117.5 H174 Q180.9 118 183.2 121.5 L186 134 Z" fill="none" stroke="#f4f8fb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </g>
+
+      <g id="pitch_camera" transform="rotate(119 312 405)" class="camera">
+        <rect x="299" y="145" width="26" height="21" rx="4"/>
+        <path d="M306 145 L309 140 L315 140 L318 145"/>
+        <path d="M306 166 L312 175 L318 166 Z"/>
+        <circle cx="312" cy="153" r="4.5" fill="none"/>
+      </g>
+      <circle id="pitch_pivot" cx="312" cy="405" r="7" fill="#f4f8fb"/>
+      <text id="pitch_value" x="312" y="347" text-anchor="middle" class="dial-value">+30°</text>
+      <text id="pitch_label" x="312" y="491" text-anchor="middle" class="dial-code">STAMPFEN</text>
+    </g>
+  </g>
+</svg>

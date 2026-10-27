@@ -12,7 +12,7 @@ class vtkPolyData;
 struct DisplayPart {
     enum class Surface {
         Default, Matte, Glossy, Metal, Chrome, Lacquer, Glass, Glow, Iridescent, Faceted,
-        Wireframe, Pearl, Invisible
+        Wireframe, Pearl, Invisible, Cloth, Wood, BrushedMetal
     };
 
     QString elementId;

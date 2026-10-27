@@ -1,0 +1,80 @@
+{
+  "status": "finalisiert; technisch implementiert und gezielt nachgewiesen; persönliche Abnahme offen",
+  "thema": "Temporärer Testantrieb und Fahrtdarstellung",
+  "spezifikation": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md",
+  "umsetzungsplan": "../../Umsetzungsplaene/Umsetzungsplan_G-0.5.md#9-erweiterung-temporärer-testantrieb-und-fahrtdarstellung",
+  "planungsstand": "Einziger G-0.5-Plan, Abschnitt 9: U-G-000037 bis U-G-000045 mit A-/U-/Nachweiszuordnung technisch abgearbeitet. Implementierungsauftrag für CORE und GUI am 27.10.2026, 22:16. Acht gezielte GUI-CTests und Releasebuild erfolgreich; CORE-Lieferung separat geprüft. Persönliche fachliche/Sicht- und Leistungsabnahme offen.",
+  "hinweis": "Nutzerentscheidungen und ausdrückliche Finalisierung am 27.10.2026. Ziel G-0.5; A-G-00037 bis A-G-00045 vergeben und umgesetzt. CORE-Vertrag C-0.5 finalisiert, implementiert und integriert. Frühere Vorschläge, ausstehende Vertragsarbeit und Formulierungen 'Plan später ergänzen' unten bleiben als Historie des damaligen Entscheidungsstands erhalten und gelten nur, soweit die Entscheidung sie übernimmt. Keine Git-Veröffentlichung.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00022",
+      "status": "finalisiert",
+      "uebernommen_als": "A-G-00037",
+      "thema": "Darstellungsumfang und numerische Abgrenzung",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#1-ziel-und-abgrenzung",
+      "entscheidung": "Option 2 Kielwasser/Bugwelle und Option 3 technische Fahrtdarstellung im Setup auswählen können. Neue numerische Ergebnisanzeigen aus Option 3 entfallen vollständig; spätere übergreifende Zahlenanzeige ist separater Auftrag.",
+      "vorschlag": "Optionen unabhängig kombinieren; technische Distanzmarken ohne Zahlen. Je ausgewähltes Gesamtmodell, nicht je Bauteil."
+    },
+    {
+      "id": "IDEE-G-00023",
+      "status": "entschieden; finalisiert",
+      "uebernommen_als": "A-G-00038",
+      "thema": "Kraftangriff und Richtung des temporären Testantriebs",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#2-temporärer-testantrieb",
+      "frage": "Greift die Kraft am Schwerpunkt an? Gilt volle Körper-+X-Richtung oder deren horizontale Projektion?",
+      "vorschlag": "Schwerpunkt und horizontal projizierte Bugrichtung, damit keine zusätzlichen Momente oder künstlichen vertikalen Antriebskräfte entstehen. Senkrechte Projektion mit Diagnose behandeln.",
+      "entscheidung": "Nutzer verwirft Schwerpunkt und Wasserlinien-Zugpunkt: am weitesten in Körper-Bugrichtung liegender Geometriepunkt des Gesamtmodells, unabhängig von Wasserlinie. Bei mehreren vordersten Punkten deren Mitte. Horizontale Projektion der aktuellen Bugrichtung; vorhandene Drehung und Abdrift zulassen, keine künstliche Kursregelung. Hebelarmmoment bleibt wirksam. Geometriequelle/Toleranz im getrennten CORE-Vertrag präzisieren."
+    },
+    {
+      "id": "IDEE-G-00024",
+      "status": "entschieden; finalisiert",
+      "uebernommen_als": "A-G-00039",
+      "thema": "Geschwindigkeitsbegrenzung und Bilanz",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#2-temporärer-testantrieb",
+      "frage": "Welche Geschwindigkeit wird relativ zu welchem Wasser begrenzt, mit welchem Verfahren und welcher Toleranz? Bleibt die Grenze bei ausgeschaltetem Antrieb aktiv, und wie wird ihr Eingriff bilanziert?",
+      "vorschlag": "Nur horizontale Wasserrelativgeschwindigkeit begrenzen; Vertikal- und Winkelbewegung unberührt. Künstlichen Eingriff explizit dokumentieren. Ohne Strömung ruhendes Wasser. CORE-Vertrag projektgetrennt festlegen.",
+      "entscheidung": "Horizontaler Geschwindigkeitsbetrag relativ zum Wasser; bei aktivem Testantrieb nach jedem Physikschritt richtungstreu auf Obergrenze kürzen. Bei ausgeschaltetem Antrieb weder Testkraft noch Begrenzer. Vertikal- und Winkelbewegung unberührt; Eingriff explizit dokumentieren. Nur temporärer Test, keine Widerstandsphysik."
+    },
+    {
+      "id": "IDEE-G-00025",
+      "status": "entschieden; finalisiert",
+      "uebernommen_als": "A-G-00040",
+      "thema": "Parameter, Bedienung und Laufbindung",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#2-temporärer-testantrieb",
+      "frage": "Welche Defaultwerte und Eingabegrenzen gelten für N und m/s, wo liegt der Testantriebsbereich, welche Werte werden gespeichert und sind Änderungen im laufenden Versuch erlaubt?",
+      "vorschlag": "Separater Setup-Bereich nach Grafik; Antrieb bei Neustart aus. Parameter vor Laufstart übernehmen und unveränderlich im Lauf festhalten. Kein unfreigegebener Live-Steuervertrag und keine Kopplung an Grafikprofile.",
+      "entscheidung": "Kompakter Testantrieb-Bedienblock/Overlay im Simulationspanel, nicht Setup. Default 200 N und exakt 10 kn = 463/90 m/s. Bereiche 0–100000 N und 0,01–20 m/s. Zahlenparameter vor Laufbeginn, während Lauf gesperrt. Aktivflag während des Laufs schaltbar, wirksamen Schritt/Zeit und Reihenfolge aufzeichnen. Keine Speicherung über Programmende, Startflag aus. Live-Vertrag in CORE vor Implementierung spezifizieren."
+    },
+    {
+      "id": "IDEE-G-00026",
+      "status": "entschieden; finalisiert",
+      "uebernommen_als": "A-G-00041, A-G-00042",
+      "thema": "Wasserkontakt, Spuranfang und allgemeine Körper",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#4-option-2-kielwasser-bugwelle-und-schaum",
+      "frage": "Welche expliziten Daten oder geometrischen Näherungen bestimmen Bug, Heck, Kontakt und den rotationsunabhängigen Fahrtbezug? Wie werden Abdrift, Rückwärtsfahrt und gekenterte Körper behandelt?",
+      "vorschlag": "Wasserfläche Z=0 und dokumentierte Kontaktgeometrie nutzen, keine Elementnamenheuristik oder Mast-/Gesamtmeshzentrum. Geometrischer Ersatzfall für einfache Körper; kein Schaum ohne Wasserkontakt oder tatsächliche horizontale Fahrt.",
+      "entscheidung": "Bestehende Wasserlinien-Konturen als Grafikanker nutzen; von Antriebs-Zugpunkt unabhängig. Spur folgt bei Abdrift/Rückwärtsfahrt tatsächlicher Bewegung. Ohne Kontakt keine neue Spur, ungeeignete Konturen explizit diagnostizieren. Technischer Weg aus horizontalem Schwerpunktweg, auf Wasserhöhe projiziert; Rotation um ruhenden Schwerpunkt zählt nicht."
+    },
+    {
+      "id": "IDEE-G-00027",
+      "status": "entschieden; finalisiert",
+      "uebernommen_als": "A-G-00043",
+      "thema": "Setup-Schalter und Profildefaults",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#6-auswahl-im-setup-und-persistenz",
+      "frage": "Werden kombinierbare Optionen und die vorgeschlagenen unabhängigen Technik-/Optikdefaults übernommen?",
+      "vorschlag": "Technik: Raster, technische Spur und Distanzmarken ein, Kielwasser aus. Optik: Kielwasser ein, technische Hilfen aus. Vorhandenes Raster wiederverwenden, Distanzmarken von Spur abhängig; Persistenz mit bestehenden Dialogtransaktionen.",
+      "entscheidung": "Vorschlag übernommen: unabhängig kombinierbar und je Profil persistent. Keine numerischen Ergebnisanzeigen; vorhandenes Raster nicht duplizieren. Bestehende gespeicherte Rasterwünsche erhalten."
+    },
+    {
+      "id": "IDEE-G-00028",
+      "status": "fachliche Werte entschieden; technische Nachweise ausstehend",
+      "uebernommen_als": "A-G-00044, A-G-00045",
+      "thema": "Versionszuordnung, Reproduzierbarkeit und messbare Grenzen",
+      "bezug": "../Spezifikation_GUI_Testantrieb_und_Fahrtdarstellung.md#8-vorgesehene-abnahmeszenarien",
+      "frage": "Welcher Versionsschritt und dessen einziger Plan gelten? Welche Spurlebensdauer, Wegabtastung, Markenschrittweite, Speicher-/Geometriegrenzen und Leistungs-/Fehlertoleranzen werden abgenommen?",
+      "vorschlag": "Keine automatische Zuordnung zu G-0.5. Gezielte Tests mit kurzem 420er-Lauf, Folkeboot-Sichtnachweis und einfachem Körper. Gleiche Historie/Zeit ergibt gleiche Grafik; Pause/Rückblick ohne Zukunftsspuren. Keine numerischen Leistungsgrenzen oder vollständige GUI-Testpflicht erfinden.",
+      "entscheidung": "Ausdrücklich G-0.5; bestehenden einzigen Plan später ergänzen. Defaults 30 s Spuralter, 0,25 m Abtastung, 5 m Distanzmarkenabstand, 4096 Stützpunkte je Spur. Alle vier Werte im Setup je Profil konfigurierbar und persistent. Alters-/Budgetgrenze kann alte Abschnitte früher entfernen. Spezifikation ausdrücklich finalisieren, noch nicht implementieren.",
+      "offene_technische_nachweise": "CORE-Vertrag, Geometrie-/Eingabetoleranzen, technische Ressourcenobergrenzen und konkrete Leistungsabnahme vor Umsetzung beziehungsweise Abnahme festlegen. Keine abgeschlossenen Tests behaupten."
+    }
+  ]
+}

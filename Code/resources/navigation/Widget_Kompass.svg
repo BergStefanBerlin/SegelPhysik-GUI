@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="580" height="580" viewBox="22 112 580 580" role="img" aria-labelledby="widget_title widget_description">
+  <title id="widget_title">Kompassanzeige aus dem Master</title>
+  <desc id="widget_description">Eigenständige Kompasskarte, direkt aus dem Kompass-Master übernommen. Farben, Geometrie, Schriftgrößen, Skala, Headingzeiger und Kamerasymbol entsprechen dem Master.</desc>
+  <defs>
+    <linearGradient id="card_gradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#193448"/>
+      <stop offset="1" stop-color="#11283a"/>
+    </linearGradient>
+    <filter id="card_shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000814" flood-opacity=".35"/>
+    </filter>
+    <style id="compass_styles">
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #f4f8fb; }
+      .card { fill: url(#card_gradient); stroke: #315066; stroke-width: 1.5; }
+      .card-title { font-size: 19px; font-weight: 700; letter-spacing: 1.2px; fill: #b8cad5; }
+      .small { font-size: 13px; fill: #8da9bb; }
+      .dial-value { font-size: 48px; font-weight: 700; stroke: #0b1c2a; stroke-width: 3px; paint-order: stroke; stroke-linejoin: round; }
+      .dial-caption { font-size: 17px; fill: #9eb4c2; }
+      .dial-code { font-size: 18px; font-weight: 700; letter-spacing: 2px; fill: #8da9bb; }
+      .tick-minor { stroke: #49667a; stroke-width: 2; }
+      .tick-major { stroke: #7892a3; stroke-width: 2.7; }
+      .camera { fill: #11283a; stroke: #ffdf70; stroke-width: 2.5; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <g id="compass_widget" filter="url(#card_shadow)">
+    <rect id="card_background" class="card" x="42" y="132" width="540" height="540" rx="24"/>
+    <text id="card_title" x="82" y="185" class="card-title">KOMPASS</text>
+    <text id="card_description" x="70" y="642" class="small">Bugrichtung relativ zu lokalem Nord</text>
+
+    <g id="compass_face" transform="translate(0 5)">
+      <circle id="dial_outer_ring" cx="312" cy="405" r="210" fill="#0b1c2a" stroke="#49667a" stroke-width="2.5"/>
+      <path id="dial_status" d="M312 195 A210 210 0 1 1 312 615 A210 210 0 1 1 312 195 Z M312 238.5 A166.5 166.5 0 1 0 312 571.5 A166.5 166.5 0 1 0 312 238.5 Z" fill="#ffbd16" fill-opacity="0" fill-rule="evenodd" pointer-events="none"/>
+      <circle id="dial_inner_ring" cx="312" cy="405" r="166.5" fill="none" stroke="#29485d" stroke-width="1.8"/>
+
+      <g id="compass_ticks" fill="none">
+        <g id="tick_minor" class="tick-minor">
+          <line x1="312" y1="195" x2="312" y2="219"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(22.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(67.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(112.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(157.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(202.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(247.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(292.5 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="219" transform="rotate(337.5 312 405)"/>
+        </g>
+        <g id="tick_major" class="tick-major">
+          <line x1="312" y1="195" x2="312" y2="226" transform="rotate(45 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="226" transform="rotate(135 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="226" transform="rotate(225 312 405)"/>
+          <line x1="312" y1="195" x2="312" y2="226" transform="rotate(315 312 405)"/>
+        </g>
+      </g>
+
+      <g id="compass_references" fill="none" stroke="#ffbd16" stroke-width="2.5" stroke-linecap="round">
+        <path id="reference_horizontal" d="M145.5 405 H478.5"/>
+        <path id="reference_vertical" d="M312 238.5 V571.5" stroke-dasharray="4 4"/>
+      </g>
+      <g id="heading_pointer" transform="rotate(74 312 405)">
+        <path id="pointer_tip" d="M312 260 L298 418 L312 399 L326 418 Z" fill="#ffc66d"/>
+        <line id="pointer_shaft" x1="312" y1="405" x2="312" y2="268" stroke="#ffc66d" stroke-width="3"/>
+      </g>
+      <g id="camera_symbol" transform="rotate(119 312 405)" class="camera">
+        <rect id="camera_body" x="299" y="145" width="26" height="21" rx="4"/>
+        <path id="camera_top" d="M306 145 L309 140 L315 140 L318 145"/>
+        <path id="camera_direction" d="M306 166 L312 175 L318 166 Z"/>
+        <circle id="camera_lens" cx="312" cy="153" r="4.5" fill="none"/>
+      </g>
+      <g id="cardinal_labels" class="small" text-anchor="middle" font-weight="700">
+        <text id="cardinal_north" x="312" y="216" font-size="15">N</text>
+        <text id="cardinal_east" x="500" y="409" font-size="16">O</text>
+        <text id="cardinal_south" x="312" y="610" font-size="15">S</text>
+        <text id="cardinal_west" x="124" y="409" font-size="16">W</text>
+      </g>
+      <circle id="pointer_pivot" cx="312" cy="405" r="7" fill="#f4f8fb"/>
+      <text id="heading_value" x="312" y="347" text-anchor="middle" class="dial-value">074°</text>
+      <text id="heading_direction" x="312" y="457" text-anchor="middle" class="dial-caption">ONO</text>
+      <text id="heading_label" x="312" y="491" text-anchor="middle" class="dial-code">HDG</text>
+    </g>
+  </g>
+</svg>

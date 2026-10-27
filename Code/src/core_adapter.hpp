@@ -6,6 +6,13 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
+
+struct TestDriveOptions {
+    bool active = false;
+    double forceN = 200.0;
+    double speedLimit = 463.0 / 90.0;
+};
 
 struct ModelValidation {
     bool valid = false;
@@ -46,13 +53,14 @@ public:
         double simulationSeconds = 0.0;
         double wallSeconds = 0.0;
         double coreSeconds = 0.0;
+        QString testDriveStatus;
     };
 
     // durationSeconds == 0 bedeutet: laufen bis zum Abbruch.
     static std::unique_ptr<LiveSimulation> create(const QString& modelPath,
         const ModelValidation& validation, double durationSeconds,
         double stepSeconds, bool realtimePacing, QString* error,
-        const QJsonObject& start = {});
+        const QJsonObject& start = {}, const std::optional<TestDriveOptions>& testDrive = std::nullopt);
     ~LiveSimulation();
     LiveSimulation(const LiveSimulation&) = delete;
     LiveSimulation& operator=(const LiveSimulation&) = delete;
@@ -60,6 +68,8 @@ public:
     void run(const std::atomic_bool& cancellation);
     Progress progress() const;
     QJsonObject stateJson(qsizetype index, QString* error) const;
+    QVector<QJsonObject> motionStates(qsizetype begin, qsizetype end, QString* error) const;
+    bool setTestDriveActive(bool active, QString* error);
 
     static constexpr qsizetype maximumStates = 2'000'000;
 

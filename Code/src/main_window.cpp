@@ -1,6 +1,8 @@
 #include "main_window.hpp"
 
 #include "vtk_scene.hpp"
+#include "graphics_dialog.hpp"
+#include "navigation.hpp"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -17,13 +19,17 @@
 #include <QFileSystemWatcher>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QInputDialog>
 #include <QLabel>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMessageBox>
+#include <QMenuBar>
+#include <QMenu>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -194,6 +200,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* modeCaption = new QLabel(QStringLiteral("SIMULATION"));
     modeCaption->setObjectName(QStringLiteral("caption"));
     modeCombo_ = new QComboBox;
+    modeCombo_->setObjectName(QStringLiteral("simulationMode"));
     modeCombo_->addItem(QStringLiteral("Statisches Gleichgewicht"), false);
     modeCombo_->addItem(QStringLiteral("Dynamischer Verlauf"), true);
     panelLayout->addWidget(modeCaption);
@@ -201,6 +208,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     parameterForm_ = new QFormLayout;
     durationSpin_ = new QDoubleSpinBox;
+    durationSpin_->setObjectName(QStringLiteral("simulationDuration"));
     durationSpin_->setRange(0.0, 3600.0);
     durationSpin_->setDecimals(3);
     durationSpin_->setSingleStep(0.1);
@@ -229,9 +237,52 @@ MainWindow::MainWindow(QWidget* parent)
     runButton_ = new QPushButton(QStringLiteral("Core-Lauf starten"));
     runButton_->setObjectName(QStringLiteral("primaryButton"));
     cancelButton_ = new QPushButton(QStringLiteral("Lauf stoppen"));
+    cancelButton_->setObjectName(QStringLiteral("stopSimulation"));
     cancelButton_->setEnabled(false);
     panelLayout->addWidget(runButton_);
     panelLayout->addWidget(cancelButton_);
+
+    testDrivePanel_ = new QGroupBox(QStringLiteral("Testantrieb (temporaer)"));
+    testDrivePanel_->setObjectName(QStringLiteral("testDrivePanel"));
+    auto* testLayout = new QFormLayout(testDrivePanel_);
+    testDriveCheck_ = new QCheckBox(QStringLiteral("Testantrieb aktiv"));
+    testDriveCheck_->setObjectName(QStringLiteral("testDriveActive"));
+    testDriveCheck_->setToolTip(QStringLiteral(
+        "Wirkt am naechsten unberechneten Schritt des laufenden Versuchs, auch im Rueckblick. "
+        "Aus entfernt Schub UND Geschwindigkeitsbegrenzer, stoppt aber nicht das Boot."));
+    testForceSpin_ = new QDoubleSpinBox;
+    testForceSpin_->setObjectName(QStringLiteral("testDriveForce"));
+    testForceSpin_->setRange(0.0, 100000.0);
+    testForceSpin_->setDecimals(2);
+    testForceSpin_->setValue(200.0);
+    testForceSpin_->setSuffix(QStringLiteral(" N"));
+    testSpeedSpin_ = new QDoubleSpinBox;
+    testSpeedSpin_->setObjectName(QStringLiteral("testDriveSpeed"));
+    testSpeedSpin_->setDecimals(8);
+    testSpeedSpin_->setRange(0.01, 20.0);
+    testSpeedSpin_->setValue(testSpeedLimit_);
+    testSpeedSpin_->setSuffix(QStringLiteral(" m/s"));
+    testSpeedSpin_->setToolTip(QStringLiteral("Startwert intern exakt 10 kn = 463/90 m/s."));
+    testDriveStatus_ = new QLabel(QStringLiteral("Nur Testfunktion, keine Widerstandsphysik."));
+    testDriveStatus_->setWordWrap(true);
+    testLayout->addRow(testDriveCheck_);
+    testLayout->addRow(QStringLiteral("Testkraft"), testForceSpin_);
+    testLayout->addRow(QStringLiteral("Maximale Fahrt"), testSpeedSpin_);
+    testLayout->addRow(testDriveStatus_);
+    panelLayout->addWidget(testDrivePanel_);
+    connect(testSpeedSpin_, &QDoubleSpinBox::valueChanged, this, [this](double value) { testSpeedLimit_ = value; });
+    connect(testDriveCheck_, &QCheckBox::toggled, this, [this](bool active) {
+        if (live_ && simulationThread_) {
+            QString error;
+            if (!live_->setTestDriveActive(active, &error)) {
+                const QSignalBlocker blocker(testDriveCheck_);
+                testDriveCheck_->setChecked(!active);
+                showError(QStringLiteral("Testantrieb"), error);
+            } else {
+                testDriveStatus_->setText(QStringLiteral("Uebernahme am naechsten unberechneten Schritt angefordert."));
+            }
+        }
+    });
 
     auto* statusCaption = new QLabel(QStringLiteral("LAUFSTATUS"));
     statusCaption->setObjectName(QStringLiteral("caption"));
@@ -363,6 +414,9 @@ MainWindow::MainWindow(QWidget* parent)
         updateValues();
     };
 
+    auto* setupMenu = menuBar()->addMenu(QStringLiteral("Setup"));
+    setupMenu->addAction(QStringLiteral("Grafik …"), this, &MainWindow::setupGraphics);
+    setupMenu->addAction(QStringLiteral("Materialvorschau …"), this, &MainWindow::setupMaterialPreview);
     loadSettings();
     updateModeControls();
     setBusy(false);
@@ -379,11 +433,35 @@ QWidget* MainWindow::buildDisplayPanel()
     layout->addWidget(caption);
 
     forcesCheck_ = new QCheckBox(QStringLiteral("Vektoren anzeigen"));
+    forcesCheck_->setObjectName(QStringLiteral("displayVectors"));
     forcesCheck_->setChecked(true);
     layout->addWidget(forcesCheck_);
 
     auto* form = new QFormLayout;
     form->setSpacing(6);
+    cameraCombo_ = new QComboBox;
+    cameraCombo_->setObjectName(QStringLiteral("cameraPreset"));
+    cameraCombo_->setEnabled(false);
+    cameraCombo_->addItem(QStringLiteral("Freie Ansicht (Maus)"), QString());
+    for (const auto& preset : navigation::cameraPresets())
+        cameraCombo_->addItem(QString::fromUtf8(preset.label), QString::fromLatin1(preset.id));
+    cameraCombo_->setToolTip(QStringLiteral(
+        "Ansicht relativ zur Yacht setzen; danach mit der Maus frei drehen.\n"
+        "Seiten, Bug und Heck: beim Anwählen Wasserhöhe Z=0 und horizontaler Blick (0°).\n"
+        "Blickrichtung, Abstand und Kamera-Oben bleiben bei Bewegung körperfest."));
+    connect(cameraCombo_, &QComboBox::activated, this, [this] {
+        const auto id = cameraCombo_->currentData().toString();
+        if (id.isEmpty()) return;
+        QString error;
+        if (!scene_->setCameraPreset(id, &error))
+            showError(QStringLiteral("Kameraansicht"), error);
+    });
+    form->addRow(QStringLiteral("Kamera"), cameraCombo_);
+    navigationCheck_ = new QCheckBox(QStringLiteral("Kompass und Lageanzeigen"));
+    navigationCheck_->setObjectName(QStringLiteral("displayNavigation"));
+    navigationCheck_->setChecked(true);
+    connect(navigationCheck_, &QCheckBox::toggled, scene_, &VtkSceneWidget::setNavigationVisible);
+    form->addRow(navigationCheck_);
     auto scaleCombo = [] {
         auto* combo = new QComboBox;
         combo->addItem(QStringLiteral("logarithmisch"),
@@ -394,14 +472,17 @@ QWidget* MainWindow::buildDisplayPanel()
     forceScaleCombo_ = scaleCombo();
     momentScaleCombo_ = scaleCombo();
     visibilityCombo_ = new QComboBox;
-    visibilityCombo_->addItem(QStringLiteral("durch Körper sichtbar"),
-        static_cast<int>(VtkSceneWidget::Visibility::ThroughBody));
-    visibilityCombo_->addItem(
-        QStringLiteral("räumlich (verdeckt)"), static_cast<int>(VtkSceneWidget::Visibility::Spatial));
+    visibilityCombo_->setObjectName(QStringLiteral("graphicsProfile"));
+    visibilityCombo_->addItem(QStringLiteral("Technik – durchsichtig"), 0);
+    visibilityCombo_->addItem(QStringLiteral("Optik – grafisch"), 1);
     form->addRow(QStringLiteral("Skala Kraft"), forceScaleCombo_);
     form->addRow(QStringLiteral("Skala Moment"), momentScaleCombo_);
-    form->addRow(QStringLiteral("Sichtmodus"), visibilityCombo_);
+    form->addRow(QStringLiteral("Darstellung"), visibilityCombo_);
     layout->addLayout(form);
+    graphicsStatus_ = new QLabel;
+    graphicsStatus_->setWordWrap(true);
+    graphicsStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    layout->addWidget(graphicsStatus_);
 
     auto* referenceRow = new QHBoxLayout;
     referenceLabel_ = new QLabel(QStringLiteral("R_F: –  ·  R_M: –"));
@@ -617,6 +698,8 @@ void MainWindow::loadSettings()
         check->setChecked(settings.value(key, check->isChecked()).toBool());
     };
     restoreCheck(forcesCheck_, QStringLiteral("darstellung/pfeile"));
+    restoreCheck(navigationCheck_, QStringLiteral("darstellung/navigation"));
+    scene_->setNavigationVisible(navigationCheck_->isChecked());
     for (std::size_t i = 0; i < forceChecks_.size(); ++i) {
         restoreCheck(forceChecks_[i], QStringLiteral("darstellung/kraft_%1").arg(i));
         restoreCheck(momentChecks_[i], QStringLiteral("darstellung/moment_%1").arg(i));
@@ -631,13 +714,24 @@ void MainWindow::loadSettings()
     };
     restoreCombo(forceScaleCombo_, QStringLiteral("darstellung/skala_kraft"));
     restoreCombo(momentScaleCombo_, QStringLiteral("darstellung/skala_moment"));
-    restoreCombo(visibilityCombo_, QStringLiteral("darstellung/sichtmodus"));
+    QString graphicsError;
+    if (!graphics::load(settings, &graphics_, &graphicsError)) {
+        QTimer::singleShot(0, this, [this, graphicsError] {
+            showError(QStringLiteral("Grafikeinstellungen"), graphicsError);
+        });
+    }
+    {
+        const QSignalBlocker blocker(visibilityCombo_);
+        visibilityCombo_->setCurrentIndex(graphics_.active);
+    }
+    graphicsReady_ = true;
     applyDisplayOptions();
 }
 
 void MainWindow::saveDisplaySettings() const
 {
     QSettings settings;
+    settings.setValue(QStringLiteral("darstellung/navigation"), navigationCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/pfeile"), forcesCheck_->isChecked());
     for (std::size_t i = 0; i < forceChecks_.size(); ++i) {
         settings.setValue(QStringLiteral("darstellung/kraft_%1").arg(i), forceChecks_[i]->isChecked());
@@ -646,11 +740,95 @@ void MainWindow::saveDisplaySettings() const
     settings.setValue(QStringLiteral("darstellung/hebelarm"), leverCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/skala_kraft"), forceScaleCombo_->currentData());
     settings.setValue(QStringLiteral("darstellung/skala_moment"), momentScaleCombo_->currentData());
-    settings.setValue(QStringLiteral("darstellung/sichtmodus"), visibilityCombo_->currentData());
+}
+
+void MainWindow::setupGraphics()
+{
+    editGraphicsSettings(this, graphics_, scene_->graphicsStatus(),
+        [this](const graphics::Settings& proposed) {
+            QSettings storage;
+            QString error;
+            if (!graphics::save(storage, proposed, &error)) {
+                showError(QStringLiteral("Grafikeinstellungen"), error);
+                return false;
+            }
+            graphics_ = proposed;
+            applyDisplayOptions();
+            return true;
+        }, [this] { return graphicsStatus_->text(); });
+}
+
+void MainWindow::setupMaterialPreview()
+{
+    const auto model = modelCache_.value(cacheKey(modelId_, modelVersion_));
+    if (!model) {
+        showError(QStringLiteral("Materialvorschau"), QStringLiteral("Bitte zuerst ein Modell laden."));
+        return;
+    }
+    QStringList elements;
+    for (const auto& part : model->parts) {
+        if (part.surface != DisplayPart::Surface::Invisible && !elements.contains(part.elementId)) {
+            elements.append(part.elementId);
+        }
+    }
+    if (elements.isEmpty()) {
+        showError(QStringLiteral("Materialvorschau"), QStringLiteral("Das Modell hat keine sichtbaren Darstellungsteile."));
+        return;
+    }
+    bool accepted = false;
+    const QString element = QInputDialog::getItem(this, QStringLiteral("Materialvorschau"),
+        QStringLiteral("Darstellungsteil (nur Vorschau, keine Aenderung der Modell-/Physikdaten)"),
+        elements, 0, false, &accepted);
+    if (!accepted) return;
+    const QStringList styles{QStringLiteral("Original"), QStringLiteral("Lack"),
+        QStringLiteral("Segelstoff"), QStringLiteral("Holz / Teak"), QStringLiteral("Gebuerstetes Metall")};
+    const QString style = QInputDialog::getItem(this, QStringLiteral("Materialvorschau"),
+        QStringLiteral("Material fuer diesen Teil; gilt bis zum naechsten Modellladen"),
+        styles, 0, false, &accepted);
+    if (!accepted) return;
+    scene_->setMaterialPreview(element, static_cast<int>(styles.indexOf(style)));
+    applyGraphicsProfile();
+}
+
+void MainWindow::applyGraphicsProfile()
+{
+    auto profile = graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+    const bool reduced = profile.liveReduction && live_ && !live_->progress().finished;
+    if (reduced) {
+        for (auto feature : {graphics::Feature::SSAO, graphics::Feature::Shadows,
+                 graphics::Feature::Reflection}) {
+            profile.enabled[static_cast<std::size_t>(feature)] = false;
+        }
+    }
+    scene_->setGraphicsProfile(profile);
+    if (scene_->motionStateCount() == 0 && displayedIndex_ >= 0 && displayedIndex_ < stateCount()) {
+        displayState(displayedIndex_, true);
+    }
+    const QString prefix = reduced
+        ? QStringLiteral("Live-Reduktion aktiv: SSAO, Schatten und Bootsspiegelung aus.\n")
+        : QString();
+    graphicsStatus_->setText(prefix + scene_->graphicsStatus());
 }
 
 void MainWindow::applyDisplayOptions()
 {
+    if (!graphicsReady_) return;
+    const int active = visibilityCombo_->currentData().toInt();
+    if (active != graphics_.active) {
+        auto proposed = graphics_;
+        proposed.active = active;
+        QSettings storage;
+        QString error;
+        if (!graphics::save(storage, proposed, &error)) {
+            const QSignalBlocker blocker(visibilityCombo_);
+            visibilityCombo_->setCurrentIndex(graphics_.active);
+            showError(QStringLiteral("Grafikeinstellungen"), error);
+            return;
+        }
+        graphics_ = proposed;
+    }
+    const auto& profile = graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+    applyGraphicsProfile();
     VtkSceneWidget::DisplayOptions options;
     options.forces = forcesCheck_->isChecked();
     auto selection = [](const std::array<QCheckBox*, 5>& checks) {
@@ -660,13 +838,13 @@ void MainWindow::applyDisplayOptions()
     options.force = selection(forceChecks_);
     options.moment = selection(momentChecks_);
     options.leverArm = leverCheck_->isChecked();
-    options.visibility =
-        static_cast<VtkSceneWidget::Visibility>(visibilityCombo_->currentData().toInt());
+    options.visibility = profile.throughBody ? VtkSceneWidget::Visibility::ThroughBody
+                                            : VtkSceneWidget::Visibility::Spatial;
     options.forceMode =
         static_cast<forcedisplay::ScaleMode>(forceScaleCombo_->currentData().toInt());
     options.momentMode =
         static_cast<forcedisplay::ScaleMode>(momentScaleCombo_->currentData().toInt());
-    QList<QWidget*> dependent{leverCheck_, forceScaleCombo_, momentScaleCombo_, visibilityCombo_,
+    QList<QWidget*> dependent{leverCheck_, forceScaleCombo_, momentScaleCombo_,
         refitButton_};
     for (auto* check : forceChecks_) {
         dependent << check;
@@ -950,6 +1128,7 @@ void MainWindow::openModel(const QString& id)
         return;
     }
     modelId_ = entry->id;
+    cameraCombo_->setEnabled(false);
     modelVersion_ = entry->version;
     modelPath_ = entry->path;
     modelName_ = entry->name.isEmpty() ? entry->id : entry->name;
@@ -1055,7 +1234,13 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
         setBusy(false);
         return;
     }
+    cameraCombo_->setEnabled(true);
+    {
+        const QSignalBlocker blocker(cameraCombo_);
+        cameraCombo_->setCurrentIndex(0);
+    }
     initialReferences(opened->data);
+    applyGraphicsProfile();
     clearValues();
     validation_ = validation;
     QStringList tooltip{QStringLiteral("%1 · Fassung %2").arg(entry.id, entry.version),
@@ -1159,7 +1344,8 @@ void MainWindow::startLiveSimulation(double duration, double step, bool paced, c
 {
     QString error;
     std::shared_ptr<LiveSimulation> live =
-        LiveSimulation::create(modelPath_, validation_, duration, step, paced, &error, start);
+        LiveSimulation::create(modelPath_, validation_, duration, step, paced, &error, start,
+            TestDriveOptions{testDriveCheck_->isChecked(), testForceSpin_->value(), testSpeedLimit_});
     if (!live) {
         statusLabel_->setText(QStringLiteral("Core-Lauf nicht gestartet"));
         showError(QStringLiteral("Core-Simulation"), error);
@@ -1169,10 +1355,10 @@ void MainWindow::startLiveSimulation(double duration, double step, bool paced, c
     followLive_ = true;
     statusLabel_->setText(paced ? QStringLiteral("Dynamik läuft in Echtzeit …")
                                 : QStringLiteral("Dynamik läuft ungebremst …"));
-    setBusy(true);
 
     auto* thread = QThread::create([this, live] { live->run(cancellation_); });
     simulationThread_ = thread;
+    setBusy(true);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     connect(thread, &QThread::finished, this, [this, thread, live] {
         if (simulationThread_ == thread) {
@@ -1206,6 +1392,8 @@ void MainWindow::updateLiveProgress()
         return;
     }
     const auto progress = live_->progress();
+    if (!progress.testDriveStatus.isEmpty()) testDriveStatus_->setText(progress.testDriveStatus);
+    applyGraphicsProfile();
     const double load =
         progress.wallSeconds > 0.0 ? 100.0 * progress.coreSeconds / progress.wallSeconds : 0.0;
     runtimeInfo_ = QStringLiteral("Echtzeit: %1 s  ·  Core-Rechenzeit: %2 (%3 %)")
@@ -1336,6 +1524,24 @@ void MainWindow::displayState(qsizetype index, bool force)
     } catch (const std::exception& exception) {
         error = QString::fromUtf8(exception.what());
     }
+    if (error.isEmpty()) {
+        QString motionError;
+        if (scene_->motionStateCount() > index) scene_->resetMotionHistory();
+        for (auto begin = scene_->motionStateCount(); begin <= index && motionError.isEmpty();) {
+            const auto end = std::min(index + 1, begin + 256);
+            QVector<QJsonObject> motion;
+            if (live_) {
+                motion = live_->motionStates(begin, end, &motionError);
+            } else {
+                for (qsizetype i = begin; i < end; ++i) motion.push_back(states_[i]);
+            }
+            if (motionError.isEmpty() && !scene_->appendMotionStates(motion, &motionError) && motionError.isEmpty()) {
+                motionError = QStringLiteral("Fahrthistorie konnte nicht aufgebaut werden.");
+            }
+            begin = end;
+        }
+        if (!motionError.isEmpty()) scene_->invalidateMotionHistory(index + 1, motionError);
+    }
     if (!error.isEmpty() || !scene_->setState(state, forces, &error)) {
         cancellation_.store(true);
         statusLabel_->setText(QStringLiteral("Darstellung des Zustands fehlgeschlagen"));
@@ -1343,6 +1549,7 @@ void MainWindow::displayState(qsizetype index, bool force)
         return;
     }
     displayedIndex_ = index;
+    applyGraphicsProfile();
     currentForces_ = forces;
     hasForces_ = true;
     updateValues();
@@ -1356,6 +1563,10 @@ void MainWindow::setBusy(bool busy)
     const bool hasModel = validation_.valid && !modelPath_.isEmpty();
     const bool dynamic = modeCombo_->currentData().toBool();
     const bool running = simulationThread_ != nullptr;
+    testDrivePanel_->setVisible(dynamic);
+    testDriveCheck_->setEnabled(hasModel && dynamic && (!busy || running));
+    testForceSpin_->setEnabled(!busy && dynamic);
+    testSpeedSpin_->setEnabled(!busy && dynamic);
     chooseFolderButton_->setEnabled(!running);
     modelList_->setEnabled(!running);
     modeCombo_->setEnabled(!busy && hasModel);

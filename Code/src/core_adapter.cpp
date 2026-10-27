@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -244,6 +245,10 @@ struct LiveSimulation::Impl {
     double stepSeconds = 0.01;
     bool realtimePacing = true;
     segelphysik::Zustand start;
+    bool hasTestDrive = false;
+    std::vector<segelphysik::TestantriebEreignis> pendingTestEvents;
+    std::size_t nextTestEvent = 1;
+    QString testDriveStatus;
 
     mutable std::mutex mutex;
     std::vector<segelphysik::Zustand> states;
@@ -265,6 +270,11 @@ struct LiveSimulation::Impl {
     void finish(const std::string& finalStatus, const std::string& detail)
     {
         const std::lock_guard<std::mutex> lock(mutex);
+        if (!pendingTestEvents.empty()) {
+            testDriveStatus = QStringLiteral("Lauf beendet: %1 angeforderte Flagwechsel wurden nicht mehr angewandt.")
+                .arg(static_cast<qulonglong>(pendingTestEvents.size()));
+            pendingTestEvents.clear();
+        }
         status = finalStatus;
         diagnostic = detail;
         finished = true;
@@ -282,7 +292,8 @@ LiveSimulation::~LiveSimulation() = default;
 
 std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     const ModelValidation& validation, double durationSeconds,
-    double stepSeconds, bool realtimePacing, QString* error, const QJsonObject& start)
+    double stepSeconds, bool realtimePacing, QString* error, const QJsonObject& start,
+    const std::optional<TestDriveOptions>& testDrive)
 {
     auto fail = [error](const QString& message) {
         if (error != nullptr) {
@@ -311,6 +322,16 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
         live->impl_->start = startState(start, true);
         live->impl_->workerModel = segelphysik::lade_modell(nativePath(modelPath));
         live->impl_->displayModel = live->impl_->workerModel;
+        if (testDrive) {
+            live->impl_->start = segelphysik::testantrieb_start(live->impl_->workerModel,
+                live->impl_->start,
+                segelphysik::TestantriebKonfiguration{testDrive->forceN, testDrive->speedLimit},
+                testDrive->active);
+            live->impl_->hasTestDrive = true;
+            live->impl_->testDriveStatus = testDrive->active
+                ? QStringLiteral("Testantrieb zum Laufstart aktiv.")
+                : QStringLiteral("Testantrieb aus; im laufenden Versuch schaltbar.");
+        }
     } catch (const std::exception& exception) {
         return fail(QString::fromUtf8(exception.what()));
     }
@@ -368,8 +389,22 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
                 }
             }
             const auto computeStart = clock::now();
-            auto next = segelphysik::dynamikschritt(
-                d.workerModel, state, target - state.zeit_s);
+            std::vector<segelphysik::TestantriebEreignis> events;
+            {
+                const std::lock_guard<std::mutex> lock(d.mutex);
+                events.swap(d.pendingTestEvents);
+            }
+            auto next = events.empty()
+                ? segelphysik::dynamikschritt(d.workerModel, state, target - state.zeit_s)
+                : segelphysik::dynamikschritt(d.workerModel, state, target - state.zeit_s, events);
+            if (!events.empty()) {
+                const std::lock_guard<std::mutex> lock(d.mutex);
+                d.testDriveStatus = QStringLiteral("Testantrieb %1: Ereignis %2 am Uebergang %3 → %4 uebernommen.")
+                    .arg(events.back().aktiv ? QStringLiteral("ein") : QStringLiteral("aus"))
+                    .arg(static_cast<qulonglong>(events.back().kennung))
+                    .arg(static_cast<qulonglong>(state.schritt))
+                    .arg(static_cast<qulonglong>(next.schritt));
+            }
             if (!(next.zeit_s > state.zeit_s)) {
                 throw std::runtime_error("CORE-SIM-0001: Kein Zeitfortschritt.");
             }
@@ -398,6 +433,7 @@ LiveSimulation::Progress LiveSimulation::progress() const
     result.finished = d.finished;
     result.status = QString::fromStdString(d.status);
     result.diagnostic = QString::fromStdString(d.diagnostic);
+    result.testDriveStatus = d.testDriveStatus;
     result.simulationSeconds = d.states.empty() ? 0.0 : d.states.back().zeit_s;
     result.coreSeconds = d.coreSeconds;
     result.wallSeconds = d.finished
@@ -407,6 +443,22 @@ LiveSimulation::Progress LiveSimulation::progress() const
                 std::chrono::steady_clock::now() - d.started).count()
             : 0.0);
     return result;
+}
+
+bool LiveSimulation::setTestDriveActive(bool active, QString* error)
+{
+    auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (!d.hasTestDrive || d.finished) {
+        if (error) *error = QStringLiteral("Kein laufender Versuch mit Testantriebskontext.");
+        return false;
+    }
+    if (d.nextTestEvent == std::numeric_limits<std::size_t>::max()) {
+        if (error) *error = QStringLiteral("Testantriebs-Ereigniskennung erschoepft.");
+        return false;
+    }
+    d.pendingTestEvents.push_back({d.nextTestEvent++, active});
+    return true;
 }
 
 QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
@@ -421,6 +473,7 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
             if (error != nullptr) {
                 *error = QStringLiteral("Zustand %1 ist nicht vorhanden.").arg(index);
             }
+
             return {};
         }
         state = d.states[static_cast<std::size_t>(index)];
@@ -429,6 +482,7 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
             diagnostic = d.diagnostic;
         }
     }
+
     try {
         return parseObject(QByteArray::fromStdString(segelphysik::zustand_json(
                                d.displayModel, state, status, diagnostic)),
@@ -439,4 +493,30 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
         }
         return {};
     }
+}
+
+QVector<QJsonObject> LiveSimulation::motionStates(qsizetype begin, qsizetype end, QString* error) const
+{
+    const auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (begin < 0 || end < begin || static_cast<std::size_t>(end) > d.states.size()) {
+        if (error) *error = QStringLiteral("Ungueltiger Bereich fuer Fahrthistorie.");
+        return {};
+    }
+    QVector<QJsonObject> result;
+    result.reserve(end - begin);
+    auto array = [](const auto& values) {
+        QJsonArray a;
+        for (double value : values) a.append(value);
+        return a;
+    };
+    for (qsizetype i = begin; i < end; ++i) {
+        const auto& s = d.states[static_cast<std::size_t>(i)];
+        result.push_back({{QStringLiteral("zeit_s"), s.zeit_s},
+            {QStringLiteral("position_m"), array(s.pose.position_m())},
+            {QStringLiteral("orientierung_xyzw"), array(s.pose.orientierung_xyzw())},
+            {QStringLiteral("geschwindigkeit_welt_m_s"), array(s.geschwindigkeit_welt_m_s)},
+            {QStringLiteral("moment_bezug_modell_m"), array(d.displayModel.schwerpunkt_m)}});
+    }
+    return result;
 }

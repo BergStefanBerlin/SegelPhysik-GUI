@@ -113,6 +113,7 @@ struct ForceState {
     QJsonObject equilibrium;
     // A-C-00047: dauerhaft vollgelaufene Elemente (tragen keinen Auftrieb).
     QStringList flooded;
+    bool testLimiterApplied = false;
 };
 
 // Wirft std::runtime_error bei strukturell beschädigten Daten. `null` für

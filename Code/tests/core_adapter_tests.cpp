@@ -209,6 +209,53 @@ void testStartState(const QString& modelPath, const ModelValidation& validation)
         "Broken start state was accepted.");
 }
 
+void testDrive(const QString& modelPath, const ModelValidation& validation)
+{
+    QString error;
+    auto invalid = TestDriveOptions{};
+    invalid.speedLimit = 0;
+    require(!LiveSimulation::create(modelPath, validation, 0.1, 0.01, false, &error, {}, invalid),
+        "invalid test drive accepted");
+    error.clear();
+    auto live = LiveSimulation::create(modelPath, validation, 0.3, 0.01, true, &error, {},
+        TestDriveOptions{false, 100000, 0.01});
+    require(live != nullptr, "test drive initialization failed");
+    require(live->setTestDriveActive(true, &error), "queued activation rejected");
+    std::atomic_bool stop{false};
+    std::thread worker([&] { live->run(stop); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (live->progress().states < 6 && !live->progress().finished
+        && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto historical = live->stateJson(2, &error);
+    const bool switched = live->setTestDriveActive(false, &error);
+    worker.join();
+    require(switched && !historical.isEmpty(), "live test switch failed");
+    const auto progress = live->progress();
+    require(progress.status == QStringLiteral("abgeschlossen"), "test drive run failed");
+    require(live->stateJson(2, &error) == historical, "later flag changed historical state");
+    require(historical.value(QStringLiteral("vertragsversion")).toString() == QStringLiteral("3")
+        && historical.value(QStringLiteral("testantrieb")).isObject(), "V3 test context missing");
+    const auto speed = historical.value(QStringLiteral("geschwindigkeit_welt_m_s")).toArray();
+    require(std::hypot(speed[0].toDouble(), speed[1].toDouble()) <= 0.0100000001,
+        "active live cap not enforced");
+    const auto last = live->stateJson(progress.states - 1, &error);
+    bool disabled = false;
+    for (const auto& value : last.value(QStringLiteral("vektoren")).toArray()) {
+        const auto c = value.toObject();
+        if (c.value(QStringLiteral("quelle")).toString() == QStringLiteral("testantrieb")) {
+            disabled = c.value(QStringLiteral("zustand")).toString() == QStringLiteral("deaktiviert");
+        }
+    }
+    require(disabled, "live switch did not disable test force");
+    require(!progress.testDriveStatus.isEmpty(), "effective switch confirmation absent");
+    require(!live->setTestDriveActive(true, &error), "event accepted after end");
+    error.clear();
+    const auto motion = live->motionStates(0, progress.states, &error);
+    require(motion.size() == progress.states && error.isEmpty(), "raw motion states incomplete");
+    require(motion[2].value(QStringLiteral("position_m")) == historical.value(QStringLiteral("position_m")),
+        "lightweight history does not match actual physics");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -226,6 +273,7 @@ int main(int argc, char* argv[])
         testDynamicRun(modelPath, validation);
         testLiveRun(modelPath, validation);
         testStartState(modelPath, validation);
+        testDrive(modelPath, validation);
         std::cout << "Core adapter validation, static hydrostatics and "
                      "dynamic run passed.\n";
         return 0;

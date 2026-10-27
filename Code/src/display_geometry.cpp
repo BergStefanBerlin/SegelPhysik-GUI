@@ -53,7 +53,8 @@ QVector<DisplayPart> toDisplayParts(const segelphysik::Darstellungsgeometrie& ge
                 {"lack", S::Lacquer}, {"glas", S::Glass}, {"leuchtend", S::Glow},
                 {"schillernd", S::Iridescent}, {"facettiert", S::Faceted},
                 {"drahtgitter", S::Wireframe}, {"perlmutt", S::Pearl},
-                {"unsichtbar", S::Invisible}};
+                {"unsichtbar", S::Invisible}, {"stoff", S::Cloth}, {"holz", S::Wood},
+                {"metall_gebuerstet", S::BrushedMetal}};
             for (const auto& [name, value] : names) {
                 if (*part.oberflaeche == name) {
                     display.surface = value;

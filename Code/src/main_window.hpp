@@ -4,6 +4,7 @@
 #include "display_geometry.hpp"
 #include "force_display.hpp"
 #include "model_catalog.hpp"
+#include "graphics_settings.hpp"
 
 #include <QHash>
 #include <QMainWindow>
@@ -78,6 +79,9 @@ private:
     void showError(const QString& title, const QString& message);
 
     void applyDisplayOptions();
+    void setupGraphics();
+    void setupMaterialPreview();
+    void applyGraphicsProfile();
     void loadSettings();
     void saveDisplaySettings() const;
     void initialReferences(const ModelDisplayData& data);
@@ -91,6 +95,9 @@ private:
     void copyValues() const;
 
     VtkSceneWidget* scene_ = nullptr;
+    graphics::Settings graphics_ = graphics::defaults();
+    bool graphicsReady_ = false;
+    QLabel* graphicsStatus_ = nullptr;
     QPushButton* chooseFolderButton_ = nullptr;
     QListWidget* modelList_ = nullptr;
     QLabel* folderLabel_ = nullptr;
@@ -103,6 +110,12 @@ private:
     QComboBox* modeCombo_ = nullptr;
     QDoubleSpinBox* durationSpin_ = nullptr;
     QDoubleSpinBox* stepSpin_ = nullptr;
+    QCheckBox* testDriveCheck_ = nullptr;
+    QDoubleSpinBox* testForceSpin_ = nullptr;
+    QDoubleSpinBox* testSpeedSpin_ = nullptr;
+    QLabel* testDriveStatus_ = nullptr;
+    QWidget* testDrivePanel_ = nullptr;
+    double testSpeedLimit_ = 463.0 / 90.0;
     QFormLayout* parameterForm_ = nullptr;
     QSlider* stateSlider_ = nullptr;
     QLabel* modelLabel_ = nullptr;
@@ -115,6 +128,8 @@ private:
     QComboBox* forceScaleCombo_ = nullptr;
     QComboBox* momentScaleCombo_ = nullptr;
     QComboBox* visibilityCombo_ = nullptr;
+    QComboBox* cameraCombo_ = nullptr;
+    QCheckBox* navigationCheck_ = nullptr;
     // Je Rubrik (Kräfte, Momente): Gewicht gesamt/Teile, Auftrieb gesamt/Teile, Summe.
     std::array<QCheckBox*, 5> forceChecks_{};
     std::array<QCheckBox*, 5> momentChecks_{};

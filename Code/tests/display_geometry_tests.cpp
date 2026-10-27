@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -51,6 +52,26 @@ void testEmptyGeometry()
     require(thrown, "Empty geometry must be rejected.");
 }
 
+void testMaterialContract()
+{
+    const std::pair<const char*, DisplayPart::Surface> surfaces[] = {
+        {"lack", DisplayPart::Surface::Lacquer}, {"stoff", DisplayPart::Surface::Cloth},
+        {"holz", DisplayPart::Surface::Wood}, {"metall_gebuerstet", DisplayPart::Surface::BrushedMetal},
+        {"metall", DisplayPart::Surface::Metal}, {"matt", DisplayPart::Surface::Matte}};
+    for (const auto& [name, expected] : surfaces) {
+        segelphysik::Darstellungsgeometrie geometry;
+        decltype(geometry.teile)::value_type part;
+        part.element_id = "explicit-material";
+        part.oberflaeche = name;
+        part.punkte_m = {{{0, 0, 0}}, {{1, 0, 0}}, {{0, 1, 0}}};
+        part.dreiecke = {{{0, 1, 2}}};
+        geometry.teile.push_back(part);
+        const auto display = toDisplayParts(geometry);
+        require(display.size() == 1 && display.front().surface == expected,
+            "Explicit Core material was not mapped.");
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -63,6 +84,7 @@ int main(int argc, char* argv[])
     try {
         testQuader(QString::fromLocal8Bit(argv[1]));
         testEmptyGeometry();
+        testMaterialContract();
         std::cout << "Display geometry via core passed.\n";
         return 0;
     } catch (const std::exception& error) {

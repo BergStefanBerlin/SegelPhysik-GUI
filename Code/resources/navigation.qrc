@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/navigation">
+    <file alias="compass.svg">navigation/Widget_Kompass.svg</file>
+    <file alias="roll.svg">navigation/Widget_Kraengung.svg</file>
+    <file alias="pitch.svg">navigation/Widget_Stampfen.svg</file>
+  </qresource>
+</RCC>

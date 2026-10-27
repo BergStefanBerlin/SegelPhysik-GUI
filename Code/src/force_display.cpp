@@ -223,7 +223,29 @@ ForceState parseForceState(const QJsonObject& object)
     state.reference = readOptionalVector(
         object.value(QStringLiteral("moment_bezug_modell_m")),
         QStringLiteral("moment_bezug_modell_m"));
-    const bool v2 = state.contract == QStringLiteral("2");
+    const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3");
+    if (state.contract != QStringLiteral("1") && !v2) {
+        throw std::runtime_error("Nicht unterstuetzte CORE-Ergebnisversion.");
+    }
+    if (state.contract == QStringLiteral("3") && !object.value(QStringLiteral("testantrieb")).isObject()) {
+        throw std::runtime_error("CORE-Ergebnisversion 3 ohne verpflichtenden Testantriebskontext.");
+    }
+    if (state.contract == QStringLiteral("3")) {
+        const auto test = object.value(QStringLiteral("testantrieb")).toObject();
+        const auto transition = test.value(QStringLiteral("uebergang"));
+        if (test.value(QStringLiteral("modus")) != QJsonValue(QStringLiteral("temporaerer_bugtest"))
+            || !test.value(QStringLiteral("aktiv")).isBool()
+            || !test.value(QStringLiteral("konfiguration")).isObject()
+            || (!transition.isNull() && !transition.isObject())) {
+            throw std::runtime_error("Ungueltiger CORE-Testantriebskontext.");
+        }
+        if (transition.isObject()) {
+            const auto limiter = transition.toObject().value(QStringLiteral("begrenzung")).toObject();
+            if (!limiter.value(QStringLiteral("wirksam")).isBool())
+                throw std::runtime_error("CORE-Testbegrenzer ohne Eingriffsstatus.");
+            state.testLimiterApplied = limiter.value(QStringLiteral("wirksam")).toBool();
+        }
+    }
     for (const auto& id : object.value(QStringLiteral("geflutete_elemente")).toArray()) {
         state.flooded.push_back(id.toString());
     }
@@ -639,6 +661,11 @@ BalanceSummary balanceSummary(const ForceState& state)
     summary.title = summary.complete
         ? QStringLiteral("Gesamtbilanz")
         : QStringLiteral("Verfügbare Teilsumme – unvollständig");
+    if (state.testLimiterApplied) {
+        summary.title = QStringLiteral("Kraeftebilanz mit kuenstlichem Testeingriff");
+        summary.lines << QStringLiteral("Testbegrenzer hat einen separaten Korrekturimpuls angewandt. "
+                                       "Kein physikalischer Widerstand und kein vollstaendiger Impulsbilanzschluss aus den Kraftsummen.");
+    }
     if (state.total && state.total->force) {
         summary.lines << QStringLiteral("ΣF: %1")
                              .arg(formatQuantity(norm(*state.total->force), QStringLiteral("N")));

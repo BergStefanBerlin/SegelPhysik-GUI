@@ -20,7 +20,7 @@ set(SEGELPHYSIK_MODELLE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../Modelle"
     CACHE PATH "Model folder (sibling of the CORE and GUI checkouts)")
 
-find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets)
+find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Svg Xml)
 find_package(VTK CONFIG REQUIRED COMPONENTS
     CommonCore
     CommonDataModel
@@ -30,6 +30,7 @@ find_package(VTK CONFIG REQUIRED COMPONENTS
     FiltersSources
     GUISupportQt
     InteractionStyle
+    IOImage
     RenderingAnnotation
     RenderingCore
     RenderingFreeType
@@ -39,9 +40,18 @@ add_subdirectory("${SEGELPHYSIK_CORE_SOURCE_DIR}/Code"
     "${CMAKE_CURRENT_BINARY_DIR}/segelphysik-core")
 
 add_executable(segelphysik_gui WIN32
+    Code/src/navigation.cpp
+    Code/src/navigation.hpp
+    Code/resources/navigation.qrc
     Code/src/main.cpp
+    Code/src/water_motion.cpp
+    Code/src/water_motion.hpp
     Code/src/main_window.cpp
     Code/src/main_window.hpp
+    Code/src/graphics_settings.cpp
+    Code/src/graphics_settings.hpp
+    Code/src/graphics_dialog.cpp
+    Code/src/graphics_dialog.hpp
     Code/src/model_catalog.cpp
     Code/src/model_catalog.hpp
     Code/src/core_adapter.cpp
@@ -57,6 +67,7 @@ target_compile_definitions(segelphysik_gui PRIVATE
     "SEGELPHYSIK_DEFAULT_MODEL_DIR=\"${SEGELPHYSIK_MODELLE_DIR}\"")
 target_link_libraries(segelphysik_gui PRIVATE
     Qt6::Widgets
+    Qt6::Svg Qt6::Xml
     segelphysik_core
     VTK::CommonCore
     VTK::CommonDataModel
@@ -66,6 +77,7 @@ target_link_libraries(segelphysik_gui PRIVATE
     VTK::FiltersSources
     VTK::GUISupportQt
     VTK::InteractionStyle
+    VTK::IOImage
     VTK::RenderingAnnotation
     VTK::RenderingCore
     VTK::RenderingFreeType
@@ -96,6 +108,107 @@ endforeach()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(segelphysik_gui_water_motion_tests
+        Code/src/water_motion.cpp Code/src/graphics_settings.cpp
+        Code/src/force_display.cpp Code/tests/water_motion_tests.cpp)
+    target_include_directories(segelphysik_gui_water_motion_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_water_motion_tests PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME gui_water_motion COMMAND segelphysik_gui_water_motion_tests)
+    add_executable(segelphysik_gui_navigation_tests
+        Code/src/navigation.cpp
+        Code/src/force_display.cpp
+        Code/resources/navigation.qrc
+        Code/tests/navigation_tests.cpp)
+    target_include_directories(segelphysik_gui_navigation_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_navigation_tests PRIVATE Qt6::Widgets Qt6::Svg Qt6::Xml)
+    add_test(NAME gui_navigation COMMAND segelphysik_gui_navigation_tests)
+    set_tests_properties(gui_navigation PROPERTIES TIMEOUT 20)
+    if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+        set_tests_properties(gui_navigation PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+    else()
+        set_tests_properties(gui_navigation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
+    add_executable(segelphysik_gui_graphics_tests
+        Code/src/graphics_settings.cpp
+        Code/tests/graphics_settings_tests.cpp)
+    target_include_directories(segelphysik_gui_graphics_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_graphics_tests PRIVATE Qt6::Core)
+    add_test(NAME gui_graphics_settings COMMAND segelphysik_gui_graphics_tests)
+    add_executable(segelphysik_gui_graphics_render_tests
+        Code/src/water_motion.cpp
+        Code/src/navigation.cpp
+        Code/resources/navigation.qrc
+        Code/src/main_window.cpp
+        Code/src/model_catalog.cpp
+        Code/src/graphics_dialog.cpp
+        Code/src/core_adapter.cpp
+        Code/src/graphics_settings.cpp
+        Code/src/display_geometry.cpp
+        Code/src/force_display.cpp
+        Code/src/vtk_scene.cpp
+        Code/tests/graphics_render_tests.cpp)
+    target_include_directories(segelphysik_gui_graphics_render_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_graphics_render_tests PRIVATE
+        Qt6::Widgets Qt6::Svg Qt6::Xml segelphysik_core ${VTK_LIBRARIES})
+    vtk_module_autoinit(TARGETS segelphysik_gui_graphics_render_tests MODULES
+        VTK::RenderingOpenGL2 VTK::RenderingFreeType VTK::GUISupportQt)
+    option(SEGELPHYSIK_GRAPHICS_GPU_TEST "Run graphics tests requiring an interactive OpenGL desktop" OFF)
+    if(SEGELPHYSIK_GRAPHICS_GPU_TEST)
+        add_test(NAME gui_water_motion_render COMMAND segelphysik_gui_graphics_render_tests
+            --water-motion-only "${SEGELPHYSIK_MODELLE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/water-motion")
+        set_tests_properties(gui_water_motion_render PROPERTIES
+            TIMEOUT 120 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+            set_property(TEST gui_water_motion_render APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+        endif()
+        add_test(NAME gui_navigation_camera COMMAND segelphysik_gui_graphics_render_tests
+            --navigation-only "${SEGELPHYSIK_MODELLE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/navigation-camera")
+        set_tests_properties(gui_navigation_camera PROPERTIES
+            TIMEOUT 90 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+            set_property(TEST gui_navigation_camera APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+        endif()
+        foreach(scale IN ITEMS 100 150 200)
+            if(scale EQUAL 100)
+                set(scale_factor "1")
+            elseif(scale EQUAL 150)
+                set(scale_factor "1.5")
+            else()
+                set(scale_factor "2")
+            endif()
+            add_test(NAME gui_graphics_render_${scale} COMMAND segelphysik_gui_graphics_render_tests
+                "${SEGELPHYSIK_MODELLE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/${scale}")
+            set_tests_properties(gui_graphics_render_${scale} PROPERTIES
+                TIMEOUT 300 RUN_SERIAL TRUE
+                ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
+            if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+                set_property(TEST gui_graphics_render_${scale} APPEND PROPERTY ENVIRONMENT
+                    "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            endif()
+        endforeach()
+    endif()
+    add_executable(segelphysik_gui_graphics_dialog_tests
+        Code/src/graphics_settings.cpp
+        Code/src/graphics_dialog.cpp
+        Code/tests/graphics_dialog_tests.cpp)
+    target_include_directories(segelphysik_gui_graphics_dialog_tests PRIVATE Code/src)
+    target_link_libraries(segelphysik_gui_graphics_dialog_tests PRIVATE Qt6::Widgets)
+    add_test(NAME gui_graphics_dialog COMMAND segelphysik_gui_graphics_dialog_tests)
+    set_tests_properties(gui_graphics_dialog PROPERTIES
+        TIMEOUT 20)
+    if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+        set_tests_properties(gui_graphics_dialog PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+    else()
+        set_tests_properties(gui_graphics_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
     add_executable(segelphysik_gui_core_tests
         Code/src/core_adapter.cpp
         Code/src/core_adapter.hpp
@@ -148,6 +261,11 @@ endif()
 if(MSVC)
     target_compile_options(segelphysik_gui PRIVATE /W4 /WX /permissive- /utf-8)
     if(BUILD_TESTING)
+        target_compile_options(segelphysik_gui_water_motion_tests PRIVATE /W4 /WX /permissive- /utf-8)
+        target_compile_options(segelphysik_gui_navigation_tests PRIVATE /W4 /WX /permissive- /utf-8)
+        target_compile_options(segelphysik_gui_graphics_tests PRIVATE /W4 /WX /permissive- /utf-8)
+        target_compile_options(segelphysik_gui_graphics_dialog_tests PRIVATE /W4 /WX /permissive- /utf-8)
+        target_compile_options(segelphysik_gui_graphics_render_tests PRIVATE /W4 /WX /permissive- /utf-8)
         target_compile_options(segelphysik_gui_core_tests PRIVATE
             /W4 /WX /permissive- /utf-8)
         target_compile_options(segelphysik_gui_catalog_tests PRIVATE
@@ -161,6 +279,10 @@ else()
     target_compile_options(segelphysik_gui PRIVATE
         -Wall -Wextra -Wpedantic -Werror)
     if(BUILD_TESTING)
+        target_compile_options(segelphysik_gui_navigation_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(segelphysik_gui_graphics_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(segelphysik_gui_graphics_dialog_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(segelphysik_gui_graphics_render_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
         target_compile_options(segelphysik_gui_core_tests PRIVATE
             -Wall -Wextra -Wpedantic -Werror)
         target_compile_options(segelphysik_gui_catalog_tests PRIVATE
