@@ -8,6 +8,14 @@
 
 **Entwurfspunkte und Restfragen:** [Entwurfspunkte GUI-Erstausbau](../Spezifikationen/Entwurfspunkte/GUI_Erstausbau.json)
 
+**Nachweisergänzung 27.10.2026:** Die
+[Lizenzdokumentation](../Dokumentation/Lizenzdokumentation.md) erfasst die
+tatsächlich installierten Versionen und die Grenzen der Prüfung.
+IDEE-G-00006 sowie die Lizenzvorbehalte von U-G-000001/U-G-000010 bleiben
+offen; keine Verteilungsfreigabe. Nachverfolgung:
+[GitHub-Issue #1](https://github.com/BergStefanBerlin/SegelPhysik-GUI/issues/1).
+Die historischen Umsetzungs- und Abnahmestände unten bleiben unverändert.
+
 Dieser Plan führt die Umsetzungsschritte U-G-000001 bis U-G-000010 für den
 ersten GUI-Ausbau. Alle Schritte sind in Version G-0.1 umgesetzt; die
 Zuordnung zu den Anforderungen steht in Abschnitt 3 und in der

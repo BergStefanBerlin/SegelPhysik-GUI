@@ -54,7 +54,12 @@
       "thema": "Qt-/VTK-Versionen und Lizenzfreigabe",
       "bezug": "../Spezifikation_GUI_Erstausbau.md#ziel-und-umfang",
       "frage": "Welche konkreten Qt-6- und VTK-Versionen sollen verwendet werden und welche Lizenz-/Verteilungsbedingungen werden für die tatsächlich eingebundenen Pakete freigegeben? Die Core-Übergabe verlangt diese Prüfung vor Verteilung.",
-      "vermerk_G-0.1": "Lizenzprüfung vor Verteilung steht aus."
+      "vermerk_G-0.1": "Lizenzprüfung vor Verteilung steht aus.",
+      "pruefung_2026-10-27": "Technische Teilprüfung: Qt 6.9.1#1, VTK 9.3.0-pv5.12.1#12 und 41 installierte Basispakete im verwendeten Build ermittelt. Eigene GUI-Lizenzentscheidung, vollständige Prüfung des Verteilpakets, Lizenzbeigaben, Quellcodebereitstellung und Austauschbarkeitsnachweis bleiben offen; keine Verteilungsfreigabe.",
+      "nachweis": "../../Dokumentation/Lizenzdokumentation.md",
+      "lizenzentscheidung_2026-10-27": "Nutzerentscheidung: nicht-kommerzielle Nutzung; Schulen, Universitäten und gemeinnützige Vereine auch mit Kursgebühren/bezahlter Forschung bei Originallink erlaubt. Weitergabe einschließlich Ableitungen nur kostenlos mit Quellcode, gleichen Bedingungen und erhaltenen Urheberhinweisen. Betriebliche kommerzielle Nutzung und bezahlte Dienstleistungen außerhalb der Ausnahme verboten. Projektbezogener Bedingungenentwurf erstellt, noch nicht in Kraft; rechtliche Prüfung und Verteilungsnachweise offen.",
+      "bedingungenentwurf": "../../Dokumentation/Lizenzbedingungen_Entwurf.md",
+      "github_issue": "https://github.com/BergStefanBerlin/SegelPhysik-GUI/issues/1"
     },
     {
       "id": "IDEE-G-00007",
