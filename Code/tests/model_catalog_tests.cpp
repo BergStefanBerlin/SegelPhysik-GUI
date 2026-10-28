@@ -53,6 +53,15 @@ void testReferenceFolder(const QString& folder)
     require(!quader->name.isEmpty(), "quader has no display name.");
     require(!quader->version.isEmpty(), "quader has no model version.");
     require(QFile::exists(quader->path), "Resolved model file does not exist.");
+    for (const auto& id : {QStringLiteral("optimist"), QStringLiteral("420"),
+             QStringLiteral("folkeboot")}) {
+        const auto* boat = find(snapshot, id);
+        require(boat != nullptr, "Reference folder omitted boat model.");
+        if (!boat->usable || boat->errorCount != 0) {
+            throw std::runtime_error(
+                "Core rejected boat model in GUI catalog: " + id.toStdString());
+        }
+    }
     require(watchedModelPaths(folder).size() > snapshot.entries.size(),
         "Folder watch list misses model directories or files.");
 

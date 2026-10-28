@@ -332,6 +332,17 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
                 ? QStringLiteral("Testantrieb zum Laufstart aktiv.")
                 : QStringLiteral("Testantrieb aus; im laufenden Versuch schaltbar.");
         }
+        const bool hasHydrodynamicHull = std::any_of(
+            live->impl_->workerModel.elemente.cbegin(),
+            live->impl_->workerModel.elemente.cend(),
+            [](const segelphysik::Element& element) {
+                return element.hydrodynamik_rolle == segelphysik::HydrodynamikRolle::rumpf;
+            });
+        if (hasHydrodynamicHull) {
+            live->impl_->start = segelphysik::hydrodynamik_start(
+                live->impl_->workerModel, live->impl_->start,
+                segelphysik::HydrodynamikKonfiguration{});
+        }
     } catch (const std::exception& exception) {
         return fail(QString::fromUtf8(exception.what()));
     }
