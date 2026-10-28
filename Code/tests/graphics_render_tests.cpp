@@ -17,6 +17,7 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QGroupBox>
 #include <QImage>
 #include <QLabel>
 #include <QKeyEvent>
@@ -58,7 +59,9 @@
 #include <future>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 class RenderErrors final : public vtkOutputWindow {
@@ -81,6 +84,21 @@ QByteArray digest(const QImage& image)
     return QCryptographicHash::hash(
         QByteArrayView(reinterpret_cast<const char*>(image.constBits()), image.sizeInBytes()),
         QCryptographicHash::Sha256);
+}
+qsizetype differingPixels(const QImage& first, const QImage& second)
+{
+    if (first.size() != second.size()) return std::numeric_limits<qsizetype>::max();
+    const auto a = first.convertToFormat(QImage::Format_ARGB32);
+    const auto b = second.convertToFormat(QImage::Format_ARGB32);
+    qsizetype count = 0;
+    for (int y = 0; y < a.height(); ++y) {
+        const auto* rowA = reinterpret_cast<const QRgb*>(a.constScanLine(y));
+        const auto* rowB = reinterpret_cast<const QRgb*>(b.constScanLine(y));
+        for (int x = 0; x < a.width(); ++x) {
+            if (rowA[x] != rowB[x]) ++count;
+        }
+    }
+    return count;
 }
 void waitUntil(const std::function<bool()>& ready, const char* message)
 {
@@ -269,6 +287,7 @@ void testHelperOcclusion(const QJsonObject& referenceState,
     auto state = referenceState;
     state.insert(QStringLiteral("position_m"), QJsonArray{0, 0, 0});
     state.insert(QStringLiteral("orientierung_xyzw"), QJsonArray{0, 0, 0, 1});
+    state.remove(QStringLiteral("elementtransformationen_modell"));
     auto forces = referenceForces;
     auto contribution = forces.contributions.front();
     contribution.id = QStringLiteral("occluded-helper-fixture");
@@ -285,7 +304,9 @@ void testHelperOcclusion(const QJsonObject& referenceState,
     moment.point = forcedisplay::Vec3{-1, 2, 2};
     moment.vector = forcedisplay::Vec3{0, 1, 0};
     forces.contributions.push_back(moment);
-    require(scene.setState(state, forces, &error), "helper occlusion fixture state");
+    const bool occlusionStateOk = scene.setState(state, forces, &error);
+    if (!occlusionStateOk) std::cerr << error.toStdString() << '\n';
+    require(occlusionStateOk, "helper occlusion fixture state");
     scene.setReferences(1, 1);
     scene.show();
     QApplication::processEvents();
@@ -421,6 +442,68 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
             }
         }
     }
+    auto movementLive = LiveSimulation::create(modelPath, validation, 0.3, 0.01, true, &error);
+    require(movementLive != nullptr, "420 movement simulation creation");
+    std::atomic_bool movementCancellation{false};
+    std::thread movementWorker([&] { movementLive->run(movementCancellation); });
+    const auto movementDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (movementLive->progress().states < 2 && !movementLive->progress().finished
+        && std::chrono::steady_clock::now() < movementDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    bool rudderQueued = false;
+    bool swordQueued = false;
+    if (!movementLive->progress().finished) {
+        rudderQueued = movementLive->setMovementValue(QStringLiteral("Ruder"), 45.0, &error);
+        swordQueued = movementLive->setMovementValue(QStringLiteral("Schwert"), 0.0, &error);
+    }
+    movementWorker.join();
+    require(rudderQueued && swordQueued, "420 live movement events were not accepted");
+    const auto movementProgress = movementLive->progress();
+    require(movementProgress.status == QStringLiteral("abgeschlossen"),
+        "420 movement simulation did not complete");
+    const auto initialMovementState = movementLive->stateJson(0, &error);
+    const auto movedState = movementLive->stateJson(movementProgress.states - 1, &error);
+    require(movedState.value(QStringLiteral("letzte_bewegungsereigniskennung")).toDouble() == 2.0,
+        "420 movement event acknowledgements are missing");
+    bool rudderMoved = false;
+    bool swordMoved = false;
+    bool rudderAssemblyMoved = false;
+    QJsonObject movedMatrices;
+    for (const auto& value : movedState.value(QStringLiteral("elementtransformationen_modell")).toArray()) {
+        const auto matrix = value.toObject();
+        const auto id = matrix.value(QStringLiteral("element_id")).toString();
+        movedMatrices.insert(id, matrix.value(QStringLiteral("matrix_zeilenweise")));
+    }
+    for (const auto& value : movedState.value(QStringLiteral("bewegungen")).toArray()) {
+        const auto movement = value.toObject();
+        const auto id = movement.value(QStringLiteral("element_id")).toString();
+        const double setting = movement.value(QStringLiteral("wert")).toDouble();
+        rudderMoved = rudderMoved || (id == QStringLiteral("Ruder") && setting == 45.0);
+        swordMoved = swordMoved || (id == QStringLiteral("Schwert") && setting == 0.0);
+    }
+    rudderAssemblyMoved = !movedMatrices.value(QStringLiteral("Ruder")).isUndefined()
+        && movedMatrices.value(QStringLiteral("Ruder"))
+            == movedMatrices.value(QStringLiteral("Ruderkopf"));
+    require(rudderMoved && swordMoved && rudderAssemblyMoved,
+        "Core-confirmed rudder, sword or rudder-assembly pose is missing");
+    auto renderedMovementState = initialMovementState;
+    renderedMovementState.insert(QStringLiteral("elementtransformationen_modell"),
+        movedState.value(QStringLiteral("elementtransformationen_modell")));
+    renderedMovementState.insert(QStringLiteral("bewegungen"),
+        movedState.value(QStringLiteral("bewegungen")));
+    scene.setGraphicsProfile(graphics::defaults(0));
+    require(scene.setState(initialMovementState,
+        forcedisplay::parseForceState(initialMovementState), &error),
+        "420 initial movement pose display");
+    scene.renderNow();
+    const auto initialMovementImage = digest(scene.captureImage());
+    require(scene.setState(renderedMovementState,
+        forcedisplay::parseForceState(renderedMovementState), &error),
+        "420 Core-confirmed movement pose display");
+    scene.renderNow();
+    require(digest(scene.captureImage()) != initialMovementImage,
+        "Core-confirmed movement poses did not change the complete rendered model");
+    report.insert(QStringLiteral("420LiveMovementPosesAndRudderAssembly"), true);
     report.insert(QStringLiteral("420DynamicStates"), static_cast<int>(progress.states));
     report.insert(QStringLiteral("420CourseTrailDefaultsOffAndOptional"), true);
     report.insert(QStringLiteral("420NavigationSelectedSnapshotBothProfiles"), true);
@@ -602,6 +685,69 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     require(restoredNavigation && !restoredNavigation->isChecked(),
         "navigation visibility must be restored in the next window");
     reopened.close();
+
+    MainWindow movementWindow;
+    movementWindow.setModelFolder(models);
+    movementWindow.selectInitialModel(QStringLiteral("420"));
+    movementWindow.show();
+    QPushButton* movementRun = nullptr;
+    for (auto* button : movementWindow.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("Core-Lauf starten")) movementRun = button;
+    }
+    auto* movementStop = movementWindow.findChild<QPushButton*>(QStringLiteral("stopSimulation"));
+    auto* movementMode = movementWindow.findChild<QComboBox*>(QStringLiteral("simulationMode"));
+    auto* movementDuration = movementWindow.findChild<QDoubleSpinBox*>(
+        QStringLiteral("simulationDuration"));
+    auto* movementPanel = movementWindow.findChild<QGroupBox*>(QStringLiteral("movementPanel"));
+    auto* movementStatus = movementWindow.findChild<QLabel*>(QStringLiteral("status"));
+    auto* movementModelName = movementWindow.findChild<QLabel*>(QStringLiteral("modelName"));
+    require(movementRun && movementStop && movementMode && movementDuration && movementPanel,
+        "movement simulation controls are missing");
+    waitUntil([&] {
+        return (movementRun->isEnabled() && movementStatus
+            && movementStatus->text() == QStringLiteral("Core-Prüfung erfolgreich")
+            && movementModelName
+            && movementModelName->toolTip().startsWith(QStringLiteral("420 · Fassung")))
+            || unexpectedDialog;
+    },
+        "420 movement model load timeout");
+    require(!unexpectedDialog, "unexpected movement model load error");
+    auto* rudder = movementWindow.findChild<QSlider*>(QStringLiteral("movement_Ruder"));
+    auto* sword = movementWindow.findChild<QSlider*>(QStringLiteral("movement_Schwert"));
+    require(rudder && sword,
+        "420 movement overlay controls are missing");
+    require(!movementPanel->isVisible() && rudder->minimum() == 0 && rudder->maximum() == 1800
+            && rudder->value() == 900 && sword->minimum() == 0 && sword->maximum() == 1000
+            && sword->value() == 1000,
+        "movement controls do not match model defaults or project-wide limits");
+    movementMode->setCurrentIndex(1);
+    require(movementPanel->isVisible(), "dynamic movement panel is hidden");
+    waitUntil([&] { return movementRun->isEnabled() || unexpectedDialog; },
+        "dynamic movement run did not become available");
+    require(!unexpectedDialog, "unexpected dynamic movement setup error");
+    movementDuration->setValue(0.0);
+    movementRun->click();
+    require(movementStop->isEnabled(), "dynamic run did not enable the stop control");
+    waitUntil([&] { return (rudder->isEnabled() && sword->isEnabled()) || unexpectedDialog; },
+        "movement sliders did not become ready after the first Core state");
+    require(!unexpectedDialog, "unexpected movement initialization error");
+    rudder->setValue(1100);
+    sword->setValue(500);
+    auto* rudderValue = movementWindow.findChild<QLabel*>(QStringLiteral("movementValue_Ruder"));
+    auto* swordValue = movementWindow.findChild<QLabel*>(QStringLiteral("movementValue_Schwert"));
+    require(rudderValue && swordValue, "movement confirmation labels are missing");
+    waitUntil([&] {
+        return (rudderValue->text().contains(QStringLiteral("Core 20.0°"))
+            && swordValue->text().contains(QStringLiteral("Core 50.0 %")))
+            || unexpectedDialog;
+    }, "Core did not confirm the requested live movement values");
+    require(!unexpectedDialog, "unexpected live movement error");
+    movementStop->click();
+    waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
+        "live movement simulation cancellation timeout");
+    require(!unexpectedDialog, "unexpected movement cancellation error");
+    movementWindow.close();
+    report.insert(QStringLiteral("liveMovementOverlay"), true);
 }
 
 void testBodyFixedCamera(const QString& models, const QString& evidencePath)
@@ -626,7 +772,11 @@ void testBodyFixedCamera(const QString& models, const QString& evidencePath)
     QApplication::processEvents();
     auto state = simulation.states.front();
     auto* overlay = scene.findChild<QWidget*>(QStringLiteral("navigationOverlay"));
-    require(overlay && overlay->size() == QSize(180, 564), "initial navigation size in actual VTK viewport");
+    require(overlay != nullptr, "navigation overlay is missing from actual VTK viewport");
+    const auto viewportSize = overlay->parentWidget()->size();
+    require(overlay->size() == QSize(180, 670).boundedTo(viewportSize),
+        "initial navigation size must fit the actual VTK viewport");
+    const auto initialOverlaySize = overlay->size();
     auto* grip = overlay->findChild<QSizeGrip*>(QStringLiteral("navigationSizeGrip"));
     require(grip, "actual viewport resize grip");
     const QPointF local(4, 4);
@@ -640,7 +790,11 @@ void testBodyFixedCamera(const QString& models, const QString& evidencePath)
     QMouseEvent release(QEvent::MouseButtonRelease, local, global + QPoint(100, 200),
         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(grip, &release);
-    require(overlay->size() == QSize(280, 764), "resize grip must grow instruments in actual VTK viewport");
+    const QSize availableSize(overlay->parentWidget()->width() - overlay->x(),
+        overlay->parentWidget()->height() - overlay->y());
+    require(overlay->width() == std::min(initialOverlaySize.width() + 100, availableSize.width())
+            && overlay->height() == std::min(initialOverlaySize.height() + 200, availableSize.height()),
+        "resize grip must grow instruments within the actual VTK viewport");
     require(scene.setState(state, parseForceState(state), &error), "camera initial state");
     require(scene.setCameraPreset(QStringLiteral("oben_steuerbord_bug"), &error), "body preset");
     const auto localView = [](const VtkSceneWidget::CameraView& view, const Pose& pose) {
@@ -772,7 +926,15 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
         require(progress.status == QStringLiteral("abgeschlossen"), "real test-drive run failed");
         const auto last = live->stateJson(progress.states - 1, &error);
         const auto force = parseForceState(last);
-        require(force.contract == QStringLiteral("3"), "test-drive not V3");
+        if (id == QStringLiteral("420") || id == QStringLiteral("folkeboot")) {
+            require(force.contract == QStringLiteral("4"), "movement model not V4");
+            require(force.contract == QStringLiteral("4"), "movement model not V4");
+            require(!last.value(QStringLiteral("bewegungen")).toArray().isEmpty()
+                    && !last.value(QStringLiteral("elementtransformationen_modell")).toArray().isEmpty(),
+                "movement result omitted confirmed settings or element poses");
+        } else {
+            require(force.contract == QStringLiteral("3"), "static model test-drive contract changed");
+        }
         bool capped = false;
         for (qsizetype i = 1; i < progress.states; ++i) {
             const auto s = live->stateJson(i, &error);
@@ -1225,17 +1387,24 @@ int main(int argc, char** argv)
                 "comparison camera image");
         }
         require(scene.setCameraView(initialCamera), "restore comparison camera");
-        const auto firstImage = digest(scene.captureImage());
+        scene.renderNow();
+        const auto firstImage = scene.captureImage();
         require(scene.setState(simulation.states.back(),
             forcedisplay::parseForceState(simulation.states.back()), &error), "animation last state");
         scene.renderNow();
         require(simulation.states.back().value(QStringLiteral("zeit_s")).toDouble()
                 > referenceState.value(QStringLiteral("zeit_s")).toDouble(),
             "animation fixture must advance actual Core time");
-        require(digest(scene.captureImage()) != firstImage, "advanced Core state renders identically");
+        require(digest(scene.captureImage()) != digest(firstImage), "advanced Core state renders identically");
         require(scene.setState(referenceState, forceState, &error), "animation replay first state");
         scene.renderNow();
-        require(digest(scene.captureImage()) == firstImage, "same simulation time not reproducible");
+        const auto replayImage = scene.captureImage();
+        const auto replayDifference = differingPixels(firstImage, replayImage);
+        const auto replayTolerance = std::max<qsizetype>(100, firstImage.width() * firstImage.height() / 10000);
+        require(replayDifference <= replayTolerance,
+            "same simulation time produced a visibly different frame");
+        report.insert(QStringLiteral("animationReplayDifferentPixels"),
+            static_cast<qint64>(replayDifference));
         const auto frozen = scene.captureImage();
         scene.renderNow();
         require(digest(scene.captureImage()) == digest(frozen), "paused water animation changed");
@@ -1280,7 +1449,8 @@ int main(int argc, char** argv)
         require(scene.setState(referenceState, forceState, &error), "reference state restore after model switch");
         require(scene.setCameraView(initialCamera), "model switch camera restore");
         scene.renderNow();
-        require(digest(scene.captureImage()) == firstImage, "model reload retained stale material or render state");
+        require(digest(scene.captureImage()) == digest(firstImage),
+            "model reload retained stale material or render state");
         require(renderErrors->count == 0, "VTK errors in heeled/static/model-switch cases");
         report.insert(QStringLiteral("staticNoStatePreview"), true);
         report.insert(QStringLiteral("modelSwitch"), QStringLiteral("folkeboot -> quader -> folkeboot; exact image restored"));

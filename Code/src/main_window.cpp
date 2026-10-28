@@ -61,6 +61,15 @@ QString runtimeText(double seconds)
     return QStringLiteral("%1 s").arg(seconds, 0, 'f', 3);
 }
 
+QString movementValueText(double requested, double confirmed, bool rudder)
+{
+    return rudder
+        ? QStringLiteral("Eingabe %1° · Core %2°")
+            .arg(requested, 0, 'f', 1).arg(confirmed, 0, 'f', 1)
+        : QStringLiteral("Eingabe %1 % · Core %2 %")
+            .arg(requested, 0, 'f', 1).arg(confirmed, 0, 'f', 1);
+}
+
 const QString folderSettingKey = QStringLiteral("modellordner");
 const QString modelSettingKey = QStringLiteral("modell_id");
 const QString legacyModelSettingKey = QStringLiteral("modell");
@@ -270,6 +279,11 @@ MainWindow::MainWindow(QWidget* parent)
     testLayout->addRow(QStringLiteral("Maximale Fahrt"), testSpeedSpin_);
     testLayout->addRow(testDriveStatus_);
     panelLayout->addWidget(testDrivePanel_);
+    movementPanel_ = new QGroupBox(QStringLiteral("Ruder- und Schwertstellung (Core)"));
+    movementPanel_->setObjectName(QStringLiteral("movementPanel"));
+    movementLayout_ = new QFormLayout(movementPanel_);
+    movementPanel_->setVisible(false);
+    panelLayout->addWidget(movementPanel_);
     connect(testSpeedSpin_, &QDoubleSpinBox::valueChanged, this, [this](double value) { testSpeedLimit_ = value; });
     connect(testDriveCheck_, &QCheckBox::toggled, this, [this](bool active) {
         if (live_ && simulationThread_) {
@@ -500,6 +514,8 @@ QWidget* MainWindow::buildDisplayPanel()
 
     leverCheck_ = new QCheckBox(QStringLiteral("Hebelarm der Auswahl"));
     leverCheck_->setChecked(true);
+    lateralCheck_ = new QCheckBox(QStringLiteral("Lateraldruckpunkt (LDP)"));
+    lateralCheck_->setChecked(true);
     // Zwei Rubriken in einem Raster: Zeilen Gewicht/Auftrieb/Summe, Spalten gesamt/Teile.
     auto* grid = new QGridLayout;
     grid->setHorizontalSpacing(14);
@@ -540,6 +556,7 @@ QWidget* MainWindow::buildDisplayPanel()
     grid->setColumnStretch(3, 1);
     layout->addLayout(grid);
     layout->addWidget(leverCheck_);
+    layout->addWidget(lateralCheck_);
 
     auto* legend = new QLabel(QStringLiteral(
         "<span style='color:%1'>━ Gewicht</span>  "
@@ -561,7 +578,7 @@ QWidget* MainWindow::buildDisplayPanel()
     valuesCheck_->setChecked(true);
     layout->addWidget(valuesCheck_);
 
-    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_};
+    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_};
     for (auto* check : forceChecks_) {
         displayChecks << check;
     }
@@ -705,6 +722,7 @@ void MainWindow::loadSettings()
         restoreCheck(momentChecks_[i], QStringLiteral("darstellung/moment_%1").arg(i));
     }
     restoreCheck(leverCheck_, QStringLiteral("darstellung/hebelarm"));
+    restoreCheck(lateralCheck_, QStringLiteral("darstellung/lateraldruckpunkt"));
     auto restoreCombo = [&settings](QComboBox* combo, const QString& key) {
         const QSignalBlocker blocker(combo);
         const int index = combo->findData(settings.value(key, combo->currentData()).toInt());
@@ -738,6 +756,7 @@ void MainWindow::saveDisplaySettings() const
         settings.setValue(QStringLiteral("darstellung/moment_%1").arg(i), momentChecks_[i]->isChecked());
     }
     settings.setValue(QStringLiteral("darstellung/hebelarm"), leverCheck_->isChecked());
+    settings.setValue(QStringLiteral("darstellung/lateraldruckpunkt"), lateralCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/skala_kraft"), forceScaleCombo_->currentData());
     settings.setValue(QStringLiteral("darstellung/skala_moment"), momentScaleCombo_->currentData());
 }
@@ -838,6 +857,7 @@ void MainWindow::applyDisplayOptions()
     options.force = selection(forceChecks_);
     options.moment = selection(momentChecks_);
     options.leverArm = leverCheck_->isChecked();
+    options.lateralCenter = lateralCheck_->isChecked();
     options.visibility = profile.throughBody ? VtkSceneWidget::Visibility::ThroughBody
                                             : VtkSceneWidget::Visibility::Spatial;
     options.forceMode =
@@ -1109,6 +1129,17 @@ const ModelEntry* MainWindow::entryFor(const QString& id) const
 void MainWindow::resetResults()
 {
     live_.reset();
+    for (auto it = movementSliders_.cbegin(); it != movementSliders_.cend(); ++it) {
+        const auto id = it.key();
+        const bool rudder = movementIsRudder_.value(id, false);
+        const double initial = rudder ? 0.0 : 100.0;
+        const QSignalBlocker blocker(it.value());
+        it.value()->setValue(rudder ? 900 : 1000);
+        movementConfirmedValues_[id] = initial;
+        movementInputPending_[id] = false;
+        if (auto* label = movementValueLabels_.value(id, nullptr))
+            label->setText(movementValueText(initial, initial, rudder));
+    }
     states_.clear();
     runtimeInfo_.clear();
     displayedIndex_ = -1;
@@ -1226,6 +1257,7 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
 {
     QString error;
     scene_->setElementGroups(opened->data.elementGroups);
+    configureMovementControls(opened->data);
     if (!scene_->setModel(opened->parts, &error)) {
         statusLabel_->setText(QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
         statusLabel_->setToolTip(error);
@@ -1270,6 +1302,93 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
                                                     : problemsFromText(validation.diagnostic));
     }
     setBusy(openThread_ != nullptr && openThread_->isRunning());
+}
+
+void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
+{
+    while (auto* item = movementLayout_->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    movementSliders_.clear();
+    movementValueLabels_.clear();
+    movementIsRudder_.clear();
+    movementConfirmedValues_.clear();
+    movementInputPending_.clear();
+    auto ids = displayData.elementMovements.keys();
+    ids.sort();
+    for (const auto& id : ids) {
+        const auto definition = displayData.elementMovements.value(id);
+        const bool rudder = definition.ruderwinkel;
+        auto* slider = new QSlider(Qt::Horizontal, movementPanel_);
+        slider->setObjectName(QStringLiteral("movement_%1").arg(id));
+        slider->setRange(0, rudder ? 1800 : 1000);
+        slider->setValue(rudder ? 900 : 1000);
+        slider->setEnabled(false);
+        auto* valueLabel = new QLabel(movementValueText(rudder ? 0.0 : 100.0,
+            rudder ? 0.0 : 100.0, rudder), movementPanel_);
+        valueLabel->setObjectName(QStringLiteral("movementValue_%1").arg(id));
+        valueLabel->setMinimumWidth(125);
+        auto* row = new QWidget(movementPanel_);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->addWidget(slider, 1);
+        rowLayout->addWidget(valueLabel);
+        movementLayout_->addRow(id, row);
+        movementSliders_.insert(id, slider);
+        movementValueLabels_.insert(id, valueLabel);
+        movementIsRudder_.insert(id, rudder);
+        movementConfirmedValues_.insert(id, rudder ? 0.0 : 100.0);
+        movementInputPending_.insert(id, false);
+        connect(slider, &QSlider::valueChanged, this, [this, id, slider, valueLabel, rudder](int position) {
+            const double value = rudder ? (position - 900) / 10.0 : position / 10.0;
+            movementInputPending_[id] = true;
+            valueLabel->setText(movementValueText(value,
+                movementConfirmedValues_.value(id, rudder ? 0.0 : 100.0), rudder));
+            if (!live_ || simulationThread_ == nullptr) return;
+            QString error;
+            if (!live_->setMovementValue(id, value, &error)) {
+                movementInputPending_[id] = false;
+                const double confirmed = movementConfirmedValues_.value(id, rudder ? 0.0 : 100.0);
+                const QSignalBlocker blocker(slider);
+                slider->setValue(rudder
+                    ? static_cast<int>(std::lround((confirmed + 90.0) * 10.0))
+                    : static_cast<int>(std::lround(confirmed * 10.0)));
+                valueLabel->setText(movementValueText(confirmed, confirmed, rudder));
+                showError(QStringLiteral("Ruder-/Schwertstellung"), error);
+            }
+        });
+    }
+    movementPanel_->setVisible(!ids.isEmpty() && modeCombo_->currentData().toBool());
+}
+
+void MainWindow::updateMovementControls(const QJsonObject& state)
+{
+    for (const auto& item : state.value(QStringLiteral("bewegungen")).toArray()) {
+        const auto movement = item.toObject();
+        const auto id = movement.value(QStringLiteral("element_id")).toString();
+        const auto value = movement.value(QStringLiteral("wert"));
+        auto* slider = movementSliders_.value(id, nullptr);
+        auto* label = movementValueLabels_.value(id, nullptr);
+        if (slider == nullptr || label == nullptr || !value.isDouble()) continue;
+        const bool rudder = movementIsRudder_.value(id, false);
+        const double setting = value.toDouble();
+        movementConfirmedValues_[id] = setting;
+        const double requested = rudder
+            ? (slider->value() - 900) / 10.0 : slider->value() / 10.0;
+        const bool pending = movementInputPending_.value(id, false);
+        if (pending && std::abs(requested - setting) < 1e-9)
+            movementInputPending_[id] = false;
+        if (!movementInputPending_.value(id, false)) {
+            const QSignalBlocker blocker(slider);
+            slider->setValue(rudder
+                ? static_cast<int>(std::lround((setting + 90.0) * 10.0))
+                : static_cast<int>(std::lround(setting * 10.0)));
+        }
+        const double displayedRequest = movementInputPending_.value(id, false)
+            ? requested : setting;
+        label->setText(movementValueText(displayedRequest, setting, rudder));
+    }
 }
 
 void MainWindow::startSimulation()
@@ -1404,6 +1523,7 @@ void MainWindow::updateLiveProgress()
     if (progress.states == 0) {
         return;
     }
+    setBusy(simulationThread_ != nullptr);
     const auto last = std::min<qsizetype>(progress.states - 1, std::numeric_limits<int>::max());
     if (followLive_ && stateSlider_->value() != static_cast<int>(last)) {
         programmaticSlider_ = true;
@@ -1552,6 +1672,7 @@ void MainWindow::displayState(qsizetype index, bool force)
     applyGraphicsProfile();
     currentForces_ = forces;
     hasForces_ = true;
+    updateMovementControls(state);
     updateValues();
     const auto time = state.value(QStringLiteral("zeit_s")).toDouble();
     timeLabel_->setText(
@@ -1563,7 +1684,11 @@ void MainWindow::setBusy(bool busy)
     const bool hasModel = validation_.valid && !modelPath_.isEmpty();
     const bool dynamic = modeCombo_->currentData().toBool();
     const bool running = simulationThread_ != nullptr;
+    const bool movementReady = live_ != nullptr && live_->progress().states > 0;
     testDrivePanel_->setVisible(dynamic);
+    movementPanel_->setVisible(dynamic && !movementSliders_.isEmpty());
+    for (auto* slider : movementSliders_)
+        slider->setEnabled(hasModel && dynamic && running && movementReady);
     testDriveCheck_->setEnabled(hasModel && dynamic && (!busy || running));
     testForceSpin_->setEnabled(!busy && dynamic);
     testSpeedSpin_->setEnabled(!busy && dynamic);

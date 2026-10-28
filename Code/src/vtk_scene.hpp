@@ -22,6 +22,7 @@
 class QVTKOpenGLNativeWidget;
 class vtkActor;
 class vtkAxesActor;
+class vtkBillboardTextActor3D;
 class vtkCutter;
 class vtkClipPolyData;
 class vtkGenericOpenGLRenderWindow;
@@ -57,6 +58,7 @@ public:
         VectorSelection force;
         VectorSelection moment{false, false, false, false, true};
         bool leverArm = true;
+        bool lateralCenter = true;
         Visibility visibility = Visibility::ThroughBody;
         forcedisplay::ScaleMode forceMode = forcedisplay::ScaleMode::Logarithmic;
         forcedisplay::ScaleMode momentMode = forcedisplay::ScaleMode::Logarithmic;
@@ -126,7 +128,10 @@ protected:
 private:
     struct BodyActor {
         vtkSmartPointer<vtkPolyData> mesh;
+        vtkSmartPointer<vtkPolyData> originalMesh;
         vtkSmartPointer<vtkPolyData> materialMesh;
+        vtkSmartPointer<vtkPolyData> originalMaterialMesh;
+        bool coreTransformApplied = false;
         vtkSmartPointer<vtkActor> body;
         vtkSmartPointer<vtkTriangleFilter> triangles;
         vtkSmartPointer<vtkPolyDataNormals> normals;
@@ -243,6 +248,9 @@ private:
     double horizonRadius_ = 0.0;
     vtkSmartPointer<vtkPolyData> leverLines_;
     vtkSmartPointer<vtkActor> leverActor_;
+    vtkSmartPointer<vtkPolyData> lateralLines_;
+    vtkSmartPointer<vtkActor> lateralActor_;
+    vtkSmartPointer<vtkBillboardTextActor3D> lateralLabel_;
     std::vector<BodyActor> bodies_;
     QHash<QString, Visual> visuals_;
     QHash<QString, forcedisplay::Vec3> arcBasis_;
@@ -251,6 +259,7 @@ private:
     forcedisplay::ForceState forces_;
     forcedisplay::Pose pose_;
     forcedisplay::Pose cameraPose_;
+    std::optional<forcedisplay::Vec3> velocityWorld_;
     bool hasState_ = false;
     DisplayOptions options_;
     double forceReference_ = 0.0;

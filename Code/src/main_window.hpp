@@ -23,6 +23,7 @@ class QDockWidget;
 class QDoubleSpinBox;
 class QFileSystemWatcher;
 class QFormLayout;
+class QGroupBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -76,6 +77,8 @@ private:
     void resetResults();
     void setBusy(bool busy);
     void updateModeControls();
+    void configureMovementControls(const ModelDisplayData& data);
+    void updateMovementControls(const QJsonObject& state);
     void showError(const QString& title, const QString& message);
 
     void applyDisplayOptions();
@@ -115,6 +118,13 @@ private:
     QDoubleSpinBox* testSpeedSpin_ = nullptr;
     QLabel* testDriveStatus_ = nullptr;
     QWidget* testDrivePanel_ = nullptr;
+    QGroupBox* movementPanel_ = nullptr;
+    QFormLayout* movementLayout_ = nullptr;
+    QHash<QString, QSlider*> movementSliders_;
+    QHash<QString, QLabel*> movementValueLabels_;
+    QHash<QString, bool> movementIsRudder_;
+    QHash<QString, double> movementConfirmedValues_;
+    QHash<QString, bool> movementInputPending_;
     double testSpeedLimit_ = 463.0 / 90.0;
     QFormLayout* parameterForm_ = nullptr;
     QSlider* stateSlider_ = nullptr;
@@ -134,6 +144,7 @@ private:
     std::array<QCheckBox*, 5> forceChecks_{};
     std::array<QCheckBox*, 5> momentChecks_{};
     QCheckBox* leverCheck_ = nullptr;
+    QCheckBox* lateralCheck_ = nullptr;
     QCheckBox* valuesCheck_ = nullptr;
     QPushButton* refitButton_ = nullptr;
     QLabel* referenceLabel_ = nullptr;

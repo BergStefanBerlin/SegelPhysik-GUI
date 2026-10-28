@@ -18,6 +18,7 @@
 #include <vtkAxesActor.h>
 #include <vtkCamera.h>
 #include <vtkCaptionActor2D.h>
+#include <vtkBillboardTextActor3D.h>
 #include <vtkCellArray.h>
 #include <vtkClipPolyData.h>
 #include <vtkCommand.h>
@@ -141,6 +142,27 @@ constexpr double dashPx = 8.0;
 constexpr double gapPx = 5.0;
 constexpr int arcSegments = 48;
 const QString selectionColor = QStringLiteral("#ffd166");
+
+Vec3 readStateVector(const QJsonObject& state, const QString& field)
+{
+    const auto values = state.value(field).toArray();
+    if (values.size() != 3) {
+        throw std::runtime_error(
+            QStringLiteral("Core-Zustand enthält keinen gültigen 3D-Vektor: %1")
+                .arg(field).toStdString());
+    }
+    Vec3 result{};
+    for (qsizetype axis = 0; axis < 3; ++axis) {
+        const auto value = values.at(axis);
+        if (!value.isDouble() || !std::isfinite(value.toDouble())) {
+            throw std::runtime_error(
+                QStringLiteral("Core-Zustand enthält nicht endliche Vektordaten: %1")
+                    .arg(field).toStdString());
+        }
+        result[static_cast<std::size_t>(axis)] = value.toDouble();
+    }
+    return result;
+}
 
 Vec3 normalized(const Vec3& v)
 {
@@ -319,6 +341,32 @@ vtkSmartPointer<vtkTransform> poseTransform(const forcedisplay::Pose& pose)
         transform->RotateWXYZ(angle * 180.0 / pi, q[0] / length, q[1] / length, q[2] / length);
     }
     return transform;
+}
+
+void applyCoreMatrix(vtkPolyData* mesh, const QJsonArray& values)
+{
+    if (mesh == nullptr || values.size() != 16)
+        throw std::runtime_error("Core-Elementtransformation muss eine 4x4-Matrix enthalten.");
+    double matrix[16]{};
+    for (qsizetype i = 0; i < 16; ++i) {
+        const auto value = values.at(i);
+        if (!value.isDouble() || !std::isfinite(value.toDouble()))
+            throw std::runtime_error("Core-Elementtransformation enthaelt keinen endlichen Wert.");
+        matrix[i] = value.toDouble();
+    }
+    auto* points = mesh->GetPoints();
+    if (points == nullptr) return;
+    for (vtkIdType i = 0; i < points->GetNumberOfPoints(); ++i) {
+        double p[3];
+        points->GetPoint(i, p);
+        const double transformed[3] = {
+            matrix[0]*p[0] + matrix[1]*p[1] + matrix[2]*p[2] + matrix[3],
+            matrix[4]*p[0] + matrix[5]*p[1] + matrix[6]*p[2] + matrix[7],
+            matrix[8]*p[0] + matrix[9]*p[1] + matrix[10]*p[2] + matrix[11]};
+        points->SetPoint(i, transformed);
+    }
+    points->Modified();
+    mesh->Modified();
 }
 
 void setActorColor(vtkActor* actor, const QString& hex)
@@ -906,6 +954,13 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     vtkWidget_->installEventFilter(this);
     leverLines_ = vtkSmartPointer<vtkPolyData>::New();
     leverActor_ = makeOverlayActor(leverLines_);
+    lateralLines_ = vtkSmartPointer<vtkPolyData>::New();
+    lateralActor_ = makeOverlayActor(lateralLines_);
+    lateralLabel_ = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+    lateralLabel_->SetInput("LDP");
+    lateralLabel_->PickableOff();
+    lateralLabel_->GetTextProperty()->SetFontSize(16);
+    lateralLabel_->GetTextProperty()->BoldOn();
 
     // Licht: Lichtset statt Einzellicht, Kantenglättung, Tiefenschälung für
     // Transparenz, Umgebungsverdeckung und Himmel als Umgebungslicht.
@@ -1078,8 +1133,10 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         }
         for (qsizetype i = 0; i < parts.size(); ++i) {
             const auto& part = parts.at(i);
+            auto bodyMesh = vtkSmartPointer<vtkPolyData>::New();
+            bodyMesh->DeepCopy(part.mesh);
             auto materialMesh = vtkSmartPointer<vtkPolyData>::New();
-            materialMesh->DeepCopy(part.mesh);
+            materialMesh->DeepCopy(bodyMesh);
             addPlanarTextureCoordinates(materialMesh);
             auto triangles = vtkSmartPointer<vtkTriangleFilter>::New();
             triangles->SetInputData(materialMesh);
@@ -1106,7 +1163,7 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
 
             auto plane = vtkSmartPointer<vtkPlane>::New();
             auto cutter = vtkSmartPointer<vtkCutter>::New();
-            cutter->SetInputData(outwardNormals(part.mesh));
+            cutter->SetInputData(outwardNormals(bodyMesh));
             cutter->SetCutFunction(plane);
             auto waterlineData = vtkSmartPointer<vtkPolyData>::New();
             auto waterlineMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
@@ -1142,8 +1199,12 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             }
 
             BodyActor body;
-            body.mesh = part.mesh;
+            body.mesh = bodyMesh;
+            body.originalMesh = vtkSmartPointer<vtkPolyData>::New();
+            body.originalMesh->DeepCopy(bodyMesh);
             body.materialMesh = materialMesh;
+            body.originalMaterialMesh = vtkSmartPointer<vtkPolyData>::New();
+            body.originalMaterialMesh->DeepCopy(materialMesh);
             body.body = bodyActor;
             body.triangles = triangles;
             body.normals = normals;
@@ -1166,7 +1227,10 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         forceRenderer()->AddActor(leverActor_);
         leverActor_->VisibilityOff();
 
-        applyGraphicsProfile();
+        forceRenderer()->AddActor(lateralActor_);
+        forceRenderer()->AddActor(lateralLabel_);
+        lateralActor_->VisibilityOff();
+        lateralLabel_->VisibilityOff();
         updateWaterPlane();
         frameBodies();
         renderWindow_->Render();
@@ -1187,7 +1251,20 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             throw std::runtime_error("Kein Modell für die 3D-Ansicht geladen.");
         }
         const auto pose = forcedisplay::readPose(state);
+        const auto velocityWorld = readStateVector(
+            state, QStringLiteral("geschwindigkeit_welt_m_s"));
         const auto transform = poseTransform(pose);
+        QHash<QString, QJsonArray> elementMatrices;
+        const auto matrixValues = state.value(
+            QStringLiteral("elementtransformationen_modell")).toArray();
+        for (const auto& value : matrixValues) {
+            const auto entry = value.toObject();
+            const auto id = entry.value(QStringLiteral("element_id")).toString();
+            const auto matrix = entry.value(QStringLiteral("matrix_zeilenweise")).toArray();
+            if (id.isEmpty() || matrix.size() != 16 || elementMatrices.contains(id))
+                throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
+            elementMatrices.insert(id, matrix);
+        }
         const Vec3 waterOrigin = inverseRotate(pose,
             {-pose.position[0], -pose.position[1], -pose.position[2]});
         const Vec3 waterNormal = inverseRotate(pose, {0.0, 0.0, 1.0});
@@ -1217,6 +1294,19 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         std::vector<vtkSmartPointer<vtkPolyData>> joined(bodies_.size());
         for (std::size_t b = 0; b < bodies_.size(); ++b) {
             auto& body = bodies_[b];
+            if (!matrixValues.isEmpty() || body.coreTransformApplied) {
+                body.mesh->DeepCopy(body.originalMesh);
+                body.materialMesh->DeepCopy(body.originalMaterialMesh);
+                if (!matrixValues.isEmpty()) {
+                    const auto matrix = elementMatrices.constFind(body.elementId);
+                    if (matrix == elementMatrices.cend())
+                        throw std::runtime_error("Core-Zustand ohne Transformation fuer sichtbares Element.");
+                    applyCoreMatrix(body.mesh, matrix.value());
+                    applyCoreMatrix(body.materialMesh, matrix.value());
+                }
+                body.cutter->SetInputData(outwardNormals(body.mesh));
+                body.coreTransformApplied = !matrixValues.isEmpty();
+            }
             body.body->SetUserTransform(transform);
             body.waterline->SetUserTransform(transform);
             body.reflection->SetUserTransform(reflectionTransform);
@@ -1314,6 +1404,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         camera->SetViewUp(up.data());
         cameraPose_ = pose;
         pose_ = pose;
+        velocityWorld_ = velocityWorld;
         forces_ = forces;
         forces_.contributions += forcedisplay::derivedContributions(forces);
         hasState_ = true;
@@ -1361,7 +1452,17 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
 void VtkSceneWidget::clearState()
 {
     resetMotionHistory();
+    for (auto& body : bodies_) {
+        body.mesh->DeepCopy(body.originalMesh);
+        body.materialMesh->DeepCopy(body.originalMaterialMesh);
+        body.coreTransformApplied = false;
+        body.body->SetUserTransform(nullptr);
+        body.waterline->SetUserTransform(nullptr);
+        body.reflection->SetUserTransform(nullptr);
+        body.cutter->SetInputData(outwardNormals(body.mesh));
+    }
     forces_ = {};
+    velocityWorld_.reset();
     hasState_ = false;
     scaled_.clear();
     track_.clear();
@@ -2212,6 +2313,8 @@ void VtkSceneWidget::hideForceVisuals()
         visual.headActor->VisibilityOff();
     }
     leverActor_->VisibilityOff();
+    lateralActor_->VisibilityOff();
+    lateralLabel_->VisibilityOff();
 }
 
 double VtkSceneWidget::worldPerLogicalPixel(const Vec3& point) const
@@ -2316,13 +2419,30 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
     const auto view = cameraView();
     navigation_->setValues(navigation::derive(
         hasState_ ? std::optional<forcedisplay::Pose>(pose_) : std::nullopt,
-        forcedisplay::sub(view.position, view.focalPoint)));
+        forcedisplay::sub(view.position, view.focalPoint), velocityWorld_));
 }
 
 void VtkSceneWidget::rebuildForceGeometry()
 {
     hideForceVisuals();
     screenShapes_.clear();
+    if (options_.lateralCenter && hasState_ && !bodies_.empty() && forces_.lateral
+        && forces_.lateral->position) {
+        const Vec3 point = forcedisplay::toWorldPoint(pose_, *forces_.lateral->position);
+        const double half = 0.12 * sceneSpan_;
+        PolyBuilder marker;
+        marker.segment({point[0], point[1], -half}, {point[0], point[1], half});
+        marker.storeLines(lateralLines_);
+        // Geometrischer Punkt (Ruhe) gedaempft, kraftgewichteter Punkt kraeftig.
+        const bool weighted = forces_.lateral->status == QStringLiteral("gueltig");
+        setActorColor(lateralActor_, weighted ? QStringLiteral("#ff4fd8") : QStringLiteral("#b47aa8"));
+        lateralActor_->GetProperty()->SetLineWidth(
+            static_cast<float>(4.0 * vtkWidget_->devicePixelRatioF()));
+        lateralActor_->VisibilityOn();
+        lateralLabel_->SetPosition(point[0], point[1], half);
+        lateralLabel_->GetTextProperty()->SetColor(1.0, 0.31, 0.85);
+        lateralLabel_->VisibilityOn();
+    }
     if (!options_.forces || !hasState_ || bodies_.empty()) {
         return;
     }

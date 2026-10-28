@@ -65,6 +65,7 @@ struct ModelDisplayData {
     std::optional<std::array<std::array<double, 3>, 2>> bounds;
     // Element-ID → Modellgruppe für alle Elemente, auch unsichtbare (z. B. Luftkörper).
     QHash<QString, QString> elementGroups;
+    QHash<QString, segelphysik::Bewegungsdefinition> elementMovements;
     QStringList partDiagnostics;
 };
 

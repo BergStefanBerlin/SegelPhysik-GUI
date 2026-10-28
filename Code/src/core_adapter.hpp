@@ -70,6 +70,7 @@ public:
     QJsonObject stateJson(qsizetype index, QString* error) const;
     QVector<QJsonObject> motionStates(qsizetype begin, qsizetype end, QString* error) const;
     bool setTestDriveActive(bool active, QString* error);
+    bool setMovementValue(const QString& elementId, double value, QString* error);
 
     static constexpr qsizetype maximumStates = 2'000'000;
 

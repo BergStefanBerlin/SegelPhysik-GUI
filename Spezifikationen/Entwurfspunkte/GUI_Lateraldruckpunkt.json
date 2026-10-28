@@ -1,0 +1,48 @@
+{
+  "status": "finalisiert",
+  "thema": "GUI Lateraldruckpunkt",
+  "spezifikation": "../Spezifikation_GUI_Lateraldruckpunkt.md",
+  "hinweis": "Finalisiert am 28.10.2026 auf Nutzerauftrag. Zielversion: laufender Versionsschritt G-0.7. Segeldruckpunkt ist nicht Teil des Umfangs.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00029",
+      "status": "angenommen",
+      "thema": "Datenübernahme",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#a-g-00052-datenübernahme",
+      "entscheidung": "Adapter liest druckpunkte.lateral; Feld fehlt = kein Marker, kein Fehler.",
+      "anforderungen": ["A-G-00052"]
+    },
+    {
+      "id": "IDEE-G-00030",
+      "status": "angenommen",
+      "thema": "Darstellung",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#a-g-00053-darstellung",
+      "entscheidung": "Senkrechter Strich in der Mittschiffsebene bei Core-Längsposition, eigene Farbe, Beschriftung LDP, keine Zahl, folgt der Core-Pose.",
+      "anforderungen": ["A-G-00053"]
+    },
+    {
+      "id": "IDEE-G-00031",
+      "status": "angenommen",
+      "thema": "Status",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#a-g-00054-status",
+      "entscheidung": "Nur bei gueltig sichtbar; nicht_bestimmbar oder fehlend = ausgeblendet.",
+      "anforderungen": ["A-G-00054"]
+    },
+    {
+      "id": "IDEE-G-00032",
+      "status": "angenommen",
+      "thema": "Bedienung",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#a-g-00055-bedienung",
+      "entscheidung": "Schaltfläche im Overlay der Kraftdarstellung, Standard an.",
+      "anforderungen": ["A-G-00055"]
+    },
+    {
+      "id": "IDEE-G-00033",
+      "status": "angenommen",
+      "thema": "Nachweise",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#a-g-00056-nachweise",
+      "entscheidung": "Tests für Marker, Ausblenden, Schaltfläche, Live und Wiedergabe; Regression; integrierter Lauf; Sichtprüfung getrennt.",
+      "anforderungen": ["A-G-00056"]
+    }
+  ]
+}

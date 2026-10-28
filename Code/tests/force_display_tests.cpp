@@ -226,6 +226,10 @@ void testV2()
     require(state.contributions.at(4).category == Category::Test, "V2 test via quelle.");
     require(state.contributions.at(5).category == Category::Unassigned, "V2 unassigned via quelle.");
     require(state.contributions.at(6).category == Category::MomentSum, "V2 moment sum.");
+    auto movementVersion = object;
+    movementVersion.insert(QStringLiteral("vertragsversion"), QStringLiteral("4"));
+    require(parseForceState(movementVersion).contract == QStringLiteral("4"),
+        "V4 movement result contract rejected.");
 
     // Jeder Datenzustand erscheint als Text, nie leer oder als 0.
     const char* expected[] = {"gültig", "Null", "ungültig", "nicht berechnet",
@@ -362,11 +366,35 @@ void testHit()
     require(hitTest(shapes, QPointF(10, 6.5)).isEmpty(), "Beyond 6 px must not hit.");
 }
 
+void testLateralCenter()
+{
+    auto base = [](const char* lateral) {
+        return QByteArray(R"({"vertragsversion":"4","modell_id":"m","status":"ok","zeit_s":0,"schritt":0,
+ "position_m":[0,0,0],"orientierung_xyzw":[0,0,0,1],"moment_bezug_modell_m":[0,0,0],"vektoren":[],
+ "bilanzstatus":"vollstaendig","erwartete_beitraege":[],"fehlende_beitraege":[],
+ "summen":{"gesamt":null,"gruppen":[]})") + lateral + "}";
+    };
+    const auto none = parseForceState(parse(base("")));
+    require(!none.lateral, "Ohne Feld kein Lateraldruckpunkt.");
+    const auto valid = parseForceState(parse(base(
+        R"(,"druckpunkte":{"lateral":{"status":"gueltig","position_modell_m":[1.5,0,-0.7],"querkraft_modell_n":-80,"quellen":["Rumpf:hydrodynamik:druck"]}})")));
+    require(valid.lateral && valid.lateral->position && near((*valid.lateral->position)[0], 1.5, 1e-12)
+        && near((*valid.lateral->position)[2], -0.7, 1e-12), "Gueltiger Lateraldruckpunkt.");
+    const auto geometric = parseForceState(parse(base(
+        R"(,"druckpunkte":{"lateral":{"status":"geometrisch","position_modell_m":[0,0,-0.2],"querkraft_modell_n":0,"quellen":[]}})")));
+    require(geometric.lateral && geometric.lateral->position, "Geometrischer Punkt wird gelesen.");
+    const auto undetermined = parseForceState(parse(base(
+        R"(,"druckpunkte":{"lateral":{"status":"nicht_bestimmbar","position_modell_m":[9,0,9],"querkraft_modell_n":0,"quellen":[]}})")));
+    require(undetermined.lateral && !undetermined.lateral->position,
+        "Nicht bestimmbar liefert keine Position.");
+}
+
 } // namespace
 
 int main()
 {
     try {
+        testLateralCenter();
         testScale();
         testPoseAndArrow();
         testArc();

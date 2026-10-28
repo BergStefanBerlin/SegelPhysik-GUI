@@ -1,6 +1,8 @@
 #include "core_adapter.hpp"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 
 #include <atomic>
@@ -256,6 +258,59 @@ void testDrive(const QString& modelPath, const ModelValidation& validation)
         "lightweight history does not match actual physics");
 }
 
+void testMovementInput(const QString& referenceModelPath)
+{
+    const auto modelPath = QDir(QFileInfo(referenceModelPath).absolutePath())
+        .filePath(QStringLiteral("../420/modell.json"));
+    const auto validation = validateModel(modelPath);
+    require(validation.valid, "420 movement model was rejected by Core.");
+
+    QString error;
+    auto live = LiveSimulation::create(modelPath, validation, 0.5, 0.01, true, &error);
+    require(live != nullptr, "Movement simulation could not be created.");
+    std::atomic_bool cancellation{false};
+    std::thread worker([&] { live->run(cancellation); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (live->progress().states < 2 && !live->progress().finished
+        && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    bool invalidRejected = false;
+    bool rudderAccepted = false;
+    bool swordAccepted = false;
+    if (!live->progress().finished) {
+        invalidRejected = !live->setMovementValue(QStringLiteral("Ruder"), 91.0, &error);
+        error.clear();
+        rudderAccepted = live->setMovementValue(QStringLiteral("Ruder"), 20.0, &error);
+        swordAccepted = live->setMovementValue(QStringLiteral("Schwert"), 50.0, &error);
+    }
+    worker.join();
+    require(invalidRejected, "Out-of-range rudder input was accepted.");
+    require(rudderAccepted, "Valid rudder input was rejected.");
+    require(swordAccepted, "Valid sword input was rejected.");
+    const auto progress = live->progress();
+    require(progress.status == QStringLiteral("abgeschlossen"),
+        "Movement simulation did not complete.");
+    const auto result = live->stateJson(progress.states - 1, &error);
+    require(result.value(QStringLiteral("vertragsversion")).toString() == QStringLiteral("4"),
+        "Movement simulation did not return result contract V4.");
+    require(result.value(QStringLiteral("letzte_bewegungsereigniskennung")).toDouble() == 2.0,
+        "Core did not acknowledge both movement events.");
+
+    bool rudderConfirmed = false;
+    bool swordConfirmed = false;
+    for (const auto& value : result.value(QStringLiteral("bewegungen")).toArray()) {
+        const auto movement = value.toObject();
+        const auto id = movement.value(QStringLiteral("element_id")).toString();
+        const double setting = movement.value(QStringLiteral("wert")).toDouble();
+        rudderConfirmed = rudderConfirmed || (id == QStringLiteral("Ruder") && setting == 20.0);
+        swordConfirmed = swordConfirmed || (id == QStringLiteral("Schwert") && setting == 50.0);
+    }
+    require(rudderConfirmed && swordConfirmed,
+        "Core did not confirm the requested rudder and sword settings.");
+    require(!result.value(QStringLiteral("elementtransformationen_modell")).toArray().isEmpty(),
+        "Core omitted movement poses needed for rendering.");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -274,6 +329,7 @@ int main(int argc, char* argv[])
         testLiveRun(modelPath, validation);
         testStartState(modelPath, validation);
         testDrive(modelPath, validation);
+        testMovementInput(modelPath);
         std::cout << "Core adapter validation, static hydrostatics and "
                      "dynamic run passed.\n";
         return 0;

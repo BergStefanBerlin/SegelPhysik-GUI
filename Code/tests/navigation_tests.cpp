@@ -59,6 +59,16 @@ void testMath()
     near(identity.cameraAzimuth, 45);
     near(identity.cameraRoll, 45);
     near(identity.cameraPitch, 45);
+    const auto moving = derive(forcedisplay::Pose{}, {1, -1, 1},
+        forcedisplay::Vec3{3.0, 4.0, 12.0});
+    require(moving.velocityWorld
+            && *moving.velocityWorld == forcedisplay::Vec3{3.0, 4.0, 12.0},
+        "world velocity components");
+    near(moving.speed, 13.0);
+    const auto invalidVelocity = derive(forcedisplay::Pose{}, {1, -1, 1},
+        forcedisplay::Vec3{3.0, std::numeric_limits<double>::quiet_NaN(), 12.0});
+    require(!invalidVelocity.velocityWorld && !invalidVelocity.speed,
+        "nonfinite velocity must not be displayed");
     near(derive(rotation(2, -90), {1, 0, 0}).heading, 90);
     near(derive(rotation(2, 90), {1, 0, 0}).heading, 270);
     near(derive(rotation(0, 30), {1, 0, 0}).roll, -30);
@@ -187,8 +197,26 @@ void testOverlay()
     auto* compass = overlay.findChild<QWidget*>(QStringLiteral("navigation_compass"));
     auto* roll = overlay.findChild<QWidget*>(QStringLiteral("navigation_roll"));
     auto* pitch = overlay.findChild<QWidget*>(QStringLiteral("navigation_pitch"));
-    require(handle && compass && roll && pitch, "three instruments/header required");
+    auto* speed = overlay.findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+    auto* magnitude = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
+    auto* componentX = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
+    auto* componentY = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent1"));
+    auto* componentZ = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
+    require(handle && compass && roll && pitch && speed && magnitude
+            && componentX && componentY && componentZ,
+        "three instruments, speed readout and header required");
     require(compass->y() < roll->y() && roll->y() < pitch->y(), "vertical instrument order");
+    require(speed->y() > pitch->y(), "speed readout must be below the attitude instruments");
+    overlay.setValues(navigation::derive(forcedisplay::Pose{}, {1, -1, 1},
+        forcedisplay::Vec3{3.0, 4.0, 12.0}));
+    require(magnitude->text() == QStringLiteral("13.000 m/s"), "total speed display");
+    require(componentX->text() == QStringLiteral("3.000 m/s"), "world X speed display");
+    require(componentY->text() == QStringLiteral("4.000 m/s"), "world Y speed display");
+    require(componentZ->text() == QStringLiteral("12.000 m/s"), "world Z speed display");
+    overlay.setValues(navigation::Values{});
+    require(magnitude->text() == QStringLiteral("– m/s")
+            && componentX->text() == QStringLiteral("– m/s"),
+        "missing speed must not be shown as zero");
     const auto start = overlay.pos();
     const QPointF local(20, 10);
     const auto global = handle->mapToGlobal(local.toPoint());
@@ -236,7 +264,7 @@ void testOverlay()
     smallViewport.show();
     smallViewport.resize(1000, 800);
     QApplication::processEvents();
-    require(initiallySmall.size() == QSize(180, 564), "startup viewport size must not permanently shrink overlay");
+    require(initiallySmall.size() == QSize(180, 670), "startup viewport size must not permanently shrink overlay");
 }
 }
 

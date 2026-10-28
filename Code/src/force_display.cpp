@@ -223,15 +223,18 @@ ForceState parseForceState(const QJsonObject& object)
     state.reference = readOptionalVector(
         object.value(QStringLiteral("moment_bezug_modell_m")),
         QStringLiteral("moment_bezug_modell_m"));
-    const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3");
+    const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3")
+        || state.contract == QStringLiteral("4");
     if (state.contract != QStringLiteral("1") && !v2) {
         throw std::runtime_error("Nicht unterstuetzte CORE-Ergebnisversion.");
     }
-    if (state.contract == QStringLiteral("3") && !object.value(QStringLiteral("testantrieb")).isObject()) {
+    const auto testValue = object.value(QStringLiteral("testantrieb"));
+    if (state.contract == QStringLiteral("3") && !testValue.isObject()) {
         throw std::runtime_error("CORE-Ergebnisversion 3 ohne verpflichtenden Testantriebskontext.");
     }
-    if (state.contract == QStringLiteral("3")) {
-        const auto test = object.value(QStringLiteral("testantrieb")).toObject();
+    if ((state.contract == QStringLiteral("3") || state.contract == QStringLiteral("4"))
+        && testValue.isObject()) {
+        const auto test = testValue.toObject();
         const auto transition = test.value(QStringLiteral("uebergang"));
         if (test.value(QStringLiteral("modus")) != QJsonValue(QStringLiteral("temporaerer_bugtest"))
             || !test.value(QStringLiteral("aktiv")).isBool()
@@ -245,6 +248,20 @@ ForceState parseForceState(const QJsonObject& object)
                 throw std::runtime_error("CORE-Testbegrenzer ohne Eingriffsstatus.");
             state.testLimiterApplied = limiter.value(QStringLiteral("wirksam")).toBool();
         }
+    }
+    const auto lateral = object.value(QStringLiteral("druckpunkte")).toObject()
+                             .value(QStringLiteral("lateral"));
+    if (lateral.isObject()) {
+        LateralCenter center;
+        center.status = lateral.toObject().value(QStringLiteral("status")).toString();
+        const auto position = lateral.toObject().value(QStringLiteral("position_modell_m")).toArray();
+        const bool usable = center.status == QStringLiteral("gueltig")
+            || center.status == QStringLiteral("geometrisch");
+        if (usable && position.size() == 3 && position[0].isDouble() && position[1].isDouble()
+            && position[2].isDouble()) {
+            center.position = Vec3{position[0].toDouble(), position[1].toDouble(), position[2].toDouble()};
+        }
+        state.lateral = center;
     }
     for (const auto& id : object.value(QStringLiteral("geflutete_elemente")).toArray()) {
         state.flooded.push_back(id.toString());

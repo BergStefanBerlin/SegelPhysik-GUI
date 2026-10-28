@@ -94,7 +94,14 @@ struct GroupSum {
     QStringList sources;
 };
 
+// Lateraldruckpunkt aus druckpunkte.lateral (A-G-00052); reine Anzeige.
+struct LateralCenter {
+    QString status;                // gueltig, geometrisch, nicht_bestimmbar
+    std::optional<Vec3> position;  // Modellframe, nur bei gueltig/geometrisch
+};
+
 struct ForceState {
+    std::optional<LateralCenter> lateral;
     QString contract;
     QString modelId;
     double time = 0.0;

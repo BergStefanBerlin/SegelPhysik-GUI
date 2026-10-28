@@ -23,10 +23,13 @@ struct Values {
     std::optional<double> cameraAzimuth;
     std::optional<double> cameraRoll;
     std::optional<double> cameraPitch;
+    std::optional<forcedisplay::Vec3> velocityWorld;
+    std::optional<double> speed;
 };
 
 Values derive(const std::optional<forcedisplay::Pose>& pose,
-    const forcedisplay::Vec3& cameraOffset);
+    const forcedisplay::Vec3& cameraOffset,
+    const std::optional<forcedisplay::Vec3>& velocityWorld = std::nullopt);
 QString compassDirection(double degrees);
 
 struct CameraPreset {
@@ -74,12 +77,14 @@ private:
     QLabel* handle_;
     QSizeGrip* sizeGrip_;
     std::array<Instrument*, 3> instruments_;
+    QLabel* speedMagnitude_;
+    std::array<QLabel*, 3> speedComponents_;
     bool dragging_ = false;
     QPoint dragOffset_;
     bool resizing_ = false;
     QPoint resizeStart_;
     QSize resizeSize_;
-    QSize preferredSize_{180, 564};
+    QSize preferredSize_{180, 670};
 };
 
 } // namespace navigation

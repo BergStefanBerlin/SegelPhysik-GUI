@@ -104,6 +104,18 @@ segelphysik::Zustand startState(const QJsonObject& state, bool keepMotion)
     for (const auto& id : state.value(QStringLiteral("geflutete_elemente")).toArray()) {
         result.geflutet.push_back(id.toString().toStdString());
     }
+    const auto movements = state.value(QStringLiteral("bewegungen")).toArray();
+    for (const auto& value : movements) {
+        const auto movement = value.toObject();
+        const auto id = movement.value(QStringLiteral("element_id")).toString();
+        const auto setting = movement.value(QStringLiteral("wert"));
+        if (id.isEmpty() || !setting.isDouble() || !std::isfinite(setting.toDouble()))
+            throw std::runtime_error("Startzustand ohne gueltige Core-Bewegungsstellung.");
+        result.bewegungsstellungen.push_back({id.toStdString(), setting.toDouble()});
+    }
+    const auto lastEvent = state.value(QStringLiteral("letzte_bewegungsereigniskennung"));
+    if (lastEvent.isDouble() && lastEvent.toDouble() >= 0.0)
+        result.letzte_bewegungsereigniskennung = static_cast<std::size_t>(lastEvent.toDouble());
     return result;
 }
 
@@ -200,7 +212,8 @@ SimulationResult runSimulation(const QString& modelPath,
             const auto state = parseObject(line, QStringLiteral("Core-Zustand"));
             const auto contract =
                 state.value(QStringLiteral("vertragsversion")).toString();
-            if ((contract != QStringLiteral("1") && contract != QStringLiteral("2"))
+            if ((contract != QStringLiteral("1") && contract != QStringLiteral("2")
+                    && contract != QStringLiteral("3") && contract != QStringLiteral("4"))
                 || state.value(QStringLiteral("modell_id")).toString()
                     != validation.modelId
                 || state.value(QStringLiteral("modell_fassung")).toString()
@@ -248,6 +261,8 @@ struct LiveSimulation::Impl {
     bool hasTestDrive = false;
     std::vector<segelphysik::TestantriebEreignis> pendingTestEvents;
     std::size_t nextTestEvent = 1;
+    std::vector<segelphysik::Bewegungsereignis> pendingMovementEvents;
+    std::size_t nextMovementEvent = 1;
     QString testDriveStatus;
 
     mutable std::mutex mutex;
@@ -274,6 +289,11 @@ struct LiveSimulation::Impl {
             testDriveStatus = QStringLiteral("Lauf beendet: %1 angeforderte Flagwechsel wurden nicht mehr angewandt.")
                 .arg(static_cast<qulonglong>(pendingTestEvents.size()));
             pendingTestEvents.clear();
+        }
+        if (!pendingMovementEvents.empty()) {
+            testDriveStatus = QStringLiteral("Lauf beendet: %1 Stellereignisse wurden nicht mehr angewandt.")
+                .arg(static_cast<qulonglong>(pendingMovementEvents.size()));
+            pendingMovementEvents.clear();
         }
         status = finalStatus;
         diagnostic = detail;
@@ -320,6 +340,11 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     std::unique_ptr<LiveSimulation> live(new LiveSimulation);
     try {
         live->impl_->start = startState(start, true);
+        if (live->impl_->start.letzte_bewegungsereigniskennung
+            == std::numeric_limits<std::size_t>::max())
+            return fail(QStringLiteral("Bewegungs-Ereigniskennung erschoepft."));
+        live->impl_->nextMovementEvent =
+            live->impl_->start.letzte_bewegungsereigniskennung + 1;
         live->impl_->workerModel = segelphysik::lade_modell(nativePath(modelPath));
         live->impl_->displayModel = live->impl_->workerModel;
         if (testDrive) {
@@ -401,13 +426,14 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
             }
             const auto computeStart = clock::now();
             std::vector<segelphysik::TestantriebEreignis> events;
+            std::vector<segelphysik::Bewegungsereignis> movementEvents;
             {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 events.swap(d.pendingTestEvents);
+                movementEvents.swap(d.pendingMovementEvents);
             }
-            auto next = events.empty()
-                ? segelphysik::dynamikschritt(d.workerModel, state, target - state.zeit_s)
-                : segelphysik::dynamikschritt(d.workerModel, state, target - state.zeit_s, events);
+            auto next = segelphysik::dynamikschritt(d.workerModel, state,
+                target - state.zeit_s, events, movementEvents);
             if (!events.empty()) {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 d.testDriveStatus = QStringLiteral("Testantrieb %1: Ereignis %2 am Uebergang %3 → %4 uebernommen.")
@@ -469,6 +495,36 @@ bool LiveSimulation::setTestDriveActive(bool active, QString* error)
         return false;
     }
     d.pendingTestEvents.push_back({d.nextTestEvent++, active});
+    return true;
+}
+
+bool LiveSimulation::setMovementValue(const QString& elementId, double value, QString* error)
+{
+    auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (d.finished || d.states.empty()) {
+        if (error) *error = QStringLiteral("Keine laufende dynamische Simulation.");
+        return false;
+    }
+    const auto id = elementId.toStdString();
+    const auto element = std::find_if(d.workerModel.elemente.begin(), d.workerModel.elemente.end(),
+        [&](const segelphysik::Element& candidate) { return candidate.id == id; });
+    if (element == d.workerModel.elemente.end() || !element->bewegung) {
+        if (error) *error = QStringLiteral("Element besitzt keine gueltige Bewegungsdefinition.");
+        return false;
+    }
+    const double minimum = element->bewegung->ruderwinkel ? -90.0 : 0.0;
+    const double maximum = element->bewegung->ruderwinkel ? 90.0 : 100.0;
+    if (!std::isfinite(value) || value < minimum || value > maximum) {
+        if (error) *error = QStringLiteral("Stellwert liegt ausserhalb des zulaessigen Bereichs.");
+        return false;
+    }
+    if (d.nextMovementEvent == std::numeric_limits<std::size_t>::max()) {
+        if (error) *error = QStringLiteral("Bewegungs-Ereigniskennung erschoepft.");
+        return false;
+    }
+    d.pendingMovementEvents.push_back(
+        {d.nextMovementEvent++, id, value});
     return true;
 }
 

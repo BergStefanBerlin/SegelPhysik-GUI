@@ -1,6 +1,7 @@
 #include "navigation.hpp"
 
 #include <QFile>
+#include <QGridLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -8,6 +9,7 @@
 #include <QSizeGrip>
 #include <QSvgRenderer>
 #include <QVBoxLayout>
+#include <QWidget>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -37,10 +39,16 @@ QString angleText(double angle)
 }
 
 Values derive(const std::optional<forcedisplay::Pose>& pose,
-    const forcedisplay::Vec3& cameraOffset)
+    const forcedisplay::Vec3& cameraOffset,
+    const std::optional<forcedisplay::Vec3>& velocityWorld)
 {
     using namespace forcedisplay;
     Values result;
+    if (velocityWorld && std::all_of(velocityWorld->begin(), velocityWorld->end(),
+            [](double value) { return std::isfinite(value); })) {
+        result.velocityWorld = velocityWorld;
+        result.speed = norm(*velocityWorld);
+    }
     const bool validPose = pose && std::all_of(
         pose->quaternionXyzw.begin(), pose->quaternionXyzw.end(),
         [](double value) { return std::isfinite(value); });
@@ -231,7 +239,7 @@ void Instrument::paintEvent(QPaintEvent*)
 
 Overlay::Overlay(QWidget* viewport)
     : QWidget(viewport), handle_(new QLabel(QStringLiteral("Navigation  ·  ziehen"), this)),
-      sizeGrip_(new QSizeGrip(this))
+      sizeGrip_(new QSizeGrip(this)), speedMagnitude_(nullptr), speedComponents_{}
 {
     setObjectName(QStringLiteral("navigationOverlay"));
     auto* layout = new QVBoxLayout(this);
@@ -251,6 +259,42 @@ Overlay::Overlay(QWidget* viewport)
         instruments_[i] = new Instrument(kinds[i], this);
         layout->addWidget(instruments_[i], 1);
     }
+    auto* speedPanel = new QWidget(this);
+    speedPanel->setObjectName(QStringLiteral("navigationSpeed"));
+    speedPanel->setToolTip(QStringLiteral(
+        "Lineare Geschwindigkeit des Massenschwerpunkts in Weltachsen."));
+    speedPanel->setStyleSheet(QStringLiteral(
+        "QWidget#navigationSpeed { background:#11283a; border:1px solid #294459; "
+        "border-radius:4px; }"
+        "QLabel { background:transparent; color:#dce7ef; }"
+        "QLabel#navigationSpeedTitle { color:#8caabd; font-size:8pt; "
+        "font-weight:700; letter-spacing:1px; }"
+        "QLabel#navigationSpeedMagnitude { color:#63d5e2; font-size:13pt; "
+        "font-weight:700; }"
+        "QLabel#navigationSpeedAxis { color:#8caabd; font-size:8pt; }"));
+    auto* speedLayout = new QGridLayout(speedPanel);
+    speedLayout->setContentsMargins(8, 6, 8, 6);
+    speedLayout->setHorizontalSpacing(8);
+    speedLayout->setVerticalSpacing(2);
+    auto* title = new QLabel(QStringLiteral("GESCHWINDIGKEIT"), speedPanel);
+    title->setObjectName(QStringLiteral("navigationSpeedTitle"));
+    speedLayout->addWidget(title, 0, 0, 1, 2);
+    speedMagnitude_ = new QLabel(QStringLiteral("– m/s"), speedPanel);
+    speedMagnitude_->setObjectName(QStringLiteral("navigationSpeedMagnitude"));
+    speedLayout->addWidget(speedMagnitude_, 1, 0, 1, 2);
+    const std::array<QString, 3> axes{
+        QStringLiteral("Welt-X"), QStringLiteral("Welt-Y"), QStringLiteral("Welt-Z")};
+    for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
+        auto* name = new QLabel(axes[axis], speedPanel);
+        name->setObjectName(QStringLiteral("navigationSpeedAxis"));
+        speedComponents_[axis] = new QLabel(QStringLiteral("– m/s"), speedPanel);
+        speedComponents_[axis]->setObjectName(
+            QStringLiteral("navigationSpeedComponent%1").arg(axis));
+        speedComponents_[axis]->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        speedLayout->addWidget(name, static_cast<int>(axis) + 2, 0);
+        speedLayout->addWidget(speedComponents_[axis], static_cast<int>(axis) + 2, 1);
+    }
+    layout->addWidget(speedPanel);
     sizeGrip_->setObjectName(QStringLiteral("navigationSizeGrip"));
     sizeGrip_->installEventFilter(this);
     sizeGrip_->setToolTip(QStringLiteral("Navigationsanzeigen durch Ziehen vergrößern oder verkleinern"));
@@ -265,6 +309,14 @@ Overlay::Overlay(QWidget* viewport)
 void Overlay::setValues(const Values& values)
 {
     for (auto* instrument : instruments_) instrument->setValues(values);
+    speedMagnitude_->setText(values.speed
+        ? QStringLiteral("%1 m/s").arg(*values.speed, 0, 'f', 3)
+        : QStringLiteral("– m/s"));
+    for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
+        speedComponents_[axis]->setText(values.velocityWorld
+            ? QStringLiteral("%1 m/s").arg((*values.velocityWorld)[axis], 0, 'f', 3)
+            : QStringLiteral("– m/s"));
+    }
 }
 
 void Overlay::clampPosition()

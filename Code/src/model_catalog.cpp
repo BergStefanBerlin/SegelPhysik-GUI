@@ -188,6 +188,9 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
             for (const auto& element : group.elemente) {
                 data.elementGroups.insert(QString::fromStdString(element.id),
                     QString::fromStdString(group.id));
+                if (element.bewegung)
+                    data.elementMovements.insert(QString::fromStdString(element.id),
+                        *element.bewegung);
             }
         }
     } catch (const std::exception& error) {
