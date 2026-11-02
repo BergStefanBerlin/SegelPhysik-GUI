@@ -53,6 +53,17 @@ int main(int argc, char** argv)
                 require(settings.profiles[1].environmentPath == QStringLiteral("missing-environment.hdr"),
                     "environment wish survives restart independently of asset availability");
             }
+            storage.beginGroup(QStringLiteral("statisch"));
+            if (args[1] == QStringLiteral("--write")) {
+                settings.profiles[0].waterOpacity = .42;
+                settings.profiles[0].enabled[static_cast<std::size_t>(graphics::Feature::Grid)] = true;
+                require(graphics::save(storage, settings, &error), "static subprocess save");
+            } else {
+                require(graphics::load(storage, &settings, &error)
+                    && settings.profiles[0].waterOpacity == .42
+                    && settings.profiles[0].on(graphics::Feature::Grid),
+                    "Static settings must survive a real process restart in the existing store.");
+            }
             return 0;
         }
         QTemporaryDir directory;

@@ -18,6 +18,7 @@ struct FeatureInfo {
     const char* group;
     const char* label;
     bool technical;
+    const char* explanation;
 };
 const std::array<FeatureInfo, featureCount>& features();
 struct Profile {

@@ -2,15 +2,17 @@
 
 #include <QApplication>
 #include <QCheckBox>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
-#include <QSpinBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QTimer>
+#include <QSettings>
+#include <QTableWidget>
+#include <QTabWidget>
+#include <QTemporaryDir>
+#include <QVBoxLayout>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -23,146 +25,123 @@ void require(bool condition, const char* message)
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    auto activeDialog = []() -> QDialog* {
-        for (auto* widget : QApplication::topLevelWidgets()) {
-            if (auto* dialog = qobject_cast<QDialog*>(widget)) {
-                if (dialog->objectName() == QStringLiteral("graphicsSetup")) return dialog;
-            }
-        }
-        return nullptr;
-    };
-    QTimer watchdog;
-    watchdog.setInterval(5000);
-    QObject::connect(&watchdog, &QTimer::timeout, &app, [&] {
-        if (auto* dialog = activeDialog()) dialog->reject();
-    });
-    watchdog.start();
     try {
+        QTemporaryDir directory;
+        require(directory.isValid(), "temporary directory");
+        QSettings storage(directory.filePath(QStringLiteral("existing.ini")), QSettings::IniFormat);
         auto committed = graphics::defaults();
-        int commits = 0;
-        bool controlsFound = false;
-        bool dependenciesCorrect = false;
-        bool matrixComplete = false;
-        QTimer::singleShot(0, [&] {
-            auto* dialog = activeDialog();
-            if (!dialog) return;
-            auto* buttons = dialog->findChild<QDialogButtonBox*>();
-            auto* technical = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_ssao"));
-            auto* optical = dialog->findChild<QCheckBox*>(QStringLiteral("profile1_ssao"));
-            auto* environment = dialog->findChild<QLineEdit*>(QStringLiteral("profile1_environment"));
-            auto* age = dialog->findChild<QLineEdit*>(QStringLiteral("profile0_trackAge"));
-            auto* budget = dialog->findChild<QSpinBox*>(QStringLiteral("profile0_trackBudget"));
-            auto* grid = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_grid"));
-            auto* motionGrid = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_motionGrid"));
-            auto* track = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_waterTrack"));
-            auto* marks = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_distanceMarks"));
-            controlsFound = buttons && technical && optical && environment && age && budget
-                && grid && motionGrid && track && marks;
-            if (!controlsFound) { dialog->reject(); return; }
-            matrixComplete = true;
-            for (int n = 0; n < 2; ++n) {
-                auto* trail = dialog->findChild<QCheckBox*>(QStringLiteral("profile%1_trail").arg(n));
-                if (!trail || trail->isChecked() || !trail->isEnabled()) matrixComplete = false;
-                for (const auto& feature : graphics::features()) {
-                    if (!dialog->findChild<QCheckBox*>(QStringLiteral("profile%1_%2").arg(n)
-                            .arg(QString::fromLatin1(feature.key)))) matrixComplete = false;
-                }
-            }
-            auto* pbr = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_pbr"));
-            auto* texture = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_colorTexture"));
-            auto* normals = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_waterNormals"));
-            auto* animation = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_animation"));
-            auto* water = dialog->findChild<QCheckBox*>(QStringLiteral("profile0_water"));
-            dependenciesCorrect = pbr && texture && normals && animation && water;
-            if (dependenciesCorrect) {
-                track->setChecked(false);
-                dependenciesCorrect = marks->isChecked() && !marks->isEnabled();
-                track->setChecked(true);
-                dependenciesCorrect = dependenciesCorrect && marks->isEnabled();
-                motionGrid->setChecked(false);
-                dependenciesCorrect = dependenciesCorrect && !grid->isChecked();
-                grid->setChecked(true);
-                dependenciesCorrect = dependenciesCorrect && motionGrid->isChecked();
-                age->setText(QStringLiteral("45"));
-                budget->setValue(128);
-                dependenciesCorrect = !texture->isEnabled() && normals->isEnabled() && !animation->isEnabled();
-                pbr->setChecked(true);
-                normals->setChecked(true);
-                dependenciesCorrect = dependenciesCorrect && texture->isEnabled() && animation->isEnabled();
-                water->setChecked(false);
-                dependenciesCorrect = dependenciesCorrect && !normals->isEnabled()
-                    && normals->isChecked() && !animation->isEnabled();
-                water->setChecked(true);
-            }
-            technical->setChecked(true);
-            optical->setChecked(false);
-            environment->setText(QStringLiteral("test-environment.hdr"));
-            age->setText(QStringLiteral("-1"));
-            buttons->button(QDialogButtonBox::Apply)->click();
-            age->setText(QStringLiteral("45"));
-            buttons->button(QDialogButtonBox::Apply)->click();
-            age->setText(QStringLiteral("1"));
-            budget->setValue(4);
-            technical->setChecked(false);
-            optical->setChecked(true);
-            environment->clear();
-            buttons->button(QDialogButtonBox::Cancel)->click();
-        });
-        editGraphicsSettings(nullptr, committed, QStringLiteral("Test"), [&](const graphics::Settings& proposed) {
-            committed = proposed;
-            ++commits;
-            return true;
-        });
-        require(controlsFound, "dialog controls absent");
-        require(matrixComplete, "feature matrix incomplete in dialog");
-        require(dependenciesCorrect, "dependencies must be explicit without losing wishes");
-        require(commits == 1, "apply/cancel commit count");
-        require(committed.profiles[0].on(graphics::Feature::SSAO), "apply lost technical");
-        require(!committed.profiles[1].on(graphics::Feature::SSAO), "cancel changed optical");
-        require(committed.profiles[1].environmentPath == QStringLiteral("test-environment.hdr"),
-            "cancel changed committed environment");
-        require(committed.profiles[0].trackAge == 45 && committed.profiles[0].trackBudget == 128,
-            "motion Apply/Cancel transaction");
-        bool resetWorked = false;
-        QTimer::singleShot(0, [&] {
-            auto* dialog = activeDialog();
-            if (!dialog) return;
-            auto* all = dialog->findChild<QPushButton*>(QStringLiteral("profile0_all"));
-            auto* none = dialog->findChild<QPushButton*>(QStringLiteral("profile1_none"));
-            auto* reset = dialog->findChild<QPushButton*>(QStringLiteral("profile0_reset"));
-            auto* buttons = dialog->findChild<QDialogButtonBox*>();
-            if (!all || !none || !reset || !buttons) { dialog->reject(); return; }
-            all->click();
-            none->click();
-            reset->click();
-            resetWorked = true;
-            buttons->button(QDialogButtonBox::Ok)->click();
-        });
-        editGraphicsSettings(nullptr, committed, {}, [&](const graphics::Settings& proposed) {
-            committed = proposed;
-            ++commits;
-            return true;
-        });
-        require(resetWorked, "reset controls");
-        require(commits == 2, "OK commit count");
-        require(committed.profiles[0].enabled == graphics::defaults(0).enabled, "reset technical");
-        for (bool enabled : committed.profiles[1].enabled) require(!enabled, "optical all off independent");
-        QTimer::singleShot(0, [&] {
-            auto* dialog = activeDialog();
-            if (!dialog) return;
-            auto* buttons = dialog->findChild<QDialogButtonBox*>();
-            if (buttons) buttons->button(QDialogButtonBox::Ok)->click();
-            QTimer::singleShot(0, dialog, &QDialog::reject);
-        });
-        editGraphicsSettings(nullptr, committed, {}, [&](const graphics::Settings&) {
-            ++commits;
-            return false;
-        });
-        require(commits == 3, "failed persistence callback");
-        std::cout << "Separate profile editing, Apply/Cancel and rejected persistence passed.\n";
-        return 0;
+        committed.active = 1;
+        QString error;
+        require(graphics::save(storage, committed, &error), "initial existing settings");
+        const auto dynamicData = storage.value(QStringLiteral("grafik/profile_v1"));
+        storage.beginGroup(QStringLiteral("statisch"));
+        int commits = 0, closed = 0;
+        bool saveAllowed = true;
+        QWidget host;
+        host.resize(800, 600);
+        auto* layout = new QVBoxLayout(&host);
+        auto create = [&] {
+            return createGraphicsSettingsPage(&host, committed, QStringLiteral("Test"),
+                [&](const graphics::Settings& proposed) {
+                    if (!saveAllowed || !graphics::save(storage, proposed, &error)) return false;
+                    committed = proposed;
+                    ++commits;
+                    return true;
+                }, [&] { ++closed; },
+                [&](graphics::Feature feature) {
+                    if (feature == graphics::Feature::BodyTransparency)
+                        return QStringLiteral("Körperdeckkraft %1").arg(committed.profiles[0].bodyOpacity);
+                    return committed.profiles[0].on(feature)
+                        ? QStringLiteral("Aktiviert.") : QStringLiteral("Ausgeschaltet.");
+                });
+        };
+        std::unique_ptr<QWidget> page(create());
+        layout->addWidget(page.get());
+        host.show();
+        app.processEvents();
+        require(page->window() == &host && !page->findChild<QTabWidget*>(),
+            "Static technique must be embedded with no optical/profile tabs.");
+        require(!page->findChild<QPushButton*>(QStringLiteral("applyGraphics"))
+            && !page->findChild<QPushButton*>(QStringLiteral("cancelGraphics")),
+            "Immediate settings must not have Apply/Cancel.");
+        auto* table = page->findChild<QTableWidget*>(QStringLiteral("staticGraphicsTable"));
+        require(table && table->columnCount() == 4 && table->rowCount() > 31
+            && table->horizontalHeaderItem(0)->text().isEmpty()
+            && table->horizontalHeaderItem(1)->text() == QStringLiteral("Beschreibung")
+            && table->horizontalHeaderItem(2)->text() == QStringLiteral("CPU Last")
+            && table->horizontalHeaderItem(3)->text() == QStringLiteral("GPU Last"),
+            "Required four-column table and unnamed checkbox column missing.");
+        for (std::size_t i = 0; i < graphics::featureCount; ++i) {
+            const auto key = QString::fromLatin1(graphics::features()[i].key);
+            auto* check = page->findChild<QCheckBox*>(QStringLiteral("profile0_%1").arg(key));
+            require(check && check->text().isEmpty() && !check->accessibleName().isEmpty(),
+                "Feature needs an unnamed accessible checkbox.");
+            require(!table->item(static_cast<int>(i), 2)->text().isEmpty()
+                && !table->item(static_cast<int>(i), 3)->text().isEmpty(),
+                "Every feature needs CPU and GPU load.");
+        }
+        auto* water = page->findChild<QCheckBox*>(QStringLiteral("profile0_water"));
+        const bool original = water->isChecked();
+        water->toggle();
+        require(commits == 1 && closed == 0
+            && committed.profiles[0].on(graphics::Feature::Water) != original,
+            "Checkbox must persist immediately without closing.");
+        require(page->findChild<QLabel*>(QStringLiteral("profile0_status_water"))->text()
+            .contains(QStringLiteral("Ausgeschaltet.")),
+            "Feature status must reflect the applied setting immediately.");
+        auto* pbr = page->findChild<QCheckBox*>(QStringLiteral("profile0_pbr"));
+        auto* texture = page->findChild<QCheckBox*>(QStringLiteral("profile0_colorTexture"));
+        pbr->setChecked(true);
+        require(texture->isEnabled(), "PBR dependencies must stay explicit.");
+        pbr->setChecked(false);
+        require(!texture->isEnabled(), "PBR dependency state must update immediately.");
+        const int beforeFailure = commits;
+        saveAllowed = false;
+        water->toggle();
+        require(commits == beforeFailure && water->isChecked() != original
+            && page->findChild<QLabel*>(QStringLiteral("graphicsDiagnostic"))->text()
+                .contains(QStringLiteral("fehlgeschlagen")),
+            "Save failure must report and restore last active checkbox.");
+        auto* opacity = page->findChild<QDoubleSpinBox*>(QStringLiteral("profile0_bodyOpacity"));
+        const double beforeOpacity = opacity->value();
+        opacity->setValue(.65);
+        require(opacity->value() == beforeOpacity && commits == beforeFailure,
+            "Failed numeric setting must restore saved value.");
+        saveAllowed = true;
+        opacity->setValue(.65);
+        require(committed.profiles[0].bodyOpacity == .65 && closed == 0,
+            "Numeric changes must save immediately.");
+        require(page->findChild<QLabel*>(QStringLiteral("profile0_status_bodyTransparency"))->text()
+            .contains(QStringLiteral("0.65")),
+            "Opacity explanation must refresh after applying numeric settings.");
+        auto* spacing = page->findChild<QLineEdit*>(QStringLiteral("profile0_trackSpacing"));
+        spacing->setText(QStringLiteral("0,00001"));
+        QMetaObject::invokeMethod(spacing, "editingFinished", Qt::DirectConnection);
+        require(committed.profiles[0].trackSpacing == .00001,
+            "Valid small track spacing must not be silently clamped.");
+        spacing->setText(QStringLiteral("-1"));
+        QMetaObject::invokeMethod(spacing, "editingFinished", Qt::DirectConnection);
+        require(committed.profiles[0].trackSpacing == .00001
+            && spacing->text().toDouble() == .00001
+            && page->findChild<QLabel*>(QStringLiteral("graphicsDiagnostic"))->text()
+                .contains(QStringLiteral("ausserhalb")),
+            "Invalid text must report the error and restore the active setting.");
+        page->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+        require(closed == 1, "Back must close without discarding settings.");
+        auto reloaded = graphics::defaults();
+        require(graphics::load(storage, &reloaded, &error)
+            && reloaded.profiles[0].bodyOpacity == .65
+            && reloaded.profiles[0].on(graphics::Feature::Water) != original,
+            "Immediate static settings must survive storage reload.");
+        require(reloaded.profiles[1].enabled == graphics::defaults(1).enabled
+            && reloaded.active == 1, "Optical profile and previous active profile must be retained.");
+        storage.endGroup();
+        require(storage.value(QStringLiteral("grafik/profile_v1")) == dynamicData,
+            "Static settings must not modify existing dynamic settings.");
+        std::cout << "Static table, immediate persistence, dependencies and rollback passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
     }
+    return 0;
 }

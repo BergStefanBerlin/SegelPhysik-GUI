@@ -199,10 +199,11 @@ void testOverlay()
     auto* pitch = overlay.findChild<QWidget*>(QStringLiteral("navigation_pitch"));
     auto* speed = overlay.findChild<QWidget*>(QStringLiteral("navigationSpeed"));
     auto* magnitude = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
+    auto* courseRate = overlay.findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
     auto* componentX = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
     auto* componentY = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent1"));
     auto* componentZ = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
-    require(handle && compass && roll && pitch && speed && magnitude
+    require(handle && compass && roll && pitch && speed && magnitude && courseRate
             && componentX && componentY && componentZ,
         "three instruments, speed readout and header required");
     require(compass->y() < roll->y() && roll->y() < pitch->y(), "vertical instrument order");
@@ -213,10 +214,45 @@ void testOverlay()
     require(componentX->text() == QStringLiteral("3.000 m/s"), "world X speed display");
     require(componentY->text() == QStringLiteral("4.000 m/s"), "world Y speed display");
     require(componentZ->text() == QStringLiteral("12.000 m/s"), "world Z speed display");
+    require(magnitude->y() < courseRate->y() && courseRate->y() < componentX->y()
+            && componentX->y() < componentY->y() && componentY->y() < componentZ->y(),
+        "course rate must lie between speed magnitude and all world-axis rows");
+    for (double sign : {-1., 1.}) {
+        auto values = navigation::derive(forcedisplay::Pose{}, {1, -1, 1},
+            forcedisplay::Vec3{3.,4.,12.});
+        values.courseRateRadS = sign * pi / 2.;
+        values.courseRateStatus = QStringLiteral("gueltig");
+        overlay.setValues(values);
+        require(courseRate->text() == (sign < 0.
+                ? QStringLiteral("-90.00 °/s") : QStringLiteral("+90.00 °/s")),
+            "signed Core rate conversion pi/2 rad/s to 90 degrees/s");
+        values.approximate = true;
+        overlay.setValues(values);
+        require(courseRate->text().endsWith(QStringLiteral(" ≈"))
+                && courseRate->toolTip().contains(QStringLiteral("Näherung")),
+            "nonconverged rate must be visibly approximate");
+    }
+    navigation::Values zero;
+    zero.courseRateRadS = 0.;
+    zero.courseRateStatus = QStringLiteral("gueltig");
+    overlay.setValues(zero);
+    require(courseRate->text() == QStringLiteral("0.00 °/s"),
+        "numeric zero must not be unavailable");
     overlay.setValues(navigation::Values{});
     require(magnitude->text() == QStringLiteral("– m/s")
             && componentX->text() == QStringLiteral("– m/s"),
         "missing speed must not be shown as zero");
+    require(courseRate->text() == QStringLiteral("-- °/s")
+            && courseRate->toolTip().contains(QStringLiteral("nicht_verfuegbar")),
+        "missing course rate must have explicit unavailability reason");
+    for (const QSize size : {QSize(150, 500), QSize(280, 760)}) {
+        overlay.resize(size);
+        QApplication::processEvents();
+        require(speed->rect().contains(courseRate->geometry())
+                && speed->rect().contains(componentZ->geometry()),
+            "resized speed card must contain rate and every axis row");
+    }
+    overlay.resize(180, 670);
     const auto start = overlay.pos();
     const QPointF local(20, 10);
     const auto global = handle->mapToGlobal(local.toPoint());

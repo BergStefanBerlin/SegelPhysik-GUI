@@ -937,7 +937,7 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     , overlay_(vtkSmartPointer<vtkRenderer>::New())
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(1, 1, 1, 1);
     layout->addWidget(vtkWidget_);
     renderWindow_->SetNumberOfLayers(2);
     renderWindow_->AddRenderer(renderer_);
@@ -968,6 +968,23 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     lateralLabel_->PickableOff();
     lateralLabel_->GetTextProperty()->SetFontSize(16);
     lateralLabel_->GetTextProperty()->BoldOn();
+    sailPoint_ = vtkSmartPointer<vtkPolyData>::New();
+    sailActor_ = makeOverlayActor(sailPoint_);
+    sailLabel_ = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+    sailLabel_->SetInput("SDP (Ersatz)");
+    sailLabel_->PickableOff();
+    sailLabel_->GetTextProperty()->SetFontSize(16);
+    sailLabel_->GetTextProperty()->BoldOn();
+    courseArrowLines_ = vtkSmartPointer<vtkPolyData>::New();
+    courseArrowHead_ = vtkSmartPointer<vtkPolyData>::New();
+    courseArrowActor_ = makeOverlayActor(courseArrowLines_);
+    courseArrowHeadActor_ = makeOverlayActor(courseArrowHead_);
+    overlay_->AddActor(courseArrowActor_);
+    overlay_->AddActor(courseArrowHeadActor_);
+    setActorColor(courseArrowActor_, QStringLiteral("#73f3d4"));
+    setActorColor(courseArrowHeadActor_, QStringLiteral("#73f3d4"));
+    courseArrowActor_->VisibilityOff();
+    courseArrowHeadActor_->VisibilityOff();
 
     // Licht: Lichtset statt Einzellicht, Kantenglättung, Tiefenschälung für
     // Transparenz, Umgebungsverdeckung und Himmel als Umgebungslicht.
@@ -1115,6 +1132,8 @@ void VtkSceneWidget::clearModel()
     inspectionPreviewActors_.clear();
     inspectionGridLabels_.clear();
     overlay_->RemoveAllViewProps();
+    overlay_->AddActor(courseArrowActor_);
+    overlay_->AddActor(courseArrowHeadActor_);
     addEnvironmentActors();
     bodies_.clear();
     dryLoops_.clear();
@@ -1245,8 +1264,13 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
 
         forceRenderer()->AddActor(lateralActor_);
         forceRenderer()->AddActor(lateralLabel_);
+        forceRenderer()->AddActor(sailActor_);
+        forceRenderer()->AddActor(sailLabel_);
+        sailActor_->VisibilityOff();
+        sailLabel_->VisibilityOff();
         lateralActor_->VisibilityOff();
         lateralLabel_->VisibilityOff();
+        pressurePoints_ = {};
         updateWaterPlane();
         frameBodies();
         if (inspectionMode_) applyBodyStyle();
@@ -1468,6 +1492,12 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
 
 void VtkSceneWidget::clearState()
 {
+    const auto previousView = cameraView();
+    const auto localPosition = inverseRotate(cameraPose_,
+        forcedisplay::sub(previousView.position, cameraPose_.position));
+    const auto localTarget = inverseRotate(cameraPose_,
+        forcedisplay::sub(previousView.focalPoint, cameraPose_.position));
+    const auto localUp = inverseRotate(cameraPose_, previousView.viewUp);
     resetMotionHistory();
     for (auto& body : bodies_) {
         body.mesh->DeepCopy(body.originalMesh);
@@ -1477,7 +1507,15 @@ void VtkSceneWidget::clearState()
         body.waterline->SetUserTransform(nullptr);
         body.reflection->SetUserTransform(nullptr);
         body.cutter->SetInputData(outwardNormals(body.mesh));
+        body.waterlineData->Initialize();
     }
+    pose_ = {};
+    cameraPose_ = {};
+    auto* camera = renderer_->GetActiveCamera();
+    camera->SetPosition(localPosition.data());
+    camera->SetFocalPoint(localTarget.data());
+    camera->SetViewUp(localUp.data());
+    dryLoops_.clear();
     forces_ = {};
     velocityWorld_.reset();
     hasState_ = false;
@@ -1485,6 +1523,7 @@ void VtkSceneWidget::clearState()
     track_.clear();
     currentTime_ = 0.0;
     trailActor_->VisibilityOff();
+    updateWaterPlane();
     geometryDirty_ = true;
     requestRender();
 }
@@ -1888,6 +1927,54 @@ void VtkSceneWidget::setNavigationVisible(bool visible)
 {
     navigation_->setVisible(visible);
     if (visible) navigation_->raise();
+    geometryDirty_ = true;
+    requestRender();
+}
+
+QString VtkSceneWidget::graphicsFeatureStatus(graphics::Feature feature) const
+{
+    using F = graphics::Feature;
+    if (!graphicsProfile_.on(feature)) return QStringLiteral("Ausgeschaltet.");
+    if (feature >= F::Fresnel && feature <= F::Reflection && !graphicsProfile_.on(F::Water))
+        return QStringLiteral("Nicht wirksam: Wasser ist ausgeschaltet.");
+    if ((feature == F::ModelIBL || feature == F::Coat || feature == F::ColorTexture
+            || feature == F::ORM || feature == F::NormalTexture || feature == F::Anisotropy)
+        && !graphicsProfile_.on(F::PBR))
+        return QStringLiteral("Nicht wirksam: PBR ist ausgeschaltet.");
+    bool lacquer = false, textured = false, cloth = false, brushed = false, orm = false;
+    for (const auto& body : bodies_) {
+        const auto surface = effectiveSurface(body.surface, body.materialPreview);
+        lacquer = lacquer || surface == DisplayPart::Surface::Lacquer;
+        cloth = cloth || surface == DisplayPart::Surface::Cloth;
+        brushed = brushed || surface == DisplayPart::Surface::BrushedMetal;
+        textured = textured || surface == DisplayPart::Surface::Lacquer
+            || surface == DisplayPart::Surface::Cloth || surface == DisplayPart::Surface::Wood;
+        orm = orm || surface == DisplayPart::Surface::Lacquer
+            || surface == DisplayPart::Surface::Cloth || surface == DisplayPart::Surface::Wood
+            || surface == DisplayPart::Surface::Metal || surface == DisplayPart::Surface::BrushedMetal;
+    }
+    if ((feature == F::Cloth && !cloth) || (feature == F::Anisotropy && !brushed)
+        || (feature == F::ColorTexture && !textured) || (feature == F::Coat && !lacquer)
+        || ((feature == F::ORM || feature == F::NormalTexture) && !orm))
+        return QStringLiteral("Eingeschaltet; ohne passende Modellmaterialien hier ausgelassen (kein Fehler).");
+    if (feature == F::Animation)
+        return !graphicsProfile_.on(F::WaterNormals)
+            ? QStringLiteral("Nicht wirksam: Wasser-Normalstruktur ist ausgeschaltet.")
+            : QStringLiteral("Im statischen Ergebnis ruhend: Animation folgt nur der Simulationszeit.");
+    if (feature == F::DistanceMarks && !graphicsProfile_.on(F::WaterTrack))
+        return QStringLiteral("Nicht wirksam: technische Fahrspur ist ausgeschaltet.");
+    if (feature == F::BodyTransparency)
+        return QStringLiteral("Durchsicht aktiv: maximal %1 % Körperdeckkraft (%2 % transparent). "
+                              "Mehr Haken machen das Boot nicht deckender.")
+            .arg(graphicsProfile_.bodyOpacity * 100., 0, 'f', 0)
+            .arg((1. - graphicsProfile_.bodyOpacity) * 100., 0, 'f', 0);
+    if (feature == F::Water)
+        return QStringLiteral("Aktiv: Basis-Wasserdeckkraft %1 %; Fresnel verändert sie blickwinkelabhängig.")
+            .arg(graphicsProfile_.waterOpacity * 100., 0, 'f', 0);
+    if (feature == F::Shadows || feature == F::SSAO)
+        return QStringLiteral("Aktiviert; sichtbarer Effekt hängt von Ansicht und Geometrie ab. "
+                              "Starke Körperdurchsicht schwächt den plastischen Eindruck.");
+    return QStringLiteral("Aktiviert; gilt für alle unterstützten Teile. Sichtbare Wirkung abhängig von Szene und Ansicht.");
 }
 
 QString VtkSceneWidget::graphicsStatus() const
@@ -2468,6 +2555,9 @@ void VtkSceneWidget::hideForceVisuals()
     leverActor_->VisibilityOff();
     lateralActor_->VisibilityOff();
     lateralLabel_->VisibilityOff();
+    sailActor_->VisibilityOff();
+    sailLabel_->VisibilityOff();
+    pressurePoints_ = {};
 }
 
 double VtkSceneWidget::worldPerLogicalPixel(const Vec3& point) const
@@ -2526,6 +2616,7 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
         cameraKey_ = key;
         geometryDirty_ = false;
         rebuildForceGeometry();
+        rebuildCourseArrow();
         rebuildEnvironment();
         double bounds[6];
         double overlayBounds[6];
@@ -2570,31 +2661,103 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
         axesRenderer_->SetViewport(0.0, 0.0, std::min(1.0, sidePx / size[0]), std::min(1.0, sidePx / size[1]));
     }
     const auto view = cameraView();
-    navigation_->setValues(navigation::derive(
+    auto navigationValues = navigation::derive(
         hasState_ ? std::optional<forcedisplay::Pose>(pose_) : std::nullopt,
-        forcedisplay::sub(view.position, view.focalPoint), velocityWorld_));
+        forcedisplay::sub(view.position, view.focalPoint), velocityWorld_);
+    if (hasState_) {
+        navigationValues.courseRateRadS = forces_.courseRateRadS;
+        navigationValues.courseRateStatus = forces_.courseRateStatus;
+        navigationValues.approximate = !forces_.stationary.isEmpty()
+            && !forces_.stationary.value(QStringLiteral("konvergiert")).toBool();
+    }
+    navigation_->setValues(navigationValues);
+}
+
+void VtkSceneWidget::rebuildCourseArrow()
+{
+    courseArrowActor_->VisibilityOff();
+    courseArrowHeadActor_->VisibilityOff();
+    courseArrowGeometry_.reset();
+    if (inspectionMode_ || navigation_->isHidden() || !hasState_
+        || !forces_.courseRateRadS || bodies_.empty())
+        return;
+    double front = -std::numeric_limits<double>::infinity();
+    double back = std::numeric_limits<double>::infinity();
+    double left = back, right = front;
+    for (const auto& body : bodies_) {
+        double bounds[6];
+        body.mesh->GetBounds(bounds);
+        back = std::min(back, bounds[0]);
+        front = std::max(front, bounds[1]);
+        left = std::min(left, bounds[2]);
+        right = std::max(right, bounds[3]);
+    }
+    const double length = front - back;
+    if (!std::isfinite(length) || length <= 0.) return;
+    const auto forward = forcedisplay::toWorldVector(pose_, {1., 0., 0.});
+    const double horizontal = std::hypot(forward[0], forward[1]);
+    if (horizontal <= 1e-10) return;
+    auto start = forcedisplay::toWorldPoint(pose_, {front, .5 * (left + right), 0.});
+    start[0] += .07 * length * forward[0] / horizontal;
+    start[1] += .07 * length * forward[1] / horizontal;
+    start[2] = .015 * length;
+    courseArrowGeometry_ = forcedisplay::courseArrow(
+        start, forward, *forces_.courseRateRadS, .45 * length);
+    if (!courseArrowGeometry_) return;
+    const auto& arrow = *courseArrowGeometry_;
+    const double headLength = .05 * length;
+    auto points = arrow.points;
+    while (points.size() > 1 && forcedisplay::norm(
+        forcedisplay::sub(points.back(), arrow.tip)) < headLength)
+        points.removeLast();
+    points.push_back(forcedisplay::sub(arrow.tip, forcedisplay::scale(arrow.tangent, headLength)));
+    PolyBuilder lines, head;
+    lines.polyline(points);
+    head.cone(arrow.tip, arrow.tangent, headLength, .025 * length);
+    lines.storeLines(courseArrowLines_);
+    head.storePolys(courseArrowHead_);
+    courseArrowActor_->GetProperty()->SetLineWidth(
+        static_cast<float>(5. * vtkWidget_->devicePixelRatioF()));
+    courseArrowActor_->VisibilityOn();
+    courseArrowHeadActor_->VisibilityOn();
 }
 
 void VtkSceneWidget::rebuildForceGeometry()
 {
     hideForceVisuals();
     screenShapes_.clear();
-    if (options_.lateralCenter && hasState_ && !bodies_.empty() && forces_.lateral
-        && forces_.lateral->position) {
-        const Vec3 point = forcedisplay::toWorldPoint(pose_, *forces_.lateral->position);
-        const double half = 0.12 * sceneSpan_;
-        PolyBuilder marker;
-        marker.segment({point[0], point[1], -half}, {point[0], point[1], half});
-        marker.storeLines(lateralLines_);
-        // Geometrischer Punkt (Ruhe) gedaempft, kraftgewichteter Punkt kraeftig.
-        const bool weighted = forces_.lateral->status == QStringLiteral("gueltig");
-        setActorColor(lateralActor_, weighted ? QStringLiteral("#ff4fd8") : QStringLiteral("#b47aa8"));
-        lateralActor_->GetProperty()->SetLineWidth(
-            static_cast<float>(4.0 * vtkWidget_->devicePixelRatioF()));
-        lateralActor_->VisibilityOn();
-        lateralLabel_->SetPosition(point[0], point[1], half);
-        lateralLabel_->GetTextProperty()->SetColor(1.0, 0.31, 0.85);
-        lateralLabel_->VisibilityOn();
+    if (hasState_ && !bodies_.empty() && !inspectionMode_) {
+        const auto marker = [this](const Vec3& local, bool sail) {
+            const auto point = forcedisplay::toWorldPoint(pose_, local);
+            pressurePoints_[sail ? 1 : 0] = point;
+            auto* data = sail ? sailPoint_.GetPointer() : lateralLines_.GetPointer();
+            auto* actor = sail ? sailActor_.GetPointer() : lateralActor_.GetPointer();
+            auto* label = sail ? sailLabel_.GetPointer() : lateralLabel_.GetPointer();
+            vtkNew<vtkPoints> points;
+            points->SetDataTypeToDouble();
+            const auto id = points->InsertNextPoint(point.data());
+            vtkNew<vtkCellArray> vertices;
+            vertices->InsertNextCell(1, &id);
+            data->Initialize();
+            data->SetPoints(points);
+            data->SetVerts(vertices);
+            const QColor color(sail ? QStringLiteral("#ffad48") : QStringLiteral("#ff4fd8"));
+            actor->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+            actor->GetProperty()->SetPointSize(static_cast<float>(11. * vtkWidget_->devicePixelRatioF()));
+            actor->GetProperty()->RenderPointsAsSpheresOn();
+            label->SetPosition(point[0], point[1], point[2]);
+            label->GetTextProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
+            label->GetTextProperty()->SetFontSize(static_cast<int>(16. * vtkWidget_->devicePixelRatioF()));
+            label->GetTextProperty()->SetVerticalJustificationToBottom();
+            actor->VisibilityOn();
+            label->VisibilityOn();
+        };
+        if (options_.lateralCenter && forces_.lateral && forces_.lateral->position
+            && forces_.lateral->status == QStringLiteral("gueltig")
+            && forces_.lateral->evaluationVersion == 2)
+            marker(*forces_.lateral->position, false);
+        if (options_.sailCenter && forces_.sailCenter && forces_.sailCenter->position)
+            marker(*forces_.sailCenter->position, true);
     }
     if (!options_.forces || !hasState_ || bodies_.empty()) {
         return;
@@ -2740,7 +2903,7 @@ void VtkSceneWidget::rebuildForceGeometry()
 bool VtkSceneWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == vtkWidget_) {
-        if (event->type() == QEvent::Resize && inspectionMode_) updateInspectionMask();
+        if (event->type() == QEvent::Resize) updateInspectionMask();
         if (event->type() == QEvent::MouseButtonPress) {
             const auto* mouse = static_cast<QMouseEvent*>(event);
             pressActive_ = mouse->button() == Qt::LeftButton;

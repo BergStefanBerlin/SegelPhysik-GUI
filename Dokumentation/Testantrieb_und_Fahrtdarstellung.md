@@ -39,9 +39,16 @@ Korrekturimpuls und Energieänderung sind künstliche Testeingriffe, keine
 Wasserwiderstandskraft. Das bestehende Bilanzfenster weist einen wirksamen
 Begrenzungseingriff ausdrücklich aus, ohne neue Bewegungsinstrumente einzuführen.
 
-## Setup → Grafik
+## Darstellung und gespeicherter dynamischer Grafikstand
 
-Je Profil Technik/Optik gibt es **Bewegung durchs Wasser**:
+Seit dem Nutzerauftrag vom 02.11.2026 um 20:14 Uhr konfiguriert der
+Button **Darstellung** ausschließlich die Technikansicht im statischen
+Modell. Optikeinstellungen und die frühere Materialvorschau werden
+vorerst nicht angeboten. Die bisherigen dynamischen Grafikwerte bleiben
+unverändert erhalten; statische Änderungen greifen dort nicht ein.
+Setup bietet keinen zweiten Grafikweg.
+
+Die vorhandenen Profilwerte für **Bewegung durchs Wasser** bleiben:
 
 | Einstellung | Technik-Default | Optik-Default |
 |---|---|---|
@@ -65,9 +72,12 @@ Die alte 3D-Kursspur bleibt separat und wird nicht automatisch eingeschaltet.
 | Stützpunktbudget je Spur | 4096 | ganzzahlig, 2 bis 65536 |
 
 Punkt und Komma sind in den drei neuen Dezimalfeldern erlaubt. Ungültige
-Werte verhindern Übernehmen/OK und werden im Dialog diagnostiziert, nicht
-still geklemmt. Profilstandard setzt nur das bearbeitete Profil zurück;
-Abbrechen verwirft Änderungen seit der letzten Übernahme.
+Werte werden auf der statischen Tabellenseite sichtbar diagnostiziert und
+auf den zuletzt gespeicherten Wert zurückgestellt, nicht still geklemmt.
+Gültige Änderungen werden dort sofort angewendet und über das bestehende
+QSettings-Backend im Unterbereich `statisch/grafik/profile_v1` gespeichert.
+Es gibt keinen Übernehmen-/Abbrechen-Schritt mehr. Der alte dynamische
+Bereich `grafik/profile_v1` wird nicht überschrieben.
 Diese technischen Grenzen sind keine Performancegarantie.
 Für den konkreten Fahrweg numerisch nicht darstellbare Abtastung oder
 Markenabstände werden zusätzlich mit Grafikdiagnose ausgesetzt, statt

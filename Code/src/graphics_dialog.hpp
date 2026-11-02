@@ -5,6 +5,7 @@
 
 class QWidget;
 
-void editGraphicsSettings(QWidget* parent, const graphics::Settings& initial,
+QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& initial,
     const QString& status, const std::function<bool(const graphics::Settings&)>& commit,
-    const std::function<QString()>& currentStatus = {});
+    const std::function<void()>& close,
+    const std::function<QString(graphics::Feature)>& featureStatus = {});

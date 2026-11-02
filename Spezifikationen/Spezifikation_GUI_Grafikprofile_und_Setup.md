@@ -1,5 +1,9 @@
 # Spezifikation GUI: Grafikprofile und Setup
 
+**Neuer Nachtrag vom 02.11.2026:** Abschnitt 10 wurde um 19:00 Uhr
+ausdruecklich zur Umsetzung freigegeben. Er ersetzt fuer G-0.9 die
+historische Dropdown-/Setup-Dialogbedienung, nicht deren Grafikfeatures.
+
 **Status: zur Implementierung freigegeben durch erneuten vollständigen
 Umsetzungsauftrag vom 27.10.2026; technische Implementierung geprüft,
 fachliche Abnahmen offen.**  
@@ -437,3 +441,178 @@ stehen in der separaten Entwurfspunkteliste.
 Die oben vergebenen A-Kennungen bezeichnen Verträge, keine bestandenen
 Nachweise. Keine behauptete vollständige Umsetzung und keine automatische
 GitHub-Veröffentlichung.
+
+## 10. Darstellung im Ansichtsfenster konfigurieren (02.11.2026)
+
+**Status:** am 02.11.2026 um 19:00 Uhr finalisiert und zur Umsetzung
+freigegeben; Bedienvertrag durch ausdruecklichen Nutzerauftrag vom
+02.11.2026 um 20:14 Uhr wie nachstehend korrigiert.
+Die historischen
+Vertraege und Nachweise von G-0.5 bleiben unveraendert nachvollziehbar.
+Entwurfspunkte IDEE-G-00058 bis IDEE-G-00060 in der
+[bestehenden Liste](Entwurfspunkte/GUI_Grafikprofile_und_Setup.json).
+Zuordnung des neuen Umfangs: G-0.9 und dessen
+[einziger Plan](../Umsetzungsplaene/Umsetzungsplan_G-0.9.md).
+
+### 10.1 A-G-00090: Einstieg und Ort
+
+**Aktuelle Nutzerentscheidung:** ausschliesslich Statisches Modell,
+Technikeinstellungen; Optik-Einstellungen vorlaeufig nicht anbieten.
+Gespeicherte Optikwerte nicht loeschen. Der dynamische Darstellungsstand
+bleibt unveraendert und unabhaengig von statischen Aenderungen.
+
+Im statischen Reiter wird das bisherige Auswahlfeld `Darstellung`
+durch einen Button **Darstellung** ersetzt. Kein zusaetzlicher
+konkurrierender Profilumschalter an derselben Stelle.
+Beim Druecken erscheint die Grafikkonfiguration direkt anstelle
+der Bootsansicht im vorhandenen Darstellungsfenster. Kein modaler
+Setup-Dialog und kein zusaetzliches Fenster.
+
+Die Konfigurationsseite hat eine klare Ueberschrift und eine scrollbare
+Tabelle mit exakt vier Spalten: Checkbox ohne Ueberschrift,
+`Beschreibung`, `CPU Last`, `GPU Last`. Checkboxen stehen ohne eigene
+Beschriftung in der ersten Spalte, ihre Beschreibung in der zweiten.
+Parameterwerte erscheinen als passende Eingabefelder in Tabellenzeilen.
+Keine Technik-/Optikreiter und kein Profilumschalter.
+Ein fest erreichbarer Button **Zurueck zum Boot** kehrt zur Bootsansicht
+zurueck. Kein Uebernehmen-/Abbrechen-Vertrag mehr; Aenderungen gelten
+sofort. Die GUI legt keine neue Simulationssicht an.
+
+Der zugehoerige Grafikteil entfaellt aus Setup; andere sachlich
+unabhaengige Setup-Funktionen nicht entfernen. Die bisherige temporaere
+Materialvorschau wird mit den Optikeinstellungen vorerst nicht angeboten;
+keine Aenderung an Modellmaterialien und kein Vorschauuebertrag in Dynamik.
+Geltungsbereich und Profilbestand sind in Abschnitt 10.5 festgelegt.
+
+### 10.2 A-G-00091: Ausfuehrliche Erklaerungen und Rechenaufwand
+
+Vorhandene Featurematrix, Abhaengigkeiten, Validierung und
+Einstellungsserialisierung wiederverwenden. Keine zweite Liste
+von Grafikeffekten oder alternativen Speichermechanismus einfuehren.
+Der statische Speicherbereich wird gemaess Abschnitt 10.3 getrennt.
+Jeder vorhandene Schalter und Qualitaetsparameter erhaelt sichtbar:
+
+- Was wird dargestellt, was bewirken an/aus bzw. andere Werte?
+- Welche Voraussetzungen gelten fuer Wasser, PBR, Normalstruktur
+  oder Modellmaterialien? Wunsch, tatsaechliche Wirksamkeit und
+  Gruende fuer nicht anwendbare Optionen klar unterscheiden.
+- Erwarteter Aufwand getrennt fuer GPU, CPU und ggf. Speicher:
+  niedrig/mittel/hoch mit kurzer Begruendung. Bei Qualitaetsstufen
+  erklaeren, was sich an Aufloesung, Geometrie oder Renderdurchlaeufen
+  aendert. Keine vermeintlich exakten Prozentwerte ohne Messung.
+- Hinweise auf Kombinationseffekte, insbesondere Reflexion,
+  Schatten, Transparenz/Depth-Peeling und SSAO; Einzelkosten
+  nicht zu einem erfundenen Gesamtwert addieren.
+
+Fuer diese statische Darstellung betrifft der laufende Aufwand
+vorwiegend Rendern/Interaktion, nicht die Genauigkeit des
+stationaeren Physiksolvers. Eine Anzeige `nicht gemessen` ist
+ehrlicher als angenommene Millisekunden. Falls aktuelle Messungen
+angezeigt werden: Modell, Aufloesung, Profil, Hardware und
+Messsituation nennen; Renderzeit nicht mit Core-Rechenzeit verwechseln.
+Dieser Umfang beauftragt keinen neuen automatischen Benchmark,
+keine garantierten FPS und keine automatische Qualitaetsreduktion.
+Bestehende Live-Reduktion nicht als statische Solverbeschleunigung
+beschreiben.
+
+Die Erklaerungen stehen tabellarisch im Fenster, nicht ausschliesslich in Tooltips.
+CPU und GPU haben getrennte Lastspalten, keine gemessenen Prozentwerte.
+Nutzerpraezisierung 02.11.2026, 21:00 Uhr: Checkboxen setzen sofort
+anzuwendende und persistente Einstellungen fuer alle unterstuetzten Teile.
+Nicht unterstuetzte Modellmaterialien lassen den jeweiligen Effekt ohne
+Fehler aus; die Einstellung bleibt erhalten. Der Beschreibungstext zeigt
+den aktuellen Rendererstatus je Effekt und aktualisiert ihn nach jeder
+Aenderung. Durchsicht nennt die konkrete Koerperdeckkraft/Transparenz;
+Wasser nennt seine Basisdeckkraft. Ein statischer Zeitpunkt animiert nicht
+fortlaufend. Keine eigenmaechtige Deckkrafterhoehung bei vielen Haken.
+Eindeutige Checkboxhaken, Tastaturbedienung und Lesbarkeit bei
+100/150/200 Prozent sowie kleiner Fensterbreite erhalten.
+
+### 10.3 A-G-00092: Sofortige Anwendung, Persistenz und Rueckkehr
+
+Jede gueltige Aenderung wird unmittelbar dauerhaft gespeichert und nach
+erfolgreichem Speichern auf die statische Darstellung angewendet.
+Checkboxen reagieren sofort; Zahlen-/Textfelder bei bestaetigter Eingabe.
+Kein gesondertes Uebernehmen oder Zuruecksetzen beim Verlassen.
+Kein Simulationsneustart,
+keine Aenderung von Modell, Pose, Ergebnis, Zeitauswahl, Kamera,
+Kraft, Ruder-/Schwertstellung oder Konvergenzkriterium.
+
+Jede Aenderung validiert den vorgeschlagenen Stand und speichert ueber
+den bestehenden Einstellungsweg. Erst bei Erfolg aktivieren; die Seite
+bleibt offen. Validierungs-/Speicherfehler sichtbar melden und den
+betroffenen Bedienwert auf den letzten gespeicherten aktiven Stand
+zurueckstellen; keine scheinbar erfolgreiche Speicherung.
+Nach Programmneustart zuletzt erfolgreich gespeicherten Stand laden.
+Vorhandene Profile und Nutzereinstellungen nicht stillschweigend
+loeschen oder auf Default setzen.
+
+Bestehendes QSettings-Backend wiederverwenden: unter Windows
+`HKEY_CURRENT_USER\Software\SegelPhysik\SegelPhysik`.
+Statische Werte unter `statisch/grafik/profile_v1`, initial aus dem
+bisherigen Technikprofil migriert. Der alte Bereich `grafik/profile_v1`
+mit dynamischem Stand und Optikwerten bleibt unveraendert erhalten;
+keine neue Einstellungsdatei oder zweite Serialisierung.
+
+**Zurueck zum Boot**, Reiter-/Modellwechsel und Fensterschliessen
+behalten alle erfolgreich gespeicherten Aenderungen.
+Der bereits freigegebene Simulationsabbruch beim Arbeitsreiterwechsel
+bleibt unabhaengig davon erhalten.
+
+### 10.4 Projektgrenze und Abnahme
+
+Diese Grafikbedienung ist vollstaendig GUI-Aufgabe; keine
+Grafikschalter in Core, keine Auswertung von Modelldateien neben
+der Core-API und keine neue Physik fuer die Leistungsanzeige.
+Der Core liefert die bereits definierten Darstellungsteile und
+die im Druckpunkt-Nachtrag vorgeschlagenen physikalischen Punkte.
+Massgeblich fuer die Punktdarstellung bleibt ausschliesslich die
+[Druckpunktspezifikation](Spezifikation_GUI_Lateraldruckpunkt.md#5-ldp-und-ersatz-sdp-als-punkte-02112026).
+Keine thematisch unabhaengigen Druckpunktanforderungen hier duplizieren.
+
+Verbindliche Abnahme:
+
+1. Button statt Dropdown, Konfiguration wirklich im Bootsfenster,
+   nur statisch, ohne Optikreiter, vier vorgegebene Tabellenspalten,
+   erreichbarer Rueckweg zum selben Boot.
+2. Alle vorhandenen Grafikoptionen auffindbar, Erklaerung und
+   Kostenklasse sichtbar; Abhaengigkeiten und nicht anwendbare
+   Modelloptionen korrekt.
+3. Erfolgreiches Speichern, Prozessneustart und Migration vorhandener
+   Einstellungen; sofortige Anwendung, Reiterwechsel, ungueltiger Wert
+   und reproduzierbarer Schreibfehler mit Ruecknahme des Bedienwerts.
+4. Kein doppelter Grafikweg unter Setup; keine ungewollte
+   Aenderung der Dynamik/Bootsauswahl oder ihrer Grafikwerte.
+5. Physik- und Kamera-/Ergebnisinvarianz beim Oeffnen/Anwenden,
+   100/150/200-Prozent-Bildnachweise und persoenliche Sichtabnahme getrennt.
+
+### 10.5 Historische Annahmen und ausdrueckliche Korrektur
+
+Die folgenden Annahmen gelten ausschliesslich historisch fuer den Stand
+19:00 Uhr. Der Nutzerauftrag 20:14 Uhr ersetzt die Punkte 1 und 2
+durch statisch-exklusive Technikeinstellungen, Tabelle und sofortige
+Persistenz nach Abschnitten 10.1 bis 10.3. Kein weiterer offener
+Entscheidungspunkt und kein Auftrag zur dynamischen/Optik-Konfiguration.
+
+Auf die strukturierte Rueckfrage war keine Nutzerantwort verfuegbar;
+der Rueckkanal fordert stattdessen pragmatische Annahmen. Deshalb fuer
+den damaligen Entwurf ohne Behauptung einer einzelnen Auswahlentscheidung:
+
+1. Gleicher Button und gleicher integrierter Bedienweg in Statisches
+   Modell und Dynamisches Modell. Bootsauswahl bleibt unveraendert.
+   Damit bleibt nach dem Entfernen aus Setup kein unerreichbarer
+   dynamischer Grafikteil zurueck.
+2. Beide vorhandenen Profile Technik/Optik bleiben mit ihren
+   gespeicherten Nutzerdaten erhalten und werden ausschliesslich
+   innerhalb der Konfigurationsseite ausgewaehlt/bearbeitet.
+   Der vorhandene gemeinsame Grafikstand beider Simulationsreitern
+   bleibt erhalten; keine neuen unabhaengigen pro-Reiter-Profile.
+3. Leistungsangaben sind begruendete qualitative Kostenklassen
+   und klar gekennzeichnete vorhandene Messwerte, keine neue
+   Benchmarkpflicht oder zugesicherte Zeit-/Prozentwerte.
+
+Diese Annahmen sind durch den anschliessenden Auftrag zur vollstaendigen
+eigenstaendigen Umsetzung angenommen. IDEE-G-00058 -> A-G-00090,
+IDEE-G-00059 -> A-G-00091, IDEE-G-00060 -> A-G-00092.
+Vergabe nach Pruefung der Hoechstwerte A-G-00087/U-G-000084.
+Technische Umsetzung ist keine persoenliche Sichtabnahme.

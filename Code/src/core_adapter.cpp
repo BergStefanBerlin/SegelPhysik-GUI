@@ -182,13 +182,55 @@ SimulationResult runSimulation(const QString& modelPath,
         QStringLiteral("segelphysik-gui-%1.jsonl")
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     try {
+        if (start.contains(QStringLiteral("stationaer"))) {
+            const auto value = start.value(QStringLiteral("stationaer"));
+            if (dynamic || !value.isObject())
+                throw std::invalid_argument("Stationaerer Rechenfall ist nur als Objekt im statischen Lauf erlaubt.");
+            const auto stationary = value.toObject();
+            if (!stationary.value(QStringLiteral("aktiv")).isBool()
+                || !stationary.value(QStringLiteral("modellfest")).isBool()
+                || (stationary.contains(QStringLiteral("kurvenfahrt"))
+                    && !stationary.value(QStringLiteral("kurvenfahrt")).isBool())
+                || !stationary.value(QStringLiteral("stellungen")).isArray())
+                throw std::invalid_argument("Stationaerer Rechenfall ohne explizite Kraft-/Stellungsdefinition.");
+            finiteArray<3>(stationary, QStringLiteral("kraft_n"));
+            finiteArray<3>(stationary, QStringLiteral("angriffspunkt_modell_m"));
+            for (const auto& entry : stationary.value(QStringLiteral("stellungen")).toArray()) {
+                const auto setting = entry.toObject();
+                if (!entry.isObject() || setting.value(QStringLiteral("element_id")).toString().isEmpty()
+                    || !setting.value(QStringLiteral("wert")).isDouble()
+                    || !std::isfinite(setting.value(QStringLiteral("wert")).toDouble()))
+                    throw std::invalid_argument("Stationaerer Rechenfall mit ungueltiger Elementstellung.");
+            }
+        }
         segelphysik::Laufoptionen options;
+        options.ergebnis_json_format = segelphysik::ErgebnisJsonFormat::V6;
         options.dynamisch = dynamic;
         options.dauer_s = durationSeconds;
         options.dt_s = stepSeconds;
         options.jsonl = true;
         options.abbruch = cancellation;
-        options.start = startState(start, dynamic);
+        auto physicalStart = start;
+        physicalStart.remove(QStringLiteral("stationaer"));
+        options.start = startState(physicalStart, dynamic || start.contains(QStringLiteral("stationaer")));
+        if (start.contains(QStringLiteral("stationaer"))) {
+            const auto stationary = start.value(QStringLiteral("stationaer")).toObject();
+            segelphysik::StationaereGleichgewichtKonfiguration configuration;
+            configuration.aktiv = stationary.value(QStringLiteral("aktiv")).toBool();
+            configuration.modellfest = stationary.value(QStringLiteral("modellfest")).toBool();
+            configuration.kurvenfahrt = stationary.value(QStringLiteral("kurvenfahrt")).toBool(false);
+            configuration.kraft_welt_n = finiteArray<3>(stationary, QStringLiteral("kraft_n"));
+            configuration.angriffspunkt_modell_m =
+                finiteArray<3>(stationary, QStringLiteral("angriffspunkt_modell_m"));
+            std::size_t sequence = 0;
+            for (const auto& entry : stationary.value(QStringLiteral("stellungen")).toArray()) {
+                const auto setting = entry.toObject();
+                configuration.stellungen.push_back({++sequence,
+                    setting.value(QStringLiteral("element_id")).toString().toStdString(),
+                    setting.value(QStringLiteral("wert")).toDouble()});
+            }
+            options.stationaer = configuration;
+        }
 
         const auto report = segelphysik::simulieren(
             nativePath(modelPath), nativePath(outputPath), options);
@@ -213,7 +255,8 @@ SimulationResult runSimulation(const QString& modelPath,
             const auto contract =
                 state.value(QStringLiteral("vertragsversion")).toString();
             if ((contract != QStringLiteral("1") && contract != QStringLiteral("2")
-                    && contract != QStringLiteral("3") && contract != QStringLiteral("4"))
+                    && contract != QStringLiteral("3") && contract != QStringLiteral("4")
+                    && contract != QStringLiteral("5") && contract != QStringLiteral("6"))
                 || state.value(QStringLiteral("modell_id")).toString()
                     != validation.modelId
                 || state.value(QStringLiteral("modell_fassung")).toString()
@@ -222,6 +265,20 @@ SimulationResult runSimulation(const QString& modelPath,
                 throw std::runtime_error(
                     "Core-Zustand hat eine inkompatible Vertragsversion, "
                     "Modellzuordnung oder Simulationszeit.");
+            }
+            if (contract == QStringLiteral("5")
+                && !state.value(QStringLiteral("stationaer")).isObject())
+                throw std::runtime_error(
+                    "Core-Zustand V5 ohne stationaeren Ergebnisvertrag.");
+            if (contract == QStringLiteral("6")) {
+                const auto rate = state.value(QStringLiteral("kursdrehrate_rad_s"));
+                const auto rateStatus = state.value(QStringLiteral("kursdrehrate_status")).toString();
+                if (!((rateStatus == QStringLiteral("gueltig") && rate.isDouble()
+                            && std::isfinite(rate.toDouble()))
+                        || (rateStatus == QStringLiteral("nicht_bestimmbar") && rate.isNull())))
+                    throw std::runtime_error("Core-Zustand V6 mit ungültiger Kursdrehrate oder Status.");
+                if (options.stationaer && !state.value(QStringLiteral("stationaer")).isObject())
+                    throw std::runtime_error("Stationärer Core-Zustand V6 ohne Ergebnisvertrag.");
             }
             result.states.push_back(state);
         }
@@ -552,7 +609,8 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
 
     try {
         return parseObject(QByteArray::fromStdString(segelphysik::zustand_json(
-                               d.displayModel, state, status, diagnostic)),
+                               d.displayModel, state, status, diagnostic, nullptr, nullptr,
+                               segelphysik::ErgebnisJsonFormat::V6)),
             QStringLiteral("Core-Zustand"));
     } catch (const std::exception& exception) {
         if (error != nullptr) {

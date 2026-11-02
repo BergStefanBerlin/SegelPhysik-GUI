@@ -93,6 +93,7 @@ vtk_module_autoinit(TARGETS segelphysik_gui MODULES
 # Qt findet Plugins zur Laufzeit in <exe>/<plugintyp>; ohne qwindows startet die GUI nicht.
 foreach(qt_plugin IN ITEMS
         "Qt6::QWindowsIntegrationPlugin|platforms"
+        "Qt6::QSvgPlugin|imageformats"
         "Qt6::QModernWindowsStylePlugin|styles")
     string(REPLACE "|" ";" qt_plugin_parts "${qt_plugin}")
     list(GET qt_plugin_parts 0 qt_plugin_target)
@@ -236,7 +237,8 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_core_integration
         COMMAND segelphysik_gui_core_tests
-            "${SEGELPHYSIK_MODELLE_DIR}/quader/modell.json")
+            "${SEGELPHYSIK_MODELLE_DIR}/quader/modell.json"
+            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/tests/testdata/stationaere_referenz/modell.json")
 
     add_executable(segelphysik_gui_catalog_tests
         Code/src/model_catalog.cpp

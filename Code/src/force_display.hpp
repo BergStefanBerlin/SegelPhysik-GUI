@@ -98,10 +98,17 @@ struct GroupSum {
 struct LateralCenter {
     QString status;                // gueltig, geometrisch, nicht_bestimmbar
     std::optional<Vec3> position;  // Modellframe, nur bei gueltig/geometrisch
+    int evaluationVersion = 0;
+};
+
+struct SailCenter {
+    QString status;
+    std::optional<Vec3> position;
 };
 
 struct ForceState {
     std::optional<LateralCenter> lateral;
+    std::optional<SailCenter> sailCenter;
     QString contract;
     QString modelId;
     double time = 0.0;
@@ -121,6 +128,9 @@ struct ForceState {
     // A-C-00047: dauerhaft vollgelaufene Elemente (tragen keinen Auftrieb).
     QStringList flooded;
     bool testLimiterApplied = false;
+    std::optional<double> courseRateRadS;
+    QString courseRateStatus = QStringLiteral("Altvertrag ohne Kursdrehrate");
+    QJsonObject stationary;
 };
 
 // Wirft std::runtime_error bei strukturell beschädigten Daten. `null` für
@@ -178,6 +188,14 @@ struct ArcGeometry {
 };
 std::optional<ArcGeometry> momentArc(const Vec3& center, const Vec3& moment,
     double radius, int segments, const std::optional<Vec3>& previousBasis);
+
+struct CourseArrowGeometry {
+    QVector<Vec3> points;
+    Vec3 tip{};
+    Vec3 tangent{};
+};
+std::optional<CourseArrowGeometry> courseArrow(const Vec3& start, const Vec3& forward,
+    double courseRateRadS, double length);
 
 std::optional<Vec3> perpendicularLeverArm(const Vec3& r, const Vec3& force);
 

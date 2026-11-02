@@ -3,7 +3,28 @@
   "thema": "GUI Lateraldruckpunkt",
   "spezifikation": "../Spezifikation_GUI_Lateraldruckpunkt.md",
   "hinweis": "Finalisiert am 28.10.2026 auf Nutzerauftrag. Zielversion: laufender Versionsschritt G-0.7. Segeldruckpunkt ist nicht Teil des Umfangs.",
+  "erweiterung_2026_11_02": {
+    "status": "technisch_umgesetzt_und_geprueft_sichtabnahme_offen",
+    "hinweis": "Finalisiert und zur Umsetzung freigegeben am 02.11.2026 um 19:00 Uhr. A-G-00088/00089, U-G-000085/000086/000090 im einzigen G-0.9-Plan.",
+    "zielversion_vorschlag": "G-0.9"
+  },
   "punkte": [
+    {
+      "id": "IDEE-G-00056",
+      "status": "angenommen",
+      "thema": "Zwei Druckpunkte statt LDP-Linie",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#51-zwei-beschriftete-kraftangriffspunkte",
+      "vorschlag": "LDP und SDP (Ersatz) an Core-X/Y/Z als unterscheidbare Punkte; alte Linie entfernen; getrennte persistente Schalter, unabhaengig von Navigation und Kraftpfeilen.",
+      "anforderungen": ["A-G-00088"]
+    },
+    {
+      "id": "IDEE-G-00057",
+      "status": "angenommen",
+      "thema": "Core-Vertragsabgleich und Markerabnahme",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#52-verbindliche-datenquelle-und-zustaende",
+      "vorschlag": "Korrigierten kraftbasierten LDP von geometrisch/alt unterscheiden; Ersatz-SDP aus demselben Ergebnissnapshot; Frames, Pose, Fehlstatus, Reset und DPI pruefen.",
+      "anforderungen": ["A-G-00089"]
+    },
     {
       "id": "IDEE-G-00029",
       "status": "angenommen",

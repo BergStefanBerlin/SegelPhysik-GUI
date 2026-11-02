@@ -1,0 +1,17 @@
+{
+  "status": "finalisiert",
+  "stand": "2026-11-02",
+  "spezifikation": "../Spezifikation_GUI_Statisches_Modell.md",
+  "zielversion": "G-0.9",
+  "hinweis": "Abschnitte 1-5 implementiert; Abschnitt 6 am 02.11.2026 ausdruecklich finalisiert und zur Umsetzung freigegeben. Ziel G-0.9, Core C-0.8, V6 mit unveraenderten Altvertraegen. Nachweise im bestehenden G-0.9-Plan. G-0.8 bleibt unveraendert.",
+  "punkte": [
+    {"id": "IDEE-G-00048", "status": "angenommen", "anforderungen": ["A-G-00079"], "thema": "Reitergebundene statische Berechnung", "abschnitt": "2", "beschreibung": "Statisch/dynamisch-Dropdown im statischen Reiter entfernen und den passenden Core-Laufvertrag garantieren."},
+    {"id": "IDEE-G-00049", "status": "angenommen", "anforderungen": ["A-G-00080"], "thema": "Konstante Fremdkraft und Elementstellungen", "abschnitt": "3", "beschreibung": "Lastdefinition unter Lauf stoppen, direkt darunter getrennte Einstellungen je Ruder und Schwert; feste Stellungen und unveraenderlichen Rechenfall anbieten."},
+    {"id": "IDEE-G-00050", "status": "angenommen", "anforderungen": ["A-G-00081"], "thema": "Stationaere Ergebnisse und Diagnose", "abschnitt": "4", "beschreibung": "Orientierung, Tiefenlage, Fahrt, Abdrift, sechs Bilanzresiduen und fehlende Eindeutigkeit transparent aus Core darstellen."},
+    {"id": "IDEE-G-00051", "status": "angenommen", "anforderungen": ["A-G-00082"], "thema": "Finalisierung und Abnahme", "abschnitt": "5", "beschreibung": "Gemeinsame Last-/Bezugssystem- und Kursregeln mit Core pruefen; Eingabesperre, Zustandserhalt und DPI-Regression nachweisen."},
+    {"id": "IDEE-G-00052", "status": "angenommen", "anforderungen": ["A-G-00083"], "thema": "Stationaere Geradeaus- und Kurvenfahrt", "abschnitt": "6.1", "beschreibung": "Core-relatives Gleichgewicht statt nur Null-Drehrate darstellen; unveraenderliche einzelne Kraft und feste Elementstellungen erhalten."},
+    {"id": "IDEE-G-00053", "status": "angenommen", "anforderungen": ["A-G-00084"], "thema": "Kursdrehrate zwischen Fahrtbetrag und Achsenwerten", "abschnitt": "6.2", "beschreibung": "Signierte Kursdrehrate Grad/s unmittelbar unter m/s und ueber Welt-X/Y/Z. Core liefert rad/s und Status; keine Differentiation gerundeter Winkel oder Verwechslung mit omega-Betrag/Modell-Z."},
+    {"id": "IDEE-G-00054", "status": "angenommen", "anforderungen": ["A-G-00085"], "thema": "Bewegungsresiduen und kompatible Ergebnisse", "abschnitt": "6.3", "beschreibung": "Aeussere Summen von Core-Bewegungsresiduen trennen; Referenzen, Kreisradius, Nichtkonvergenz und inkompatible Last sichtbar. V5 nicht still umdeuten, keine GUI-Parallelphysik."},
+    {"id": "IDEE-G-00055", "status": "angenommen", "anforderungen": ["A-G-00086"], "thema": "Abnahme und Integration", "abschnitt": "6.4", "beschreibung": "Reihenfolge und rad/s-Grad/s-Umrechnung mit echten Core-Werten, Vorzeichen und Schraeglage pruefen; Altvertraege erhalten. Freigegebene numerische Abnahmekriterien, V6 und Ziel G-0.9."}
+  ]
+}

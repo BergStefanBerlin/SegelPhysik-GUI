@@ -73,6 +73,96 @@ The tabs above the workspace select its color scheme: **Bootsauswahl**
 (bordeaux red), **Statisches Modell** (dark blue), and **Dynamisches Modell**
 (dark green). Each tab retains its own color even while inactive; the active
 tab has a brighter fill and underline.
+Checked checkboxes retain the workspace color and also show a white checkmark,
+so their state is not conveyed by color alone (including child setup dialogs).
+The GUI build deploys Qt's SVG image plugin into `imageformats` beside the
+executable. This is required for both checkmarks and navigation instrument
+images when starting without a development `QT_PLUGIN_PATH`.
+
+The active model name appears outside the side panels, right-aligned on the
+workspace-tab row, in the same font size as **SEGELPHYSIK**. In **Statisches
+Modell**, the left model list is replaced by the complete **DARSTELLUNG** block
+(vector visibility, camera, scales, profiles, force/moment selections and
+legend). Simulation/run controls remain on the right. The existing display
+widgets move rather than being duplicated: selections, signal connections and
+camera behavior are preserved. **Dynamisches Modell** retains the model list
+and right-side display controls; **Bootsauswahl** retains its inspection layout.
+
+The static/dynamic choice follows the workspace rather than a separate
+dropdown. Switching workspaces cancels and resets the previous simulation.
+The static right sidebar places **Fremdkrafteinwirkung** below the start/stop
+buttons and fixed **Ruder- und Schwertstellung** settings below the force.
+The single force is grouped as one X/Y/Z force vector and one shared X/Y/Z
+application point, not three separate forces. Static and dynamic viewports use
+the same rounded clipping contour as boat inspection, including after resizing.
+The external-force application point is model-fixed; force components may be
+world- or model-fixed. Fixed element inputs use Core movement metadata and are
+locked during a static solve. Changing inputs after a solve marks the displayed
+result as belonging to the previous input case.
+Reference settings and units come from the Core inspection metadata as well;
+missing movement metadata blocks a stationary run with an explicit diagnostic.
+Absent physical limits are identified in the tooltip rather than invented.
+
+Stationary runs use the typed Core stationary configuration. The explicit
+**Stationäre Kurvenfahrt zulassen** switch enables the extended Core solve:
+constant body-relative water velocity, roll/pitch and signed heading rate.
+Disable it to retain the previous straight-line solve with zero angular rate.
+Neither switch position optimizes the fixed rudder/centreboard settings.
+Result contract V6 carries the new turning and angular-rate semantics;
+older V1–V5 results remain readable without reinterpretation. A V5 result
+without its `stationaer` context is rejected explicitly.
+The values tree retains that entire Core context, including its frozen inputs,
+convergence status, tolerances, force/moment residuals, relative velocity, drift
+and yaw-reference information. Position, quaternion, world velocity and
+orientation are also shown alongside it. The GUI does not re-solve physics or
+replace a failed equilibrium with a speed cap. X/Y position and, where Core
+marks it as undetermined, absolute yaw are references, not additional solved
+physical constraints. Numerical convergence does not assert dynamic stability
+or uniqueness; fixed rudder settings need not admit a straight-line solution.
+The balance card scrolls when the values dock is short, so convergence and
+reference-course notices remain accessible. Stationary iteration counts are
+not labelled as physical simulation time steps.
+For a non-converged stationary result, the warning now includes all three
+world-force and model-moment residual components and their tolerances. The
+balance card explicitly labels both speed and pose as approximations.
+Fixed rudder inputs are never silently optimized to obtain convergence.
+
+The navigation speed card shows the world-CG speed magnitude in m/s, then
+the signed **Kursdrehrate** in degrees/s, then the existing world-X/Y/Z
+velocities. Core supplies the angular rate in rad/s for both stationary and
+dynamic results; the GUI only converts units. Positive rate is right-handed
+about world +Z (counterclockwise viewed from above), unlike the clockwise
+compass-angle convention. It is not the norm of angular velocity or its
+body-Z component. Missing legacy values and singular course states display
+`-- °/s` with their status; numerical zero displays `0.00 °/s`.
+Nonconverged rates are marked as approximate; tooltips retain full precision.
+With navigation enabled, a mint-colored direction arrow floats just above
+the water ahead of the bow in both simulation workspaces. It follows the
+horizontal boat heading: zero course rate is straight, positive Core rate
+bends to port and negative rate to starboard. Bend increases continuously
+with rate magnitude (four-second symbolic angular scale, capped at 80 degrees);
+this is an indication of the current rate, not a predicted trajectory or
+a force/moment arrow. Missing rates or a singular horizontal heading hide
+the arrow. It uses the displayed Core state, including approximate stationary
+results, without deriving a second angular rate.
+
+Switching between **Bootsauswahl**, **Statisches Modell** and **Dynamisches
+Modell** cancels the running calculation and clears playback, motion history,
+displayed results and the direction arrow. Late results from a cancelled
+stationary calculation are discarded. A new run starts from the model's
+initial state, not the previous workspace's final state; configured force
+and fixed stationary movement inputs remain available. Starting another run
+waits until the old worker has actually finished.
+
+During turning, external force/moment sums need not vanish: all six Core
+**motion residuals**, including acceleration and gyroscopic terms, determine
+convergence. The GUI displays these separately and does not infer equilibrium
+from rounded speed readings.
+Cold turning solves also initialize candidate heading rates from the
+Core yaw-motion balance in both directions. This avoids a wrong initial
+turning branch at large fixed rudder angles; it does not change the
+requested force, application point or element settings. Success still
+requires every force and moment motion residual to meet its tolerance.
 
 **Bootsauswahl** provides read-only model inspection. The model-folder button
 sits below the model list and is absent from the other workspaces. Core-supplied
@@ -188,11 +278,12 @@ The property table exposes derivation parameters without GUI schema parsing.
 Migration bounds and physical/dynamic regression criteria are specified in
 the [Core model contract](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
 
-Switching workspaces does not load a model, select a simulation mode, start/stop
-a run, change the simulation camera or its selected recorded state. Inspection
-has its own viewport so a running simulation cannot move the inspected object.
-The existing simulation-mode dropdown still controls calculations in the other
-workspaces. The initial tab is Bootsauswahl; the title block is above the tabs.
+Switching workspaces preserves the loaded model and configured stationary
+inputs, but cancels and resets the simulation. The simulation camera returns
+with the model to its initial pose, preserving its boat-relative viewing angle.
+Inspection has its own viewport. The workspace selects the simulation mode;
+switching never automatically starts a new run. The initial tab is Bootsauswahl;
+the title block is above the tabs.
 
 ### Navigation and camera views
 
@@ -235,29 +326,73 @@ Turning it off removes both test thrust and the artificial horizontal speed
 limiter, not the existing motion. CORE owns the force, lever-arm torque and
 limiter; historical snapshots retain their applied configuration/events.
 
-Under **Setup → Grafik …**, select wake/bow wave and technical water-level
-track independently for each profile. The existing world grid, unlabelled
+The previously saved dynamic graphics remain unchanged. The new
+**Darstellung** configuration edits only the static technique view.
+The existing world grid, unlabelled
 distance marks, spatial sampling, age and point budget make motion visible
 with the body-fixed camera. No new numerical motion HUD or old 3D trail is
 enabled. See [operation, limits and focused evidence](Dokumentation/Testantrieb_und_Fahrtdarstellung.md).
 Technical implementation is verified; personal visual/functional acceptance
 and a separate performance acceptance remain open.
 
+### Pressure points
+
+The **Druckpunkte** controls independently show **LDP** (magenta) and
+**SDP (Ersatz)** (orange), regardless of force-arrow or navigation visibility.
+Both are labeled points at the exact Core model coordinates transformed
+with the current boat pose; the former vertical LDP line is removed.
+The LDP uses corrected signed panel-sideforce moments, not the magnitude-
+weighted component application point. Opposing sideforces can legitimately
+place it outside the hull; it is never clamped. Geometric substitutes,
+indeterminate and unversioned legacy LDP data are not drawn as corrected LDP.
+
+The replacement SDP is the frozen external-force application point from the
+same result, not live editor input and not actual sail/wind physics. An
+inactive/zero force or missing external-force context gives no SDP marker.
+The detail status explains missing or legacy points. Aligning the two points
+is a simplified sideforce illustration, not a complete yaw equilibrium test.
+Both visibility choices persist; workspace/model reset clears the markers.
+Use the Technik profile to see the underwater LDP through the hull.
+
 ### Graphics profiles
 
-The **Darstellung** selector beside the vector controls switches between
-**Technik** (transparent analysis) and **Optik** (graphical presentation).
-The selector remains available even when vectors are hidden.
+The **Darstellung** button is available exclusively in **Statisches Modell**,
+also when vectors are hidden. It opens the **Technik** configuration in the
+boat viewport, not a modal window. There is no Optik/profile selector for
+now; existing optical and dynamic settings are preserved, not deleted.
+The former graphics entries under Setup remain removed.
 
-Open **Setup → Grafik …** to configure both profiles independently.
-Feature switches, opacity, normal strength, world-space water period,
-quality and vector occlusion
-are saved per user using QSettings. **Apply/OK** saves both profiles;
-**Cancel** discards edits made after the last successful Apply.
-Profile defaults and **All on/off** affect only the edited profile.
-The last active profile is restored on the next launch. Existing vector
-groups, scale settings and model-folder preferences are retained.
-Each profile can select a Radiance HDR environment; leave the environment
+The scrollable table has four columns: an unnamed checkbox/control column,
+**Beschreibung**, **CPU Last**, **GPU Last**. The descriptions explain
+features and prerequisites; CPU/GPU load classes are qualitative estimates,
+not measured percentages or guaranteed frame rates. Numeric controls use
+the same table, including opacity, normal strength, water period, quality,
+vector occlusion and track parameters.
+
+Each feature description also reports the current renderer setting, refreshed
+immediately after a change. Checked effects apply to all supporting parts;
+parts without matching explicit material data skip the effect without an
+error, keeping the setting saved for suitable parts/models. The analysis
+transparency row reports its actual opacity: checking more effects does not
+override a low body opacity. Water opacity and the stationary-time limitation
+of water animation are stated explicitly. User values are never silently
+changed to make an all-checked scene opaque.
+
+Every valid change is immediately saved and applied to the static scene.
+There is no Apply/Cancel transaction. **Zurück zum Boot** returns to the
+same boat without changing physics, playback or camera. Switching workspace
+or model keeps all successfully saved settings. A save failure is reported
+and restores the last active control value. Settings survive a program
+restart, including a real subprocess restart covered by tests.
+
+The existing per-user QSettings store is reused: static values are under
+`statisch/grafik/profile_v1`, initially copied from the old Technik profile.
+The old `grafik/profile_v1` remains unchanged and continues to control the
+dynamic view. On Windows the standard QSettings backend is the existing
+registry store `HKEY_CURRENT_USER\Software\SegelPhysik\SegelPhysik`, not a
+new configuration file. Existing vector groups, scales and model-folder
+preferences are retained. The static view can select a Radiance HDR
+environment; leave the environment
 path empty for the built-in procedural sky. Asset references are saved with
 the profile. External files are not copied into the project or distributed
 automatically; their rights remain the user's responsibility.
@@ -266,21 +401,18 @@ their checked state remains the saved wish when a parent is off.
 
 The course trail (**Kursspur**) is temporarily off by default in both profiles.
 Its existing 3D mesh-centre trajectory can form bright loops at sail height
-during rocking motion. The feature and its Setup switch are retained for
+during rocking motion. The feature and its configuration switch are retained for
 later reconsideration; it can still be explicitly enabled and saved.
 
-Optional live reduction temporarily disables SSAO, shadows and object
-reflection during a running simulation without overwriting saved wishes.
-It is off by default. Rendering diagnostics distinguish unavailable or
+Previously saved dynamic live reduction is retained; no dynamic control
+is exposed on the static settings page. Rendering diagnostics distinguish unavailable or
 inapplicable features from the desired profile settings.
 
-**Setup → Materialvorschau …** explicitly assigns a preview material to a
-chosen display part (original, lacquer, cloth, wood or brushed metal).
-This assignment lasts until the next model load and never changes model
-files or physical properties. Use it to compare materials on the Folkeboot
-without inferring material roles from element names.
+The former temporary material-preview entry is not offered on this static
+page while Optik configuration is postponed. Model materials and saved
+optical values remain intact.
 
-Tests for settings and dialog transactions run with CTest. The GPU test is
+Tests for settings, immediate saving and failure rollback run with CTest. The GPU test is
 opt-in and needs an interactive OpenGL desktop:
 
 ```powershell
@@ -296,17 +428,20 @@ VTK Render wall time; screenshot readback is recorded separately. They do
 not constitute a completed visual/performance acceptance. VTK rendering
 errors fail the test even if framebuffer capture returned an image.
 The three GPU cases run serially at 100/150/200% Qt scaling, writing separate
-evidence subfolders. They also exercise real MainWindow profile switching
-during playback, unchanged force-table values/camera, and cancellation
-while Setup is open. User settings are redirected to a temporary directory.
+evidence subfolders. They also exercise immediate static changes, unchanged force-table
+values/camera, workspace isolation and persistence. User settings are
+redirected to a temporary directory.
 Material test images use explicitly synthetic preview assignments, not
 an inferred or persistent Folkeboot material classification.
 
 The focused `gui_workspace_tabs_100`, `gui_workspace_tabs_150` and
 `gui_workspace_tabs_200` cases check the three palettes, fixed inactive-tab
 colors and the intentional isolation of inspection from simulation controls.
-They also check that tab switching preserves the model, simulation inputs,
-camera and selected live snapshot without stopping the run. Actual window
+They also check corrected Core pressure points with independent persistent
+visibility, exact pose-transformed XYZ (including an outside LDP), legacy/
+geometric/missing-state suppression, static-only table changes and persistence,
+and cancellation/reset on tab switching, rejection of late static
+results, fresh dynamic restart and the Core-driven direction arrow. Actual window
 screenshots are written to `graphics-evidence/workspace-tabs-<scale>`.
 Run only these cases with
 `ctest --test-dir C:\spdeps\guibuild -C Release -R "^gui_workspace_tabs_" --output-on-failure`.

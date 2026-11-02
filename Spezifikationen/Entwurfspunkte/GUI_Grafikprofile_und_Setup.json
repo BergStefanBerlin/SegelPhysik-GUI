@@ -3,7 +3,40 @@
   "thema": "Grafikprofile Technik/Optik und persistentes Setup",
   "spezifikation": "../Spezifikation_GUI_Grafikprofile_und_Setup.md",
   "hinweis": "Erneuter vollständiger autonomer Umsetzungsauftrag 27.10.2026: GUI-Implementierung sowie getrennte dauerhafte CORE-/Folkeboot-Materialintegration technisch geprüft; A-G-00028 bis A-G-00036 und U-G-000025 bis U-G-000036 zugeordnet. 22/22 Tests einschließlich GPU bei drei DPI-Stufen erfolgreich. Persönliche Sicht- und Release-Leistungsabnahme werden nicht fingiert. Historische Entscheidungen bleiben nachvollziehbar.",
+  "erweiterung_2026_11_02": {
+    "status": "technisch_umgesetzt_und_geprueft_sichtabnahme_offen",
+    "hinweis": "Annahmen mit vollstaendigem Umsetzungsauftrag vom 02.11.2026 um 19:00 Uhr angenommen. A-G-00090..00092 und U-G-000087..000090 zugeordnet.",
+    "zielversion_vorschlag": "G-0.9"
+  },
   "punkte": [
+    {
+      "id": "IDEE-G-00058",
+      "status": "angenommen",
+      "thema": "Konfiguration im Darstellungsfenster und Geltungsbereich",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#101-a-g-00090-einstieg-und-ort",
+      "anforderungen": ["A-G-00090"],
+      "frage": "Gleicher neuer Bedienweg fuer Statisch und Dynamisch oder nur Statisch?",
+      "vorschlag": "Historischer Vorschlag: gemeinsamer Bedienweg. Durch Nutzerentscheidung ersetzt.",
+      "entscheidung": "02.11.2026, 20:14 Uhr: Ausschliesslich Statisches Modell, Technikeinstellungen, Tabelle mit unbenannter Checkboxspalte, Beschreibung, CPU Last, GPU Last. Dynamischer Darstellungsstand unveraendert."
+    },
+    {
+      "id": "IDEE-G-00059",
+      "status": "angenommen",
+      "thema": "Erklaerungen und Aufwand",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#102-a-g-00091-ausfuehrliche-erklaerungen-und-rechenaufwand",
+      "anforderungen": ["A-G-00091"],
+      "vorschlag": "Jede bestehende Option mit sichtbarer Wirkung, Abhaengigkeiten und CPU-/GPU-/Speicher-Kostenklasse erklaeren; keine erfundenen Messwerte oder Solverbeschleunigung."
+    },
+    {
+      "id": "IDEE-G-00060",
+      "status": "angenommen",
+      "thema": "Profile, Uebernehmen und Persistenz",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#103-a-g-00092-sofortige-anwendung-persistenz-und-rueckkehr",
+      "anforderungen": ["A-G-00092"],
+      "frage": "Technik/Optik innerhalb der Seite erhalten oder zu einem Stand zusammenfuehren?",
+      "vorschlag": "Historischer Vorschlag: Profilwahl und Uebernehmen. Durch Nutzerentscheidung ersetzt.",
+      "entscheidung": "02.11.2026, 20:14 Uhr: sofort anwenden und persistent speichern, Wiederherstellung beim Programmstart. Keine Optikeinstellung vorerst; alte Optik-/Dynamikwerte erhalten. Bestehendes QSettings-Backend mit statischem Unterbereich wiederverwenden; Fehler sichtbar, Bedienwert zurueckstellen."
+    },
     {
       "id": "IDEE-G-00018",
       "status": "entschieden",

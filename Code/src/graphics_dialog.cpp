@@ -2,270 +2,315 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
-#include <QFileDialog>
-#include <QFormLayout>
-#include <QGroupBox>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QScrollArea>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSpinBox>
-#include <QTabWidget>
+#include <QTableWidget>
 #include <QVBoxLayout>
-#include <limits>
+#include <algorithm>
+#include <memory>
 
 namespace {
-struct Controls {
-    std::array<QCheckBox*, graphics::featureCount> features{};
-    QCheckBox* motionGrid = nullptr;
-    QDoubleSpinBox* body = nullptr;
-    QDoubleSpinBox* water = nullptr;
-    QDoubleSpinBox* normal = nullptr;
-    QDoubleSpinBox* period = nullptr;
-    QComboBox* quality = nullptr;
-    QCheckBox* through = nullptr;
-    QCheckBox* liveReduction = nullptr;
-    QLineEdit* environment = nullptr;
-    QLineEdit* trackAge = nullptr;
-    QLineEdit* trackSpacing = nullptr;
-    QLineEdit* markSpacing = nullptr;
-    QSpinBox* trackBudget = nullptr;
-
-    void set(const graphics::Profile& p) const
+class SettingsTable : public QTableWidget {
+public:
+    SettingsTable() : QTableWidget(0, 4)
     {
-        for (std::size_t i = 0; i < features.size(); ++i) features[i]->setChecked(p.enabled[i]);
-        motionGrid->setChecked(p.on(graphics::Feature::Grid));
-        body->setValue(p.bodyOpacity);
-        water->setValue(p.waterOpacity);
-        normal->setValue(p.normalScale);
-        period->setValue(p.waterPeriod);
-        quality->setCurrentIndex(p.quality);
-        through->setChecked(p.throughBody);
-        liveReduction->setChecked(p.liveReduction);
-        environment->setText(p.environmentPath);
-        trackAge->setText(QString::number(p.trackAge, 'g', 17));
-        trackSpacing->setText(QString::number(p.trackSpacing, 'g', 17));
-        markSpacing->setText(QString::number(p.markSpacing, 'g', 17));
-        trackBudget->setValue(p.trackBudget);
+        connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this] { adjustRows(); });
     }
-    graphics::Profile get() const
+
+    void adjustRows()
     {
-        graphics::Profile p;
-        for (std::size_t i = 0; i < features.size(); ++i) p.enabled[i] = features[i]->isChecked();
-        p.bodyOpacity = body->value();
-        p.waterOpacity = water->value();
-        p.normalScale = normal->value();
-        p.waterPeriod = period->value();
-        p.quality = quality->currentIndex();
-        p.throughBody = through->isChecked();
-        p.liveReduction = liveReduction->isChecked();
-        p.environmentPath = environment->text().trimmed();
-        auto positiveNumber = [](const QLineEdit* field) {
-            bool ok = false;
-            const double value = field->text().trimmed().replace(QLatin1Char(','), QLatin1Char('.')).toDouble(&ok);
-            return ok ? value : std::numeric_limits<double>::quiet_NaN();
-        };
-        p.trackAge = positiveNumber(trackAge);
-        p.trackSpacing = positiveNumber(trackSpacing);
-        p.markSpacing = positiveNumber(markSpacing);
-        p.trackBudget = trackBudget->value();
-        return p;
+        for (int row = 0; row < rowCount(); ++row) {
+            int height = 32;
+            for (int column = 0; column < columnCount(); ++column) {
+                if (auto* widget = cellWidget(row, column)) {
+                    const int desired = widget->hasHeightForWidth()
+                        ? widget->heightForWidth(columnWidth(column)) : widget->sizeHint().height();
+                    height = std::max(height, desired + 8);
+                }
+            }
+            setRowHeight(row, height);
+        }
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QTableWidget::resizeEvent(event);
+        adjustRows();
     }
 };
 }
 
-void editGraphicsSettings(QWidget* parent, const graphics::Settings& initial,
+QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& initial,
     const QString& status, const std::function<bool(const graphics::Settings&)>& commit,
-    const std::function<QString()>& currentStatus)
+    const std::function<void()>& close,
+    const std::function<QString(graphics::Feature)>& featureStatus)
 {
-    QDialog dialog(parent);
-    dialog.setObjectName(QStringLiteral("graphicsSetup"));
-    dialog.setWindowTitle(QStringLiteral("Setup – Grafik"));
-    dialog.resize(640, 760);
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* explanation = new QLabel(QStringLiteral(
-        "Beide Profile werden getrennt gespeichert. Fahrteffekte sind rein grafisch.\n"
-        "Nicht anwendbare Materialeffekte erzeugen keine fehlenden Modellteile.\n"
-        "Materialtexturen benoetigen PBR; Wasser und sichtbarer Himmel sind separat schaltbar."));
-    explanation->setWordWrap(true);
-    layout->addWidget(explanation);
-    auto* tabs = new QTabWidget;
-    layout->addWidget(tabs, 1);
-    std::array<Controls, 2> controls;
-    for (int n = 0; n < 2; ++n) {
-        auto& c = controls[static_cast<std::size_t>(n)];
-        auto* page = new QWidget;
-        auto* column = new QVBoxLayout(page);
-        QString previous;
-        QVBoxLayout* groupLayout = nullptr;
-        for (std::size_t i = 0; i < graphics::featureCount; ++i) {
-            const auto& info = graphics::features()[i];
-            const QString group = QString::fromUtf8(info.group);
-            if (group != previous) {
-                auto* box = new QGroupBox(group);
-                groupLayout = new QVBoxLayout(box);
-                column->addWidget(box);
-                previous = group;
-            }
-            auto* check = new QCheckBox(static_cast<graphics::Feature>(i) == graphics::Feature::Grid
-                    ? QStringLiteral("Wasserraster (weltfest, Bewegung durchs Wasser)")
-                    : QString::fromUtf8(info.label));
-            check->setObjectName(QStringLiteral("profile%1_%2").arg(n).arg(QString::fromLatin1(info.key)));
-            check->setToolTip(QStringLiteral("Unabhaengiger Profilwunsch. Effektive Verfuegbarkeit wird in der Grafikdiagnose angezeigt."));
-            groupLayout->addWidget(check);
-            c.features[i] = check;
-        }
-        c.motionGrid = new QCheckBox(QStringLiteral("Wasserraster (derselbe Wert wie Bezugsraster)"));
-        c.motionGrid->setObjectName(QStringLiteral("profile%1_motionGrid").arg(n));
-        groupLayout->addWidget(c.motionGrid);
-        auto* grid = c.features[static_cast<std::size_t>(graphics::Feature::Grid)];
-        QObject::connect(grid, &QCheckBox::toggled, c.motionGrid, &QCheckBox::setChecked);
-        QObject::connect(c.motionGrid, &QCheckBox::toggled, grid, &QCheckBox::setChecked);
-        auto updateDependencies = [&c] {
-            using F = graphics::Feature;
-            auto requested = [&c](F feature) {
-                return c.features[static_cast<std::size_t>(feature)]->isChecked();
-            };
-            for (std::size_t i = 0; i < graphics::featureCount; ++i) {
-                const auto feature = static_cast<F>(i);
-                QStringList reasons;
-                if (feature >= F::Fresnel && feature <= F::Reflection && !requested(F::Water)) {
-                    reasons << QStringLiteral("Wasser einschalten");
-                }
-                if ((feature == F::ModelIBL || feature == F::Coat || feature == F::ColorTexture || feature == F::ORM
-                        || feature == F::NormalTexture || feature == F::Anisotropy)
-                    && !requested(F::PBR)) {
-                    reasons << QStringLiteral("PBR einschalten");
-                }
-                if (feature == F::Animation && !requested(F::WaterNormals)) {
-                    reasons << QStringLiteral("Wasser-Normalstruktur einschalten");
-                }
-                if (feature == F::DistanceMarks && !requested(F::WaterTrack)) {
-                    reasons << QStringLiteral("Technische Fahrspur einschalten");
-                }
-                auto* check = c.features[i];
-                check->setEnabled(reasons.isEmpty());
-                check->setToolTip(reasons.isEmpty()
-                    ? QStringLiteral("Unabhaengiger Profilwunsch. Modell-/Hardwaregrenzen stehen in der Grafikdiagnose.")
-                    : QStringLiteral("Zur Wirksamkeit erforderlich: %1. Der gespeicherte Wunsch bleibt erhalten.")
-                          .arg(reasons.join(QStringLiteral("; "))));
-            }
-        };
-        for (auto* check : c.features) {
-            QObject::connect(check, &QCheckBox::toggled, &dialog, updateDependencies);
-        }
-        auto* parameters = new QFormLayout;
-        auto spin = [parameters](const QString& name) {
-            auto* field = new QDoubleSpinBox;
-            field->setRange(0, 1);
-            field->setSingleStep(0.05);
-            parameters->addRow(name, field);
-            return field;
-        };
-        c.body = spin(QStringLiteral("Koerperdeckkraft"));
-        c.water = spin(QStringLiteral("Wasserdeckkraft"));
-        c.normal = spin(QStringLiteral("Normalstaerke"));
-        c.period = spin(QStringLiteral("Wasserstruktur-Periode"));
-        c.period->setRange(0.02, 20.0);
-        c.period->setSuffix(QStringLiteral(" m"));
-        auto trackParameter = [&](const QString& name, const char* key, double maximum, const QString& unit) {
-            auto* field = new QLineEdit;
-            parameters->addRow(name + QStringLiteral(" [") + unit.trimmed() + QStringLiteral("]"), field);
-            field->setObjectName(QStringLiteral("profile%1_%2").arg(n).arg(QString::fromLatin1(key)));
-            field->setToolTip(QStringLiteral("Endlicher Wert > 0 bis %1. Punkt oder Komma; keine stille Begrenzung.")
-                .arg(maximum));
-            return field;
-        };
-        c.trackAge = trackParameter(QStringLiteral("Spuralter"), "trackAge", 86400, QStringLiteral(" s"));
-        c.trackSpacing = trackParameter(QStringLiteral("Raeumliche Spurabtastung"), "trackSpacing", 10000, QStringLiteral(" m"));
-        c.markSpacing = trackParameter(QStringLiteral("Abstand Distanzmarken"), "markSpacing", 10000, QStringLiteral(" m"));
-        c.trackBudget = new QSpinBox;
-        c.trackBudget->setObjectName(QStringLiteral("profile%1_trackBudget").arg(n));
-        c.trackBudget->setRange(2, 65536);
-        parameters->addRow(QStringLiteral("Maximale Stuetzpunkte je Spur"), c.trackBudget);
-        c.quality = new QComboBox;
-        c.quality->addItems({QStringLiteral("Niedrig"), QStringLiteral("Ausgewogen"), QStringLiteral("Hoch")});
-        parameters->addRow(QStringLiteral("Effektqualitaet"), c.quality);
-        c.through = new QCheckBox(QStringLiteral("Vektoren durch Koerper sichtbar"));
-        parameters->addRow(c.through);
-        c.liveReduction = new QCheckBox(QStringLiteral("Live-Lauf: teure Effekte reduzieren"));
-        c.liveReduction->setToolTip(QStringLiteral(
-            "Waehrend eines laufenden Core-Laufs werden SSAO, Schatten und Bootsspiegelung "
-            "voruebergehend ausgeschaltet. Gespeicherte Einzelwuensche bleiben unveraendert."));
-        parameters->addRow(c.liveReduction);
-        auto* environmentRow = new QHBoxLayout;
-        c.environment = new QLineEdit;
-        c.environment->setObjectName(QStringLiteral("profile%1_environment").arg(n));
-        c.environment->setPlaceholderText(QStringLiteral("Prozedural (keine HDR-Datei)"));
-        c.environment->setToolTip(QStringLiteral(
-            "Leer = prozeduraler Himmel. Eine eigene HDR-Datei ersetzt die Umgebung; "
-            "fehlende oder unlesbare Dateien werden sichtbar gemeldet."));
-        auto* browse = new QPushButton(QStringLiteral("HDR …"));
-        environmentRow->addWidget(c.environment, 1);
-        environmentRow->addWidget(browse);
-        parameters->addRow(QStringLiteral("Umgebung"), environmentRow);
-        QObject::connect(browse, &QPushButton::clicked, &dialog, [&dialog, &c] {
-            const auto path = QFileDialog::getOpenFileName(&dialog,
-                QStringLiteral("HDR-Umgebung auswaehlen"), c.environment->text(),
-                QStringLiteral("Radiance HDR (*.hdr);;Alle Dateien (*)"));
-            if (!path.isEmpty()) c.environment->setText(path);
-        });
-        column->addLayout(parameters);
-        auto* actions = new QHBoxLayout;
-        auto* all = new QPushButton(QStringLiteral("Alle ein"));
-        auto* none = new QPushButton(QStringLiteral("Alle aus"));
-        auto* reset = new QPushButton(QStringLiteral("Profilstandard"));
-        all->setObjectName(QStringLiteral("profile%1_all").arg(n));
-        none->setObjectName(QStringLiteral("profile%1_none").arg(n));
-        reset->setObjectName(QStringLiteral("profile%1_reset").arg(n));
-        actions->addWidget(all);
-        actions->addWidget(none);
-        actions->addWidget(reset);
-        column->addLayout(actions);
-        QObject::connect(all, &QPushButton::clicked, &dialog, [&c] {
-            for (auto* check : c.features) check->setChecked(true);
-        });
-        QObject::connect(none, &QPushButton::clicked, &dialog, [&c] {
-            for (auto* check : c.features) check->setChecked(false);
-        });
-        QObject::connect(reset, &QPushButton::clicked, &dialog, [&c, n] { c.set(graphics::defaults(n)); });
-        c.set(initial.profiles[static_cast<std::size_t>(n)]);
-        updateDependencies();
-        auto* scroll = new QScrollArea;
-        scroll->setWidgetResizable(true);
-        scroll->setWidget(page);
-        tabs->addTab(scroll, n == 0 ? QStringLiteral("Technik") : QStringLiteral("Optik"));
-    }
-    tabs->setCurrentIndex(initial.active);
-    auto* diagnostic = new QLabel(QStringLiteral("Aktive Szene (nicht Dialogentwurf):\n") + status);
+    auto* page = new QWidget(parent);
+    page->setObjectName(QStringLiteral("graphicsSettingsPage"));
+    auto* layout = new QVBoxLayout(page);
+    auto* heading = new QLabel(QStringLiteral(
+        "<b>Darstellung – Statisches Modell (Technik)</b><br>"
+        "Jede Änderung wird sofort angewendet und dauerhaft gespeichert. "
+        "Dynamisches Modell und bisherige Optikwerte bleiben unverändert. "
+        "CPU-/GPU-Last sind qualitative Einschätzungen, keine Messwerte; "
+        "sie betreffen die Darstellung, nicht die Solvergenauigkeit.<br>"
+        "<b>Haken = gespeicherte und angewendete Einstellung.</b> "
+        "Körperdurchsicht macht das Boot transparent. Materialeffekte gelten für passende Teile; "
+        "andere Teile lassen sie ohne Fehler aus."));
+    heading->setWordWrap(true);
+    layout->addWidget(heading);
+    auto* table = new SettingsTable;
+    table->setObjectName(QStringLiteral("staticGraphicsTable"));
+    table->setHorizontalHeaderLabels({QString(), QStringLiteral("Beschreibung"),
+        QStringLiteral("CPU Last"), QStringLiteral("GPU Last")});
+    table->verticalHeader()->hide();
+    table->setSelectionMode(QAbstractItemView::NoSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setWordWrap(true);
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    table->setColumnWidth(0, 125);
+    table->setColumnWidth(2, 95);
+    table->setColumnWidth(3, 95);
+    layout->addWidget(table, 1);
+    auto* diagnostic = new QLabel(status);
+    diagnostic->setObjectName(QStringLiteral("graphicsDiagnostic"));
     diagnostic->setWordWrap(true);
-    diagnostic->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    diagnostic->setMaximumHeight(70);
     layout->addWidget(diagnostic);
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Apply | QDialogButtonBox::Cancel);
-    layout->addWidget(buttons);
-    auto apply = [&] {
-        graphics::Settings result = initial;
-        for (std::size_t i = 0; i < controls.size(); ++i) result.profiles[i] = controls[i].get();
+    auto saved = std::make_shared<graphics::Settings>(initial);
+    auto descriptions = std::make_shared<std::array<QLabel*, graphics::featureCount>>();
+    auto baseDescriptions = std::make_shared<std::array<QString, graphics::featureCount>>();
+    auto refresh = [saved, descriptions, baseDescriptions, featureStatus, table] {
+        for (std::size_t i = 0; i < graphics::featureCount; ++i) {
+            if (!(*descriptions)[i]) continue;
+            const auto state = featureStatus ? featureStatus(static_cast<graphics::Feature>(i))
+                : saved->profiles[0].enabled[i] ? QStringLiteral("Eingeschaltet.")
+                                               : QStringLiteral("Ausgeschaltet.");
+            (*descriptions)[i]->setText((*baseDescriptions)[i] + QStringLiteral("\nStatus: ") + state);
+        }
+        table->adjustRows();
+    };
+    const auto change = [saved, commit, diagnostic, refresh](const std::function<void(graphics::Profile&)>& edit) {
+        auto next = *saved;
+        edit(next.profiles[0]);
         QString error;
-        if (!graphics::validate(result, &error)) {
+        if (!graphics::validate(next, &error)) {
             diagnostic->setText(error);
             return false;
         }
-        const bool saved = commit(result);
-        if (saved && currentStatus) {
-            diagnostic->setText(QStringLiteral("Aktive Szene (nicht Dialogentwurf):\n") + currentStatus());
+        if (!commit(next)) {
+            diagnostic->setText(QStringLiteral(
+                "Speichern fehlgeschlagen. Die Änderung wurde nicht angewendet; "
+                "der letzte gespeicherte Wert bleibt aktiv."));
+            return false;
         }
-        return saved;
+        *saved = next;
+        refresh();
+        diagnostic->setText(QStringLiteral("Gespeichert und im statischen Modell angewendet."));
+        return true;
     };
-    QObject::connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked,
-        &dialog, [&] { apply(); });
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        if (apply()) dialog.accept();
+    auto addRow = [table](QWidget* control, const QString& description,
+                      const QString& cpu, const QString& gpu) {
+        const int row = table->rowCount();
+        table->insertRow(row);
+        if (control) {
+            auto* cell = new QWidget;
+            auto* box = new QHBoxLayout(cell);
+            box->setContentsMargins(5, 5, 5, 5);
+            box->setAlignment(Qt::AlignCenter);
+            box->addWidget(control);
+            table->setCellWidget(row, 0, cell);
+        }
+        auto* text = new QLabel(description);
+        text->setWordWrap(true);
+        text->setTextFormat(Qt::PlainText);
+        text->setMargin(5);
+        table->setCellWidget(row, 1, text);
+        table->setItem(row, 2, new QTableWidgetItem(cpu));
+        table->setItem(row, 3, new QTableWidgetItem(gpu));
+        for (int column : {2, 3}) {
+            auto* cost = new QLabel(table->item(row, column)->text());
+            cost->setWordWrap(true);
+            cost->setMargin(5);
+            table->setCellWidget(row, column, cost);
+        }
+    };
+    auto checks = std::make_shared<std::array<QCheckBox*, graphics::featureCount>>();
+    auto dependencies = [checks] {
+        using F = graphics::Feature;
+        const auto on = [checks](F f) { return (*checks)[static_cast<std::size_t>(f)]->isChecked(); };
+        for (std::size_t i = 0; i < graphics::featureCount; ++i) {
+            const auto f = static_cast<F>(i);
+            QStringList reasons;
+            if (f >= F::Fresnel && f <= F::Reflection && !on(F::Water))
+                reasons << QStringLiteral("Wasser einschalten");
+            if ((f == F::ModelIBL || f == F::Coat || f == F::ColorTexture || f == F::ORM
+                    || f == F::NormalTexture || f == F::Anisotropy) && !on(F::PBR))
+                reasons << QStringLiteral("PBR einschalten");
+            if (f == F::Animation && !on(F::WaterNormals))
+                reasons << QStringLiteral("Wasser-Normalstruktur einschalten");
+            if (f == F::DistanceMarks && !on(F::WaterTrack))
+                reasons << QStringLiteral("Technische Fahrspur einschalten");
+            (*checks)[i]->setEnabled(reasons.isEmpty());
+            (*checks)[i]->setToolTip(reasons.join(QStringLiteral("; ")));
+        }
+    };
+    for (std::size_t i = 0; i < graphics::featureCount; ++i) {
+        const auto& info = graphics::features()[i];
+        auto* check = new QCheckBox;
+        check->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(info.key)));
+        check->setAccessibleName(QString::fromUtf8(info.label));
+        check->setChecked(initial.profiles[0].enabled[i]);
+        (*checks)[i] = check;
+        const QString explanation = QString::fromUtf8(info.explanation);
+        const auto cost = [&explanation](const QString& processor) {
+            const QRegularExpression expression(processor + QStringLiteral("(?:/Speicher)? ([^,;.]+)"));
+            return expression.match(explanation).captured(1);
+        };
+        addRow(check, QString::fromUtf8(info.group) + QStringLiteral(" – ")
+            + QString::fromUtf8(info.label) + QStringLiteral("\n")
+            + explanation.left(explanation.indexOf(QStringLiteral("CPU"))).trimmed(),
+            cost(QStringLiteral("CPU")), cost(QStringLiteral("GPU")));
+        auto* description = qobject_cast<QLabel*>(table->cellWidget(static_cast<int>(i), 1));
+        description->setObjectName(QStringLiteral("profile0_status_%1").arg(QString::fromLatin1(info.key)));
+        (*descriptions)[i] = description;
+        (*baseDescriptions)[i] = description->text();
+        QObject::connect(check, &QCheckBox::toggled, page, [change, dependencies, check, i](bool value) {
+            if (!change([i, value](graphics::Profile& p) { p.enabled[i] = value; })) {
+                const QSignalBlocker blocker(check);
+                check->setChecked(!value);
+            }
+            dependencies();
+        });
+    }
+    dependencies();
+    refresh();
+    const auto numeric = [&](const char* key, const QString& description, double graphics::Profile::* member,
+                             double minimum, double maximum, double step, const QString& cpu, const QString& gpu) {
+        if (member == &graphics::Profile::trackAge || member == &graphics::Profile::trackSpacing
+            || member == &graphics::Profile::markSpacing) {
+            auto* field = new QLineEdit(QString::number(initial.profiles[0].*member, 'g', 17));
+            field->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(key)));
+            addRow(nullptr, description, cpu, gpu);
+            table->setCellWidget(table->rowCount() - 1, 0, field);
+            QObject::connect(field, &QLineEdit::editingFinished, page,
+                [saved, change, diagnostic, member, field] {
+                    bool ok = false;
+                    const double value = field->text().trimmed()
+                        .replace(QLatin1Char(','), QLatin1Char('.')).toDouble(&ok);
+                    if (!ok) diagnostic->setText(QStringLiteral("Bitte einen gültigen Zahlenwert eingeben."));
+                    if (!ok || !change([member, value](graphics::Profile& p) { p.*member = value; }))
+                        field->setText(QString::number(saved->profiles[0].*member, 'g', 17));
+                });
+            return;
+        }
+        auto* field = new QDoubleSpinBox;
+        field->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(key)));
+        field->setRange(minimum, maximum);
+        field->setDecimals(3);
+        field->setSingleStep(step);
+        field->setKeyboardTracking(false);
+        field->setValue(initial.profiles[0].*member);
+        addRow(nullptr, description, cpu, gpu);
+        table->setCellWidget(table->rowCount() - 1, 0, field);
+        QObject::connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), page,
+            [saved, change, member, field](double value) {
+                const double previous = saved->profiles[0].*member;
+                if (!change([member, value](graphics::Profile& p) { p.*member = value; })) {
+                    const QSignalBlocker blocker(field);
+                    field->setValue(previous);
+                }
+            });
+    };
+    numeric("bodyOpacity", QStringLiteral("Körperdeckkraft: 0 unsichtbar, 1 deckend. Wirkt bei analytischer Körperdurchsicht."),
+        &graphics::Profile::bodyOpacity, 0, 1, .05, QStringLiteral("niedrig"), QStringLiteral("mittel bis hoch"));
+    numeric("waterOpacity", QStringLiteral("Wasserdeckkraft: 0 unsichtbar, 1 deckend. Transparenz benötigt zusätzliche GPU-Durchläufe."),
+        &graphics::Profile::waterOpacity, 0, 1, .05, QStringLiteral("niedrig"), QStringLiteral("mittel bis hoch"));
+    numeric("normalScale", QStringLiteral("Normalstärke: visueller Welleneindruck, keine Wellenkräfte."),
+        &graphics::Profile::normalScale, 0, 1, .01, QStringLiteral("niedrig"), QStringLiteral("niedrig"));
+    numeric("waterPeriod", QStringLiteral("Wasserstruktur-Periode [m]: grafische Strukturgröße, keine physikalische Welle."),
+        &graphics::Profile::waterPeriod, .02, 20, .05, QStringLiteral("niedrig"), QStringLiteral("niedrig"));
+    numeric("trackAge", QStringLiteral("Spuralter [s]: längere Spuren benötigen mehr Geometrie und Speicher."),
+        &graphics::Profile::trackAge, .001, 86400, 1, QStringLiteral("mit Länge steigend"), QStringLiteral("mittel"));
+    numeric("trackSpacing", QStringLiteral("Räumliche Spurabtastung [m]: größere Abstände sparen Geometrie und Speicher."),
+        &graphics::Profile::trackSpacing, .001, 10000, .05, QStringLiteral("bei Dichte steigend"), QStringLiteral("mittel"));
+    numeric("markSpacing", QStringLiteral("Abstand der Distanzmarken [m]: kleinere Abstände benötigen mehr Geometrie."),
+        &graphics::Profile::markSpacing, .001, 10000, .5, QStringLiteral("bei Dichte steigend"), QStringLiteral("mittel"));
+    auto* budget = new QSpinBox;
+    budget->setObjectName(QStringLiteral("profile0_trackBudget"));
+    budget->setRange(2, 65536);
+    budget->setKeyboardTracking(false);
+    budget->setValue(initial.profiles[0].trackBudget);
+    addRow(nullptr, QStringLiteral("Maximale Stützpunkte je Spur: begrenzt Geometrie und Speicher."),
+        QStringLiteral("mit Budget steigend"), QStringLiteral("mit Budget steigend"));
+    table->setCellWidget(table->rowCount() - 1, 0, budget);
+    QObject::connect(budget, qOverload<int>(&QSpinBox::valueChanged), page, [saved, change, budget](int value) {
+        const int previous = saved->profiles[0].trackBudget;
+        if (!change([value](graphics::Profile& p) { p.trackBudget = value; })) {
+            const QSignalBlocker blocker(budget);
+            budget->setValue(previous);
+        }
     });
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    dialog.exec();
+    auto* quality = new QComboBox;
+    quality->setObjectName(QStringLiteral("profile0_quality"));
+    quality->addItems({QStringLiteral("Niedrig"), QStringLiteral("Ausgewogen"), QStringLiteral("Hoch")});
+    quality->setCurrentIndex(initial.profiles[0].quality);
+    addRow(nullptr, QStringLiteral("Effektqualität: Schattenkarten 512/1024/2048 Pixel, "
+        "4/8/16 Transparenzschichten, 24/48/64 SSAO-Stichproben. Höhere Stufen brauchen mehr Speicher."),
+        QStringLiteral("niedrig"), QStringLiteral("mit Qualität steigend"));
+    table->setCellWidget(table->rowCount() - 1, 0, quality);
+    QObject::connect(quality, qOverload<int>(&QComboBox::currentIndexChanged), page,
+        [saved, change, quality](int value) {
+            const int previous = saved->profiles[0].quality;
+            if (!change([value](graphics::Profile& p) { p.quality = value; })) {
+                const QSignalBlocker blocker(quality);
+                quality->setCurrentIndex(previous);
+            }
+        });
+    const auto flag = [&](const char* key, const QString& text, bool graphics::Profile::* member) {
+        auto* check = new QCheckBox;
+        check->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(key)));
+        check->setAccessibleName(text);
+        check->setChecked(initial.profiles[0].*member);
+        addRow(check, text, QStringLiteral("niedrig"), QStringLiteral("niedrig"));
+        QObject::connect(check, &QCheckBox::toggled, page, [change, check, member](bool value) {
+            if (!change([member, value](graphics::Profile& p) { p.*member = value; })) {
+                const QSignalBlocker blocker(check);
+                check->setChecked(!value);
+            }
+        });
+    };
+    flag("throughBody", QStringLiteral("Vektoren durch Körper sichtbar: verbessert die Analyse verdeckter Kräfte."),
+        &graphics::Profile::throughBody);
+    auto* environment = new QLineEdit(initial.profiles[0].environmentPath);
+    environment->setObjectName(QStringLiteral("profile0_environment"));
+    environment->setPlaceholderText(QStringLiteral("Leer = prozeduraler Himmel"));
+    addRow(nullptr, QStringLiteral("HDR-Umgebung: Pfad zu eigener Radiance-HDR-Datei; leer nutzt den prozeduralen Himmel. "
+        "Laden und Speicherbedarf hängen von der Dateigröße ab."),
+        QStringLiteral("mittel beim Laden"), QStringLiteral("mittel"));
+    table->setCellWidget(table->rowCount() - 1, 0, environment);
+    QObject::connect(environment, &QLineEdit::editingFinished, page, [saved, change, environment] {
+        const QString previous = saved->profiles[0].environmentPath;
+        const QString value = environment->text().trimmed();
+        if (value == previous) return;
+        if (!change([value](graphics::Profile& p) { p.environmentPath = value; }))
+            environment->setText(previous);
+    });
+    table->horizontalHeader()->setMinimumSectionSize(40);
+    table->adjustRows();
+    auto* back = new QPushButton(QStringLiteral("Zurück zum Boot"));
+    back->setObjectName(QStringLiteral("closeGraphics"));
+    layout->addWidget(back, 0, Qt::AlignRight);
+    QObject::connect(back, &QPushButton::clicked, page, close);
+    return page;
 }

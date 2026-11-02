@@ -9,8 +9,12 @@
 #include <segelphysik/katalog.hpp>
 #include <segelphysik/modell.hpp>
 #include <QApplication>
+#include <QTabWidget>
+#include <QStackedWidget>
 #include <QAction>
 #include <QCheckBox>
+#include <QStyle>
+#include <QStyleOptionButton>
 #include <QComboBox>
 #include <QCryptographicHash>
 #include <QDir>
@@ -38,6 +42,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -537,12 +542,19 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
     const std::array<QColor, 3> backgrounds{QColor("#1c1118"), QColor("#0b1420"), QColor("#0d1b16")};
     auto* central = window.centralWidget();
     const auto camera = scene.cameraView();
-    const auto mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"))->currentIndex();
     const auto duration = window.findChild<QDoubleSpinBox*>(
         QStringLiteral("simulationDuration"))->value();
     auto* models = window.findChild<QListWidget*>(QStringLiteral("modelList"));
     require(models != nullptr, "model list for workspace identity check");
     const auto selectedModel = models->currentItem()->data(Qt::UserRole).toString();
+    auto* vectors = window.findChild<QCheckBox*>(QStringLiteral("displayVectors"));
+    auto* displayControls = window.findChild<QWidget*>(QStringLiteral("displayControls"));
+    auto* staticSidebar = window.findChild<QScrollArea*>(QStringLiteral("staticDisplaySidebar"));
+    auto* modelName = window.findChild<QLabel*>(QStringLiteral("modelName"));
+    auto* title = window.findChild<QLabel*>(QStringLiteral("title"));
+    require(vectors && displayControls && staticSidebar && modelName && title,
+        "workspace display controls and external active-model title exist");
+    const bool initialVectors = vectors->isChecked();
     for (int selected = 0; selected < 3; ++selected) {
         tabs->setCurrentIndex(selected);
         QApplication::processEvents();
@@ -556,8 +568,60 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
             if (button->text() == QStringLiteral("Modellordner wählen")) folder = button;
         require(folder && folder->isVisible() == (selected == 0),
             "folder selection exists only in boat selection");
-        require(window.findChild<QComboBox*>(QStringLiteral("simulationMode"))->currentIndex() == mode
-            && window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationDuration"))->value() == duration
+        require(models->isVisible() == (selected != 1)
+            && staticSidebar->isVisible() == (selected == 1),
+            "static workspace replaces model list with display sidebar only");
+        require(staticSidebar->isAncestorOf(displayControls) == (selected == 1),
+            "same complete display controls move between static left and dynamic right");
+        require(modelName->font().pixelSize() == title->font().pixelSize()
+            && modelName->font().pointSizeF() == title->font().pointSizeF()
+            && modelName->alignment().testFlag(Qt::AlignRight),
+            "active-model title matches application title size and is right aligned");
+        const auto modelRect = QRect(modelName->mapToGlobal(QPoint()), modelName->size());
+        const auto tabRect = QRect(tabs->mapToGlobal(QPoint()), tabs->size());
+        require(std::abs(modelRect.center().y()-tabRect.center().y()) <= 1
+            && modelRect.bottom() < scene.mapToGlobal(QPoint()).y(),
+            "active-model title is outside panels on the workspace-tab row");
+        require(vectors->isChecked() == initialVectors,
+            "moving display controls preserves vector visibility selection");
+        if (selected == 1) {
+            auto* turning = window.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"));
+            require(turning && turning->isVisible() && turning->isEnabled()
+                    && turning->isChecked(),
+                "explicit stationary turning mode must be visible and initially enabled");
+            require(staticSidebar->mapToGlobal(QPoint()).x() < scene.mapToGlobal(QPoint()).x()
+                && displayControls->isVisible(),
+                "static display controls occupy the left of the rendering viewport");
+            vectors->setChecked(!initialVectors);
+            require(scene.options().forces == !initialVectors,
+                "relocated vector toggle still updates actual scene options");
+            vectors->setChecked(initialVectors);
+        }
+        const auto* mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"));
+        require(!mode->isVisible() && (selected == 0 || mode->currentData().toBool() == (selected == 2)),
+            "workspace determines simulation mode without dropdown");
+        auto* forcePanel = window.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"));
+        require(forcePanel && forcePanel->isVisible() == (selected == 1),
+            "stationary force configuration exists only in static workspace");
+        if (selected == 1) {
+            auto* stop = window.findChild<QPushButton*>(QStringLiteral("stopSimulation"));
+            require(forcePanel->mapToGlobal(QPoint()).y() >=
+                stop->mapToGlobal(QPoint()).y()+stop->height(),
+                "external force settings follow stop button");
+            auto* movements = window.findChild<QGroupBox*>(QStringLiteral("movementPanel"));
+            const auto fixed = window.findChildren<QDoubleSpinBox*>(
+                QRegularExpression(QStringLiteral("^stationaryMovement_")));
+            if (!fixed.isEmpty()) {
+                require(movements && movements->isVisible()
+                    && movements->mapToGlobal(QPoint()).y() >=
+                        forcePanel->mapToGlobal(QPoint()).y()+forcePanel->height(),
+                    "fixed rudder and centreboard settings follow external force");
+                for (auto* setting : fixed)
+                    require(setting->isVisible() && setting->isEnabled(),
+                        "every stationary element setting is editable before run");
+            }
+        }
+        require(window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationDuration"))->value() == duration
             && models->currentItem()
             && models->currentItem()->data(Qt::UserRole).toString() == selectedModel,
             "workspace switch changed model or simulation inputs");
@@ -566,6 +630,57 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
             && camera.viewUp == currentCamera.viewUp, "workspace switch changed camera");
         require(central->palette().color(QPalette::Window) == backgrounds[selected],
             "entire workspace must use selected theme");
+        if (selected != 0) {
+            auto* speed = scene.findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+            auto* magnitude = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
+            auto* rate = scene.findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+            auto* axisX = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
+            auto* axisZ = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
+            require(speed && magnitude && rate && axisX && axisZ
+                    && magnitude->y() < rate->y() && rate->y() < axisX->y()
+                    && speed->rect().contains(rate->geometry())
+                    && speed->rect().contains(axisZ->geometry()),
+                "DPI layout: course rate below magnitude and above every unclipped world row");
+            auto* viewport = scene.findChild<QVTKOpenGLNativeWidget*>();
+            require(viewport && !viewport->mask().isEmpty()
+                    && !viewport->mask().contains(QPoint(0, 0))
+                    && viewport->mask().contains(viewport->rect().center()),
+                "simulation viewport must share rounded inspection clipping");
+            auto* forceX = window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"));
+            auto* pointX = window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointX"));
+            require(forceX && pointX && forceX->parentWidget() != pointX->parentWidget(),
+                "single force vector and shared application point must form distinct groups");
+            for (const auto& axis : {QStringLiteral("Y"), QStringLiteral("Z")}) {
+                require(window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForce") + axis)
+                            ->parentWidget() == forceX->parentWidget()
+                        && window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPoint") + axis)
+                            ->parentWidget() == pointX->parentWidget(),
+                    "XYZ components must belong to one vector and one point");
+            }
+            const bool wasChecked = vectors->isChecked();
+            const auto whitePixels = [vectors] {
+                QStyleOptionButton option;
+                option.initFrom(vectors);
+                option.state |= vectors->isChecked() ? QStyle::State_On : QStyle::State_Off;
+                const auto rect = vectors->style()->subElementRect(
+                    QStyle::SE_CheckBoxIndicator, &option, vectors);
+                const auto image = vectors->grab(rect).toImage();
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y)
+                    for (int x = 0; x < image.width(); ++x) {
+                        const auto color = image.pixelColor(x, y);
+                        if (color.red() > 230 && color.green() > 230 && color.blue() > 230)
+                            ++count;
+                    }
+                return count;
+            };
+            vectors->setChecked(false);
+            const int uncheckedWhite = whitePixels();
+            vectors->setChecked(true);
+            require(whitePixels() > uncheckedWhite + 5,
+                "checked checkbox must render a white checkmark, not only a colored fill");
+            vectors->setChecked(wasChecked);
+        }
         const auto image = tabs->grab().toImage();
         for (int tab = 0; tab < 3; ++tab) {
             require(tabs->tabText(tab) == labels[tab], "workspace tab label");
@@ -1119,7 +1234,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     auto* stop = window.findChild<QPushButton*>(QStringLiteral("stopSimulation"));
     auto* mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"));
     auto* duration = window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationDuration"));
-    auto* profiles = window.findChild<QComboBox*>(QStringLiteral("graphicsProfile"));
+    auto* profiles = window.findChild<QPushButton*>(QStringLiteral("configureGraphics"));
     auto* vectors = window.findChild<QCheckBox*>(QStringLiteral("displayVectors"));
     auto* status = window.findChild<QLabel*>(QStringLiteral("status"));
     auto* cameraCombo = window.findChild<QComboBox*>(QStringLiteral("cameraPreset"));
@@ -1175,12 +1290,62 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     vectors->setChecked(false);
     require(profiles->isEnabled(), "hidden vectors disable profile selection");
     vectors->setChecked(true);
-    mode->setCurrentIndex(1);
+    auto* fixedForcePanel = window.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"));
+    require(fixedForcePanel && fixedForcePanel->isVisible(), "static run force panel visible");
+    run->click();
+    require(!fixedForcePanel->isEnabled(), "stationary inputs locked immediately for immutable run");
+    waitUntil([&] { return !stop->isEnabled() || unexpectedDialog; }, "stationary GUI result timeout");
+    require(!unexpectedDialog, "unexpected stationary GUI error");
+    QTreeWidgetItem* stationaryResultItem = nullptr;
+    for (QTreeWidgetItemIterator it(values); *it; ++it)
+        if ((*it)->text(0) == QStringLiteral("Stationäre Auswertung (Core)"))
+            stationaryResultItem = *it;
+    require(stationaryResultItem, "real stationary Core result displayed through V5 GUI force parser");
+    auto* courseRateLabel = scene->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+    require(courseRateLabel && courseRateLabel->text() == QStringLiteral("0.00 °/s"),
+        "stationary V6 zero course rate must be shown as numeric zero");
+    scene->renderNow();
+    require(scene->courseArrowGeometry()
+            && std::abs(scene->courseArrowGeometry()->tangent[2]) < 1e-12,
+        "zero-rate Core state must render a straight horizontal direction arrow");
+    navigationCheck->setChecked(false);
+    scene->renderNow();
+    require(!scene->courseArrowGeometry(), "navigation off must hide the direction arrow");
+    navigationCheck->setChecked(true);
+    scene->renderNow();
+    require(scene->courseArrowGeometry().has_value(), "navigation on must restore the direction arrow");
+    const QStringList stationaryFields{
+        QStringLiteral("residuum_kraft_welt_n"), QStringLiteral("residuum_moment_modell_nm"),
+        QStringLiteral("krafttoleranz_n"), QStringLiteral("momenttoleranz_nm"),
+        QStringLiteral("referenzkurs_verwendet"), QStringLiteral("geschwindigkeit_relativ_wasser_m_s"),
+        QStringLiteral("abdriftwinkel_rad"), QStringLiteral("stellungen"), QStringLiteral("kraft_n"),
+        QStringLiteral("kurvenfahrt"), QStringLiteral("loesungstyp"), QStringLiteral("omega_modell_rad_s"),
+        QStringLiteral("aeussere_kraft_welt_n"), QStringLiteral("aeusseres_moment_modell_nm"),
+        QStringLiteral("radius_status")};
+    for (const auto& name : stationaryFields) {
+        bool present = false;
+        for (int i = 0; i < stationaryResultItem->childCount(); ++i)
+            present = present || stationaryResultItem->child(i)->text(0) == name;
+        require(present, "stationary output omitted a required Core field");
+    }
+    values->scrollToItem(stationaryResultItem, QAbstractItemView::PositionAtTop);
+    scene->renderNow();
+    require(window.grab().save(evidence.filePath(QStringLiteral("stationary_result.bmp")), "BMP"),
+        "stationary UI result screenshot");
+    auto* fixedForceX = window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"));
+    require(fixedForceX && fixedForcePanel->isEnabled(), "stationary inputs unlock after result");
+    fixedForceX->setValue(1.);
+    require(status->text().contains(QStringLiteral("vorherigen Rechenfall")),
+        "editing stationary inputs marks previous result stale");
+    fixedForceX->setValue(0.);
+    window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(2);
     duration->setValue(2.0);
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "GUI mode change readiness");
     run->click();
     waitUntil([&] { return slider->maximum() > 2 || unexpectedDialog; }, "GUI live states absent");
     require(!unexpectedDialog, "unexpected live error");
+    require(!courseRateLabel->text().startsWith(QStringLiteral("--")),
+        "dynamic V6 must supply the same course-rate display contract");
     slider->setValue(0);
     auto* workspaceTabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
     for (int index = 0; index < workspaceTabs->count(); ++index) {
@@ -1191,10 +1356,21 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
                 "inspection remains usable during live simulation");
             inspectionTree->topLevelItem(0)->setSelected(true);
         }
-        require(mode->currentIndex() == 1 && slider->value() == 0 && stop->isEnabled(),
-            "workspace switch must not change simulation mode, selected state or stop a live run");
+        require(slider->value() == 0 && slider->maximum() == 0
+                && !scene->courseArrowGeometry() && scene->motionStateCount() == 0,
+            "workspace switch must clear playback, heading arrow and motion history");
+        if (index != 0)
+            require(mode->currentIndex() == (index == 2 ? 1 : 0),
+                "workspace must select its own simulation mode");
     }
     workspaceTabs->setCurrentIndex(2);
+    waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "tab switch cancellation timeout");
+    require(!unexpectedDialog && slider->maximum() == 0 && values->topLevelItemCount() == 0,
+        "cancelled live run must not repopulate the new workspace");
+    run->click();
+    waitUntil([&] { return slider->maximum() > 2 || unexpectedDialog; }, "fresh live run after tab reset");
+    require(!unexpectedDialog, "fresh dynamic run failed");
+    slider->setValue(0);
     const auto camera = scene->cameraView();
     auto* compassWidget = scene->findChild<QWidget*>(QStringLiteral("navigation_compass"));
     auto* compass = dynamic_cast<navigation::Instrument*>(compassWidget);
@@ -1215,7 +1391,10 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         for (int column = 0; column < values->columnCount(); ++column) before << (*item)->text(column);
     }
     require(!before.isEmpty(), "GUI force table empty");
-    profiles->setCurrentIndex(1);
+    require(!profiles->isVisible(), "Static settings must not be offered in the dynamic workspace.");
+    profiles->click();
+    auto* settingsStack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+    require(settingsStack->currentWidget() == scene, "Dynamic must not open static configuration.");
     QStringList after;
     for (QTreeWidgetItemIterator item(values); *item; ++item) {
         for (int column = 0; column < values->columnCount(); ++column) after << (*item)->text(column);
@@ -1230,36 +1409,20 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     const auto switchedCamera = scene->cameraView();
     require(camera.position == switchedCamera.position && camera.focalPoint == switchedCamera.focalPoint,
         "GUI profile switch changed camera");
-    QAction* graphicsAction = nullptr;
     for (auto* action : window.menuBar()->actions()) {
         if (action->text() == QStringLiteral("Setup") && action->menu()) {
-            require(!action->menu()->actions().isEmpty(), "Setup menu empty");
-            graphicsAction = action->menu()->actions().front();
+            for (auto* entry : action->menu()->actions())
+                require(!entry->text().startsWith(QStringLiteral("Grafik"))
+                    && !entry->text().startsWith(QStringLiteral("Materialvorschau")),
+                    "Graphics must no longer be reachable through Setup.");
         }
     }
-    require(graphicsAction && graphicsAction->text().startsWith(QStringLiteral("Grafik")),
-        "Graphics must be first Setup action");
-    bool setupVisited = false;
-    QTimer::singleShot(0, [&] {
-        for (auto* widget : QApplication::topLevelWidgets()) {
-            if (auto* dialog = qobject_cast<QDialog*>(widget)) {
-                if (dialog->objectName() == QStringLiteral("graphicsSetup")) {
-                    setupVisited = true;
-                    stop->click();
-                    dialog->reject();
-                }
-            }
-        }
-    });
-    graphicsAction->trigger();
-    require(setupVisited, "Setup not usable during live run");
+    stop->click();
     waitUntil([&] { return !stop->isEnabled() || unexpectedDialog; }, "GUI cancellation timeout");
     if (unexpectedDialog || !status->text().contains(QStringLiteral("abgebrochen")))
         throw std::runtime_error("GUI cancellation did not preserve partial status: "
             + status->text().toStdString());
     require(slider->maximum() > 0, "GUI cancellation lost recorded states");
-    profiles->setCurrentIndex(0);
-    profiles->setCurrentIndex(1);
     require(slider->value() == 0, "post-cancel profile switch lost playback selection");
     report.insert(QStringLiteral("mainWindowIntegration"), true);
     for (auto* area : window.findChildren<QScrollArea*>())
@@ -1270,6 +1433,53 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         "navigation MainWindow screenshot");
     report.insert(QStringLiteral("navigationOverlayAnd14CameraPresets"), true);
     report.insert(QStringLiteral("devicePixelRatio"), window.devicePixelRatioF());
+    const auto savedGraphics = QSettings().value(QStringLiteral("grafik/profile_v1"));
+    const auto dynamicProfile = scene->graphicsProfile();
+    workspaceTabs->setCurrentIndex(1);
+    require(profiles->isVisible(), "Static workspace must expose its configuration.");
+    profiles->click();
+    auto* staticPage = settingsStack->currentWidget();
+    require(staticPage->objectName() == QStringLiteral("graphicsSettingsPage")
+        && !scene->isVisible() && !staticPage->findChild<QTabWidget*>(),
+        "Only technique table must replace the static boat.");
+    auto* staticWater = staticPage->findChild<QCheckBox*>(QStringLiteral("profile0_water"));
+    const bool savedWater = !staticWater->isChecked();
+    staticWater->toggle();
+    require(scene->graphicsProfile().on(graphics::Feature::Water) == savedWater,
+        "Static checkbox must immediately change the actual scene profile.");
+    const auto staticData = QSettings().value(QStringLiteral("statisch/grafik/profile_v1"));
+    require(staticData.isValid() && QSettings().value(QStringLiteral("grafik/profile_v1")) == savedGraphics,
+        "Static immediate saving must preserve dynamic data.");
+    const auto originalSize = window.size();
+    window.resize(1280, 720);
+    QApplication::processEvents();
+    auto* back = staticPage->findChild<QPushButton*>(QStringLiteral("closeGraphics"));
+    require(back->isVisible()
+        && staticPage->rect().contains(QRect(back->mapTo(staticPage, QPoint()), back->size())),
+        "Back button must remain reachable at compact size and every DPI.");
+    window.resize(originalSize);
+    QApplication::processEvents();
+    require(window.grab().save(evidence.filePath(QStringLiteral("graphics_configuration.bmp")), "BMP"),
+        "static table screenshot");
+    workspaceTabs->setCurrentIndex(2);
+    require(settingsStack->currentWidget() == scene
+        && QSettings().value(QStringLiteral("grafik/profile_v1")) == savedGraphics
+        && QSettings().value(QStringLiteral("statisch/grafik/profile_v1")) == staticData,
+        "Workspace switch must retain immediately saved static settings and preserve dynamic.");
+    require(scene->graphicsProfile().enabled == dynamicProfile.enabled
+        && scene->graphicsProfile().bodyOpacity == dynamicProfile.bodyOpacity
+        && scene->graphicsProfile().throughBody == dynamicProfile.throughBody,
+        "Dynamic rendering must restore its unchanged previous profile.");
+    workspaceTabs->setCurrentIndex(1);
+    profiles->click();
+    window.selectInitialModel(QStringLiteral("420"));
+    require(settingsStack->currentWidget() == scene
+        && QSettings().value(QStringLiteral("grafik/profile_v1")) == savedGraphics,
+        "Model switch must close configuration without changing dynamic settings.");
+    auto* persistedSail = window.findChild<QCheckBox*>(QStringLiteral("displaySailCenter"));
+    auto* persistedLateral = window.findChild<QCheckBox*>(QStringLiteral("displayLateralCenter"));
+    persistedSail->setChecked(false);
+    persistedLateral->setChecked(false);
     navigationCheck->setChecked(false);
     window.close();
     require(QSettings().value(QStringLiteral("darstellung/navigation")).toBool() == false,
@@ -1278,9 +1488,22 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     auto* restoredNavigation = reopened.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
     require(restoredNavigation && !restoredNavigation->isChecked(),
         "navigation visibility must be restored in the next window");
+    require(!reopened.findChild<QCheckBox*>(QStringLiteral("displaySailCenter"))->isChecked()
+        && !reopened.findChild<QCheckBox*>(QStringLiteral("displayLateralCenter"))->isChecked(),
+        "Both pressure-point visibility switches must persist independently.");
+    reopened.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(1);
+    reopened.findChild<QPushButton*>(QStringLiteral("configureGraphics"))->click();
+    auto* restoredSettings = reopened.findChild<QStackedWidget*>(QStringLiteral("sceneStack"))->currentWidget();
+    require(restoredSettings->findChild<QCheckBox*>(QStringLiteral("profile0_water"))->isChecked() == savedWater
+        && QSettings().value(QStringLiteral("grafik/profile_v1")) == savedGraphics,
+        "Reopening must restore immediate static settings without touching dynamic.");
+    restoredSettings->findChild<QCheckBox*>(QStringLiteral("profile0_water"))->setChecked(true);
+    restoredSettings->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
     reopened.close();
 
     MainWindow movementWindow;
+    movementWindow.findChild<QCheckBox*>(QStringLiteral("displaySailCenter"))->setChecked(true);
+    movementWindow.findChild<QCheckBox*>(QStringLiteral("displayLateralCenter"))->setChecked(true);
     movementWindow.setModelFolder(models);
     movementWindow.selectInitialModel(QStringLiteral("420"));
     movementWindow.show();
@@ -1341,7 +1564,207 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
         "live movement simulation cancellation timeout");
     require(!unexpectedDialog, "unexpected movement cancellation error");
+    errors.stop();
+    bool residualDialogShown = false;
+    QTimer residualDialog;
+    QObject::connect(&residualDialog, &QTimer::timeout, [&] {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* box = qobject_cast<QMessageBox*>(widget); box && box->isVisible()) {
+                residualDialogShown = box->text().contains(QStringLiteral("Restkraft Welt"))
+                    && box->text().contains(QStringLiteral("Restmoment Modell"))
+                    && box->text().contains(QStringLiteral("Nur Näherungszustand"))
+                    && box->text().contains(QStringLiteral("0.05"));
+                box->accept();
+            }
+        }
+    });
+    residualDialog.start(50);
+    movementWindow.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(1);
+    movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"))->setChecked(false);
+    movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryForceActive"))->setChecked(true);
+    movementWindow.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"))
+        ->findChild<QComboBox*>()->setCurrentIndex(1);
+    movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(100.);
+    movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointX"))->setValue(1.);
+    movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))->setValue(0.);
+    movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Schwert"))->setValue(100.);
+    movementRun->click();
+    waitUntil([&] { return residualDialogShown; }, "stationary failure dialog omitted residual explanation");
+    require(movementWindow.findChild<QLabel*>(QStringLiteral("balance"))->text()
+            .contains(QStringLiteral("nur Näherungswerte")),
+        "non-converged speed and pose must be marked approximate");
+    residualDialog.stop();
+    errors.start(50);
+    auto* turningMode = movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"));
+    auto* movementScene = dynamic_cast<VtkSceneWidget*>(
+        movementWindow.findChild<QWidget*>(QStringLiteral("simulationScene")));
+    require(movementScene, "420 simulation scene required");
+    auto* turningRate = movementScene->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+    require(turningMode && turningRate, "turning mode and heading-rate display must exist");
+    movementWindow.findChild<QCheckBox*>(QStringLiteral("displayNavigation"))->setChecked(true);
+    require(turningRate->isVisible(), "turning screenshot must show the actual navigation rate");
+    turningMode->setChecked(true);
+    for (double fixedRudder : {1., -1., 24.}) {
+        if (fixedRudder == 24.) {
+            movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(150.);
+            movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceY"))->setValue(10.);
+            movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointX"))->setValue(-.05);
+            movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointZ"))->setValue(3.);
+        }
+        movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))->setValue(fixedRudder);
+        movementRun->click();
+        require(!turningMode->isEnabled(), "turning mode is part of the immutable running case");
+        waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
+            "420 turning GUI solve timeout");
+        require(!unexpectedDialog, "real 420 turning GUI case must converge without a warning");
+        if (fixedRudder == 1.) {
+            const auto priorCamera = movementScene->cameraView();
+            auto* resultValues = movementWindow.findChild<QTreeWidget*>(QStringLiteral("simulationValues"));
+            const auto readValues = [resultValues] {
+                QStringList result;
+                for (QTreeWidgetItemIterator item(resultValues); *item; ++item)
+                    for (int column = 0; column < resultValues->columnCount(); ++column)
+                        result << (*item)->text(column);
+                return result;
+            };
+            const auto priorValues = readValues();
+            const auto priorRate = turningRate->text();
+            const auto bodyStatus = movementScene->graphicsFeatureStatus(graphics::Feature::BodyTransparency);
+            require(bodyStatus.contains(QStringLiteral("Körperdeckkraft")),
+                "Analysis transparency must explicitly report its applied opacity.");
+            require(movementScene->graphicsFeatureStatus(graphics::Feature::Reflection)
+                    == QStringLiteral("Ausgeschaltet."),
+                "Disabled effects must be reported as off, not active.");
+            const auto dynamicData = QSettings().value(QStringLiteral("grafik/profile_v1"));
+            movementWindow.findChild<QPushButton*>(QStringLiteral("configureGraphics"))->click();
+            auto* stack = movementWindow.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+            auto* page = stack->currentWidget();
+            auto* grid = page->findChild<QCheckBox*>(QStringLiteral("profile0_grid"));
+            const bool wasGrid = grid->isChecked();
+            grid->toggle();
+            require(movementScene->graphicsProfile().on(graphics::Feature::Grid) != wasGrid,
+                "Immediate change must update the rendered static profile.");
+            require(page->findChild<QLabel*>(QStringLiteral("profile0_status_grid"))->text()
+                .contains(wasGrid ? QStringLiteral("Ausgeschaltet.")
+                                  : QStringLiteral("Aktiviert;")),
+                "Table status must match the renderer immediately after each setting.");
+            grid->toggle();
+            require(movementScene->graphicsProfile().on(graphics::Feature::Grid) == wasGrid
+                && readValues() == priorValues && turningRate->text() == priorRate
+                && movementScene->cameraView().position == priorCamera.position
+                && movementScene->cameraView().focalPoint == priorCamera.focalPoint
+                && QSettings().value(QStringLiteral("grafik/profile_v1")) == dynamicData,
+                "Static auto-save must preserve result, pose/camera and unrelated dynamic settings.");
+            require(movementWindow.grab().save(evidence.filePath(QStringLiteral("graphics_configuration.bmp")), "BMP"),
+                "real static result with technique table screenshot");
+            page->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+            require(stack->currentWidget() == movementScene,
+                "Back must return to the same static result.");
+        }
+        require(turningRate->text().startsWith(fixedRudder > 0. ? QLatin1Char('-') : QLatin1Char('+'))
+                && !turningRate->text().contains(QStringLiteral("≈")),
+            "actual positive/negative 420 course rates must be signed and converged");
+        movementScene->renderNow();
+        const auto& directionArrow = movementScene->courseArrowGeometry();
+        require(directionArrow && directionArrow->points.front()[2] > 0.
+                && directionArrow->tip[2] == directionArrow->points.front()[2],
+            "actual Core turning state must render a horizontal arrow above water");
+        const auto arrowForward = forcedisplay::sub(directionArrow->points.at(1),
+            directionArrow->points.front());
+        require(forcedisplay::cross(arrowForward, directionArrow->tangent)[2]
+                * (fixedRudder > 0. ? -1. : 1.) > 0.,
+            "rendered arrow must bend in the actual signed Core turning direction");
+        if (fixedRudder == 24.)
+            require(turningRate->text().contains(QStringLiteral("-17."))
+                    && movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))
+                        ->value() == 24.,
+                "24-degree screenshot case must converge on the correct branch without adjusting rudder");
+        require(movementWindow.findChild<QLabel*>(QStringLiteral("balance"))->text()
+                .contains(QStringLiteral("Bewegungsresiduum Welt")),
+            "turning result must display motion residuals, not merely external force sums");
+        movementScene->renderNow();
+        require(movementScene->pressurePoint(true).has_value(),
+            "Active real Core force must render its replacement SDP.");
+        require(movementScene->pressurePoint(false).has_value(),
+            "Real 420 turning side force must render the corrected LDP.");
+        auto* navigationToggle = movementWindow.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
+        navigationToggle->setChecked(false);
+        movementScene->renderNow();
+        require(movementScene->pressurePoint(true) && movementScene->pressurePoint(false),
+            "Pressure points must be independent of navigation visibility.");
+        navigationToggle->setChecked(true);
+        auto* sailToggle = movementWindow.findChild<QCheckBox*>(QStringLiteral("displaySailCenter"));
+        sailToggle->setChecked(false);
+        movementScene->renderNow();
+        require(!movementScene->pressurePoint(true) && movementScene->pressurePoint(false),
+            "SDP visibility must be independent of LDP.");
+        sailToggle->setChecked(true);
+        auto* lateralToggle = movementWindow.findChild<QCheckBox*>(QStringLiteral("displayLateralCenter"));
+        lateralToggle->setChecked(false);
+        movementScene->renderNow();
+        require(movementScene->pressurePoint(true) && !movementScene->pressurePoint(false),
+            "LDP visibility must be independent of SDP.");
+        lateralToggle->setChecked(true);
+        movementScene->renderNow();
+        const auto pressureImage = movementScene->captureImage();
+        int magentaPixels = 0, orangePixels = 0;
+        for (int y = 0; y < pressureImage.height(); ++y)
+            for (int x = 0; x < pressureImage.width(); ++x) {
+                const auto color = pressureImage.pixelColor(x, y);
+                if (color.red() > 200 && color.blue() > 150 && color.green() < 140) ++magentaPixels;
+                if (color.red() > 220 && color.green() > 120 && color.green() < 200
+                    && color.blue() < 120) ++orangePixels;
+            }
+        require(magentaPixels > 10 && orangePixels > 10,
+            "Both pressure markers/labels must actually be visible in the analysis raster.");
+        require(movementWindow.grab().save(evidence.filePath(
+                fixedRudder == 24. ? QStringLiteral("turning_rudder_24.bmp")
+                    : fixedRudder > 0. ? QStringLiteral("turning_positive_rudder.bmp")
+                            : QStringLiteral("turning_negative_rudder.bmp")), "BMP"),
+            "actual signed turning display screenshot");
+    }
+    errors.stop();
+    movementRun->click();
+    auto* movementTabs = movementWindow.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    movementTabs->setCurrentIndex(0);
+    movementTabs->setCurrentIndex(1);
+    waitUntil([&] { return movementRun->isEnabled() || unexpectedDialog; },
+        "stationary calculation did not stop after workspace change");
+    require(!unexpectedDialog && !movementScene->courseArrowGeometry()
+            && !movementScene->pressurePoint(true) && !movementScene->pressurePoint(false)
+            && movementWindow.findChild<QLabel*>(QStringLiteral("navigationCourseRate"))
+                ->text() == QStringLiteral("-- °/s"),
+        "late stationary result must not restore a discarded state");
+    QJsonObject markerState{
+        {QStringLiteral("position_m"), QJsonArray{2., -3., .4}},
+        {QStringLiteral("orientierung_xyzw"), QJsonArray{.5, 0., 0., std::sqrt(.75)}},
+        {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}}};
+    forcedisplay::ForceState markerForces;
+    markerForces.lateral = forcedisplay::LateralCenter{
+        QStringLiteral("gueltig"), forcedisplay::Vec3{9., 0., -.6}, 2};
+    markerForces.sailCenter = forcedisplay::SailCenter{
+        QStringLiteral("gueltig"), forcedisplay::Vec3{.5, .2, 3.}};
+    QString markerError;
+    require(movementScene->setState(markerState, markerForces, &markerError),
+        "marker pose fixture failed");
+    const auto markerPose = forcedisplay::readPose(markerState);
+    require(movementScene->pressurePoint(false) && movementScene->pressurePoint(true)
+        && forcedisplay::norm(forcedisplay::sub(*movementScene->pressurePoint(false),
+            forcedisplay::toWorldPoint(markerPose, *markerForces.lateral->position))) < 1e-10
+        && forcedisplay::norm(forcedisplay::sub(*movementScene->pressurePoint(true),
+            forcedisplay::toWorldPoint(markerPose, *markerForces.sailCenter->position))) < 1e-10,
+        "Pressure points must preserve exact XYZ with roll/translation, even outside the boat.");
+    markerForces.lateral->status = QStringLiteral("geometrisch");
+    markerForces.sailCenter.reset();
+    require(movementScene->setState(markerState, markerForces, &markerError)
+        && !movementScene->pressurePoint(false) && !movementScene->pressurePoint(true),
+        "Geometric points must not masquerade as LDP; missing force must not invent SDP.");
+    markerForces.lateral->status = QStringLiteral("gueltig");
+    markerForces.lateral->evaluationVersion = 0;
+    require(movementScene->setState(markerState, markerForces, &markerError)
+        && !movementScene->pressurePoint(false), "Legacy LDP must not claim corrected placement.");
     movementWindow.close();
+    report.insert(QStringLiteral("stationaryTurningAndSignedCourseRate"), true);
     report.insert(QStringLiteral("liveMovementOverlay"), true);
 }
 
@@ -1750,7 +2173,7 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "420 UI load");
     require(!unexpectedDialog && !active->isChecked() && force->value() == 200
         && std::abs(speed->value() - 463.0 / 90.0) < 1e-8, "temporary defaults");
-    mode->setCurrentIndex(1);
+    window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(2);
     duration->setValue(2.0);
     active->setChecked(true);
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "UI dynamic readiness");

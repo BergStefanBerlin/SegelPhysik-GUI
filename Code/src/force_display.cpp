@@ -224,15 +224,51 @@ ForceState parseForceState(const QJsonObject& object)
         object.value(QStringLiteral("moment_bezug_modell_m")),
         QStringLiteral("moment_bezug_modell_m"));
     const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3")
-        || state.contract == QStringLiteral("4");
+        || state.contract == QStringLiteral("4") || state.contract == QStringLiteral("5")
+        || state.contract == QStringLiteral("6");
     if (state.contract != QStringLiteral("1") && !v2) {
         throw std::runtime_error("Nicht unterstuetzte CORE-Ergebnisversion.");
+    }
+    if (state.contract == QStringLiteral("5")
+        && !object.value(QStringLiteral("stationaer")).isObject())
+        throw std::runtime_error("CORE-Ergebnisversion 5 ohne stationaeren Ergebnisvertrag.");
+    state.stationary = object.value(QStringLiteral("stationaer")).toObject();
+    if (state.contract == QStringLiteral("6")) {
+        const auto rate = object.value(QStringLiteral("kursdrehrate_rad_s"));
+        state.courseRateStatus = object.value(QStringLiteral("kursdrehrate_status")).toString();
+        if (state.courseRateStatus == QStringLiteral("gueltig")
+            && rate.isDouble() && std::isfinite(rate.toDouble())) {
+            state.courseRateRadS = rate.toDouble();
+        } else if (state.courseRateStatus != QStringLiteral("nicht_bestimmbar") || !rate.isNull()) {
+            throw std::runtime_error("CORE-Ergebnisversion 6 mit ungültiger Kursdrehrate oder Status.");
+        }
+        if (object.contains(QStringLiteral("stationaer"))
+            && (!object.value(QStringLiteral("stationaer")).isObject() || state.stationary.isEmpty()))
+            throw std::runtime_error("CORE-Ergebnisversion 6 mit ungültigem stationärem Ergebnisvertrag.");
+        if (!state.stationary.isEmpty()) {
+            const auto& stationary = state.stationary;
+            for (const auto& name : {QStringLiteral("residuum_kraft_welt_n"),
+                     QStringLiteral("residuum_moment_modell_nm"), QStringLiteral("aeussere_kraft_welt_n"),
+                     QStringLiteral("aeusseres_moment_modell_nm"), QStringLiteral("omega_modell_rad_s")})
+                readVector(stationary.value(name), name);
+            for (const auto& name : {QStringLiteral("krafttoleranz_n"), QStringLiteral("momenttoleranz_nm")}) {
+                const auto tolerance = stationary.value(name);
+                if (!tolerance.isDouble() || !std::isfinite(tolerance.toDouble()) || tolerance.toDouble() <= 0.)
+                    throw std::runtime_error("CORE-Ergebnisversion 6 ohne gültige Bewegungstoleranz.");
+            }
+            if (!stationary.value(QStringLiteral("kurvenfahrt")).isBool()
+                || !stationary.value(QStringLiteral("konvergiert")).isBool()
+                || !QStringList{QStringLiteral("geradeaus"), QStringLiteral("kurvenfahrt"),
+                        QStringLiteral("reine_drehung")}.contains(stationary.value(QStringLiteral("loesungstyp")).toString()))
+                throw std::runtime_error("CORE-Ergebnisversion 6 ohne eindeutigen stationären Lösungstyp.");
+        }
     }
     const auto testValue = object.value(QStringLiteral("testantrieb"));
     if (state.contract == QStringLiteral("3") && !testValue.isObject()) {
         throw std::runtime_error("CORE-Ergebnisversion 3 ohne verpflichtenden Testantriebskontext.");
     }
-    if ((state.contract == QStringLiteral("3") || state.contract == QStringLiteral("4"))
+    if ((state.contract == QStringLiteral("3") || state.contract == QStringLiteral("4")
+            || state.contract == QStringLiteral("6"))
         && testValue.isObject()) {
         const auto test = testValue.toObject();
         const auto transition = test.value(QStringLiteral("uebergang"));
@@ -251,17 +287,44 @@ ForceState parseForceState(const QJsonObject& object)
     }
     const auto lateral = object.value(QStringLiteral("druckpunkte")).toObject()
                              .value(QStringLiteral("lateral"));
+    if (!lateral.isUndefined() && !lateral.isObject())
+        throw std::runtime_error("CORE-LDP: Ungueltiger Druckpunktblock.");
     if (lateral.isObject()) {
         LateralCenter center;
         center.status = lateral.toObject().value(QStringLiteral("status")).toString();
-        const auto position = lateral.toObject().value(QStringLiteral("position_modell_m")).toArray();
+        const auto version = lateral.toObject().value(QStringLiteral("auswertung_version"));
+        if (!version.isUndefined()) {
+            if (!version.isDouble() || version.toDouble() != 2.)
+                throw std::runtime_error("CORE-LDP: Unbekannte Auswertungsversion.");
+            center.evaluationVersion = 2;
+        }
         const bool usable = center.status == QStringLiteral("gueltig")
             || center.status == QStringLiteral("geometrisch");
-        if (usable && position.size() == 3 && position[0].isDouble() && position[1].isDouble()
-            && position[2].isDouble()) {
-            center.position = Vec3{position[0].toDouble(), position[1].toDouble(), position[2].toDouble()};
-        }
+        if (usable)
+            center.position = readOptionalVector(
+                lateral.toObject().value(QStringLiteral("position_modell_m")), QStringLiteral("LDP"));
+        if (center.evaluationVersion == 2 && ((usable && !center.position)
+            || (!usable && (center.status != QStringLiteral("nicht_bestimmbar")
+                || lateral.toObject().contains(QStringLiteral("position_modell_m"))))))
+            throw std::runtime_error("CORE-LDP: Ungueltiger Status oder fehlende Position.");
         state.lateral = center;
+    }
+    const auto sail = object.value(QStringLiteral("druckpunkte")).toObject()
+                          .value(QStringLiteral("ersatz_segel"));
+    if (!sail.isUndefined()) {
+        if (!sail.isObject()) throw std::runtime_error("CORE-SDP: Ungueltiger Ersatz-SDP.");
+        const auto data = sail.toObject();
+        SailCenter center;
+        center.status = data.value(QStringLiteral("status")).toString();
+        if (data.value(QStringLiteral("quelle")).toString() != QStringLiteral("fremdkraft")
+            || (center.status != QStringLiteral("gueltig") && center.status != QStringLiteral("inaktiv")
+                && center.status != QStringLiteral("kraft_null")))
+            throw std::runtime_error("CORE-SDP: Ungueltige Herkunft oder Status.");
+        if (center.status == QStringLiteral("gueltig"))
+            center.position = readVector(data.value(QStringLiteral("position_modell_m")), QStringLiteral("Ersatz-SDP"));
+        else if (data.contains(QStringLiteral("position_modell_m")))
+            throw std::runtime_error("CORE-SDP: Inaktiver Ersatz-SDP mit Position.");
+        state.sailCenter = center;
     }
     for (const auto& id : object.value(QStringLiteral("geflutete_elemente")).toArray()) {
         state.flooded.push_back(id.toString());
@@ -684,7 +747,8 @@ BalanceSummary balanceSummary(const ForceState& state)
                                        "Kein physikalischer Widerstand und kein vollstaendiger Impulsbilanzschluss aus den Kraftsummen.");
     }
     if (state.total && state.total->force) {
-        summary.lines << QStringLiteral("ΣF: %1")
+        summary.lines << (state.stationary.isEmpty()
+                ? QStringLiteral("ΣF: %1") : QStringLiteral("Äußere ΣF: %1"))
                              .arg(formatQuantity(norm(*state.total->force), QStringLiteral("N")));
     } else {
         summary.lines << QStringLiteral("ΣF: nicht berechnet");
@@ -697,7 +761,8 @@ BalanceSummary balanceSummary(const ForceState& state)
                             formatQuantity((*state.reference)[2], QStringLiteral("m")));
     }
     if (state.total && state.total->moment) {
-        summary.lines << QStringLiteral("ΣM um %1: %2")
+        summary.lines << (state.stationary.isEmpty()
+                ? QStringLiteral("ΣM um %1: %2") : QStringLiteral("Äußere ΣM um %1: %2"))
                              .arg(reference,
                                  formatQuantity(norm(*state.total->moment), QStringLiteral("N·m")));
     } else {
@@ -712,7 +777,34 @@ BalanceSummary balanceSummary(const ForceState& state)
                 ? QStringLiteral("Lücken: vom Core nicht einzeln benannt")
                 : QStringLiteral("Lücken: %1").arg(state.missing.join(QStringLiteral(", "))));
     }
-    if (state.equilibriumPresent) {
+    if (!state.stationary.isEmpty()) {
+        const auto& stationary = state.stationary;
+        const auto components = [](const QJsonValue& value) {
+            if (!value.isArray() || value.toArray().size() != 3)
+                return QStringLiteral("nicht verfügbar");
+            QStringList result;
+            for (const auto& entry : value.toArray()) {
+                if (!entry.isDouble() || !std::isfinite(entry.toDouble()))
+                    return QStringLiteral("ungültig");
+                result << QString::number(entry.toDouble(), 'g', 8);
+            }
+            return result.join(QStringLiteral("; "));
+        };
+        const auto tolerance = [&stationary](const QString& name) {
+            const auto value = stationary.value(name);
+            return value.isDouble() && std::isfinite(value.toDouble())
+                ? QString::number(value.toDouble(), 'g', 8) : QStringLiteral("nicht verfügbar");
+        };
+        summary.lines << QStringLiteral("Bewegungsresiduum Welt (X; Y; Z): [%1] N")
+            .arg(components(stationary.value(QStringLiteral("residuum_kraft_welt_n"))));
+        summary.lines << QStringLiteral("Bewegungsresiduum Modell (X; Y; Z): [%1] Nm")
+            .arg(components(stationary.value(QStringLiteral("residuum_moment_modell_nm"))));
+        summary.lines << QStringLiteral("Toleranz je Komponente: %1 N / %2 Nm")
+            .arg(tolerance(QStringLiteral("krafttoleranz_n")),
+                tolerance(QStringLiteral("momenttoleranz_nm")));
+        summary.lines << QStringLiteral(
+            "Äußere Summen sind keine Bewegungsresiduen; bei Kurvenfahrt müssen sie nicht null sein.");
+    } else if (state.equilibriumPresent) {
         const auto& e = state.equilibrium;
         summary.lines << QStringLiteral("Gleichgewicht: Residuum %1 (Toleranz %2), %3 (Toleranz %4)")
                              .arg(formatQuantity(e.value(QStringLiteral("residuum_kraft_n")).toDouble(),
@@ -732,7 +824,9 @@ BalanceSummary balanceSummary(const ForceState& state)
                                                      : freedoms.join(QStringLiteral(", ")))
                              .arg(e.value(QStringLiteral("iterationen")).toInt());
     } else {
-        summary.lines << QStringLiteral("Gleichgewicht nicht bewertet");
+        summary.lines << (state.contract == QStringLiteral("5")
+            ? QStringLiteral("Sechs stationäre Residuen: siehe Core-Auswertung.")
+            : QStringLiteral("Gleichgewicht nicht bewertet"));
     }
     return summary;
 }
@@ -805,6 +899,32 @@ std::optional<ArcGeometry> momentArc(const Vec3& center, const Vec3& moment,
     arc.tip = arc.points.back();
     arc.tangent = add(scale(arc.basis, -std::sin(sweep)), scale(second, std::cos(sweep)));
     return arc;
+}
+
+std::optional<CourseArrowGeometry> courseArrow(const Vec3& start, const Vec3& forward,
+    double courseRateRadS, double length)
+{
+    const double horizontal = std::hypot(forward[0], forward[1]);
+    if (!std::isfinite(courseRateRadS) || !std::isfinite(length) || length <= 0.
+        || !std::isfinite(horizontal) || horizontal <= 1e-10)
+        return std::nullopt;
+    const Vec3 direction{forward[0] / horizontal, forward[1] / horizontal, 0.};
+    const Vec3 left{-direction[1], direction[0], 0.};
+    // Symbolische Skala, keine vorausberechnete Bahn: 4 s, maximal 80 Grad.
+    const double bend = std::clamp(courseRateRadS * 4., -80. * pi / 180., 80. * pi / 180.);
+    CourseArrowGeometry result;
+    constexpr int segments = 48;
+    for (int i = 0; i <= segments; ++i) {
+        const double t = static_cast<double>(i) / segments;
+        const double along = std::abs(bend) < 1e-8 ? length * t
+            : length * std::sin(bend * t) / bend;
+        const double side = std::abs(bend) < 1e-8 ? 0.
+            : length * 2. * std::pow(std::sin(.5 * bend * t), 2) / bend;
+        result.points.push_back(add(start, add(scale(direction, along), scale(left, side))));
+    }
+    result.tip = result.points.back();
+    result.tangent = add(scale(direction, std::cos(bend)), scale(left, std::sin(bend)));
+    return result;
 }
 
 std::optional<Vec3> perpendicularLeverArm(const Vec3& r, const Vec3& force)

@@ -25,6 +25,9 @@ struct Values {
     std::optional<double> cameraPitch;
     std::optional<forcedisplay::Vec3> velocityWorld;
     std::optional<double> speed;
+    std::optional<double> courseRateRadS;
+    QString courseRateStatus = QStringLiteral("nicht_verfuegbar");
+    bool approximate = false;
 };
 
 Values derive(const std::optional<forcedisplay::Pose>& pose,
@@ -78,6 +81,7 @@ private:
     QSizeGrip* sizeGrip_;
     std::array<Instrument*, 3> instruments_;
     QLabel* speedMagnitude_;
+    QLabel* courseRate_;
     std::array<QLabel*, 3> speedComponents_;
     bool dragging_ = false;
     QPoint dragOffset_;

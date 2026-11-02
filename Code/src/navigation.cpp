@@ -239,7 +239,7 @@ void Instrument::paintEvent(QPaintEvent*)
 
 Overlay::Overlay(QWidget* viewport)
     : QWidget(viewport), handle_(new QLabel(QStringLiteral("Navigation  ·  ziehen"), this)),
-      sizeGrip_(new QSizeGrip(this)), speedMagnitude_(nullptr), speedComponents_{}
+      sizeGrip_(new QSizeGrip(this)), speedMagnitude_(nullptr), courseRate_(nullptr), speedComponents_{}
 {
     setObjectName(QStringLiteral("navigationOverlay"));
     auto* layout = new QVBoxLayout(this);
@@ -282,6 +282,10 @@ Overlay::Overlay(QWidget* viewport)
     speedMagnitude_ = new QLabel(QStringLiteral("– m/s"), speedPanel);
     speedMagnitude_->setObjectName(QStringLiteral("navigationSpeedMagnitude"));
     speedLayout->addWidget(speedMagnitude_, 1, 0, 1, 2);
+    courseRate_ = new QLabel(QStringLiteral("-- °/s"), speedPanel);
+    courseRate_->setObjectName(QStringLiteral("navigationCourseRate"));
+    courseRate_->setStyleSheet(QStringLiteral("color:#63d5e2; font-weight:700;"));
+    speedLayout->addWidget(courseRate_, 2, 0, 1, 2);
     const std::array<QString, 3> axes{
         QStringLiteral("Welt-X"), QStringLiteral("Welt-Y"), QStringLiteral("Welt-Z")};
     for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
@@ -291,8 +295,8 @@ Overlay::Overlay(QWidget* viewport)
         speedComponents_[axis]->setObjectName(
             QStringLiteral("navigationSpeedComponent%1").arg(axis));
         speedComponents_[axis]->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        speedLayout->addWidget(name, static_cast<int>(axis) + 2, 0);
-        speedLayout->addWidget(speedComponents_[axis], static_cast<int>(axis) + 2, 1);
+        speedLayout->addWidget(name, static_cast<int>(axis) + 3, 0);
+        speedLayout->addWidget(speedComponents_[axis], static_cast<int>(axis) + 3, 1);
     }
     layout->addWidget(speedPanel);
     sizeGrip_->setObjectName(QStringLiteral("navigationSizeGrip"));
@@ -312,6 +316,27 @@ void Overlay::setValues(const Values& values)
     speedMagnitude_->setText(values.speed
         ? QStringLiteral("%1 m/s").arg(*values.speed, 0, 'f', 3)
         : QStringLiteral("– m/s"));
+    const QString convention = QStringLiteral(
+        "Kursdrehrate um die Weltvertikale; positiv gegen den Uhrzeigersinn "
+        "beim Blick von oben (Rechte-Hand-Regel).\n"
+        "Nicht der Betrag der Winkelgeschwindigkeit und nicht Modell-Z.");
+    if (values.courseRateRadS && std::isfinite(*values.courseRateRadS)) {
+        const double rate = degrees(*values.courseRateRadS);
+        courseRate_->setText(QStringLiteral("%1%2 °/s%3")
+            .arg(rate > 0.0 && std::abs(rate) >= 0.005 ? QStringLiteral("+") : QString(),
+                forcedisplay::formatFixed(rate, 2),
+                values.approximate ? QStringLiteral(" ≈") : QString()));
+        courseRate_->setToolTip(convention + QStringLiteral(
+            "\nCore: %1 rad/s = %2 °/s\nStatus: %3%4")
+            .arg(*values.courseRateRadS, 0, 'g', 17)
+            .arg(rate, 0, 'g', 17)
+            .arg(values.courseRateStatus,
+                values.approximate ? QStringLiteral(" · Näherung, nicht konvergiert") : QString()));
+    } else {
+        courseRate_->setText(QStringLiteral("-- °/s"));
+        courseRate_->setToolTip(convention
+            + QStringLiteral("\nNicht verfügbar: %1").arg(values.courseRateStatus));
+    }
     for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
         speedComponents_[axis]->setText(values.velocityWorld
             ? QStringLiteral("%1 m/s").arg((*values.velocityWorld)[axis], 0, 'f', 3)

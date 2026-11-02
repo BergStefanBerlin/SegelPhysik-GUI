@@ -1,4 +1,7 @@
 <RCC>
+  <qresource prefix="/controls">
+    <file alias="checkmark.svg">checkmark.svg</file>
+  </qresource>
   <qresource prefix="/navigation">
     <file alias="compass.svg">navigation/Widget_Kompass.svg</file>
     <file alias="roll.svg">navigation/Widget_Kraengung.svg</file>

@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QInputDialog>
 #include <QLabel>
 #include <QListWidget>
@@ -242,7 +243,15 @@ MainWindow::MainWindow(QWidget* parent)
     chooseFolderButton_ = new QPushButton(QStringLiteral("Modellordner wählen"));
     chooseFolderButton_->setObjectName(QStringLiteral("primaryButton"));
     root->addLayout(header);
-    root->addWidget(workspaceTabs);
+    auto* workspaceRow = new QHBoxLayout;
+    workspaceRow->addWidget(workspaceTabs);
+    workspaceRow->addStretch();
+    modelLabel_ = new QLabel(QStringLiteral("Kein Modell ausgewählt"));
+    modelLabel_->setObjectName(QStringLiteral("modelName"));
+    modelLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    modelLabel_->setTextFormat(Qt::PlainText);
+    workspaceRow->addWidget(modelLabel_);
+    root->addLayout(workspaceRow);
 
     auto* mainArea = new QHBoxLayout;
     mainArea_ = mainArea;
@@ -279,23 +288,19 @@ MainWindow::MainWindow(QWidget* parent)
     auto* simulationLayout = new QHBoxLayout(simulationPanel);
     simulationLayout->setContentsMargins(0, 0, 0, 0);
     simulationLayout->setSpacing(14);
-    simulationLayout->addWidget(scene_, 1);
+    sceneStack_ = new QStackedWidget;
+    sceneStack_->setObjectName(QStringLiteral("sceneStack"));
+    sceneStack_->addWidget(scene_);
+    simulationLayout->addWidget(sceneStack_, 1);
     workspaceStack_->addWidget(simulationPanel);
     mainArea->addWidget(workspaceStack_, 1);
 
     auto* panel = new QWidget;
     panel->setObjectName(QStringLiteral("panel"));
     auto* panelLayout = new QVBoxLayout(panel);
+    simulationControlsLayout_ = panelLayout;
     panelLayout->setContentsMargins(18, 18, 18, 18);
     panelLayout->setSpacing(10);
-
-    auto* modelCaption = new QLabel(QStringLiteral("AKTIVES MODELL"));
-    modelCaption->setObjectName(QStringLiteral("caption"));
-    modelLabel_ = new QLabel(QStringLiteral("Kein Modell ausgewählt"));
-    modelLabel_->setWordWrap(true);
-    modelLabel_->setObjectName(QStringLiteral("modelName"));
-    panelLayout->addWidget(modelCaption);
-    panelLayout->addWidget(modelLabel_);
 
     auto* modeCaption = new QLabel(QStringLiteral("SIMULATION"));
     modeCaption->setObjectName(QStringLiteral("caption"));
@@ -341,6 +346,49 @@ MainWindow::MainWindow(QWidget* parent)
     cancelButton_->setEnabled(false);
     panelLayout->addWidget(runButton_);
     panelLayout->addWidget(cancelButton_);
+
+    stationaryForcePanel_ = new QGroupBox(QStringLiteral("Eine Fremdkraft"));
+    stationaryForcePanel_->setObjectName(QStringLiteral("stationaryForcePanel"));
+    auto* stationaryForm = new QFormLayout(stationaryForcePanel_);
+    stationaryForceActive_ = new QCheckBox(QStringLiteral("Fremdkraft aktiv"));
+    stationaryForceActive_->setObjectName(QStringLiteral("stationaryForceActive"));
+    stationaryForm->addRow(stationaryForceActive_);
+    stationaryTurning_ = new QCheckBox(QStringLiteral("Stationäre Kurvenfahrt zulassen"));
+    stationaryTurning_->setObjectName(QStringLiteral("stationaryTurning"));
+    stationaryTurning_->setChecked(true);
+    stationaryTurning_->setToolTip(QStringLiteral(
+        "Ein: Core sucht konstante bootsfeste Fahrt, Roll-/Stampflage und Kursdrehrate.\n"
+        "Aus: bisheriger geradliniger Modus mit Drehrate null.\n"
+        "Kraft und Ruder-/Schwertstellungen bleiben im Lauf unverändert."));
+    stationaryForm->addRow(stationaryTurning_);
+    stationaryForceFrame_ = new QComboBox;
+    stationaryForceFrame_->addItem(QStringLiteral("Weltfest"), false);
+    stationaryForceFrame_->addItem(QStringLiteral("Modellfest"), true);
+    stationaryForm->addRow(QStringLiteral("Kraftbezug"), stationaryForceFrame_);
+    auto* forceVector = new QGroupBox(QStringLiteral("Kraftvektor (X, Y, Z)"));
+    auto* forceVectorForm = new QFormLayout(forceVector);
+    auto* applicationPoint = new QGroupBox(QStringLiteral("Gemeinsamer Ansatzpunkt (Modell)"));
+    auto* applicationPointForm = new QFormLayout(applicationPoint);
+    stationaryForm->addRow(forceVector);
+    stationaryForm->addRow(applicationPoint);
+    for (int axis = 0; axis < 3; ++axis) {
+        const auto axisName = QString::fromLatin1("XYZ").mid(axis,1);
+        auto* force = new QDoubleSpinBox;
+        force->setObjectName(QStringLiteral("stationaryForce%1").arg(axisName));
+        force->setRange(-1e8,1e8);
+        force->setDecimals(3);
+        force->setSuffix(QStringLiteral(" N"));
+        stationaryForce_[axis] = force;
+        forceVectorForm->addRow(axisName, force);
+        auto* point = new QDoubleSpinBox;
+        point->setObjectName(QStringLiteral("stationaryPoint%1").arg(axisName));
+        point->setRange(-1e6,1e6);
+        point->setDecimals(4);
+        point->setSuffix(QStringLiteral(" m"));
+        stationaryPoint_[axis] = point;
+        applicationPointForm->addRow(axisName, point);
+    }
+    panelLayout->addWidget(stationaryForcePanel_);
 
     testDrivePanel_ = new QGroupBox(QStringLiteral("Testantrieb (temporaer)"));
     testDrivePanel_->setObjectName(QStringLiteral("testDrivePanel"));
@@ -400,7 +448,21 @@ MainWindow::MainWindow(QWidget* parent)
     panelLayout->addWidget(statusCaption);
     panelLayout->addWidget(statusLabel_);
     panelLayout->addWidget(timeLabel_);
-    panelLayout->addWidget(buildDisplayPanel());
+    const auto stationaryInputChanged = [this] {
+        if (lastRunDynamic_ && !*lastRunDynamic_ && displayedIndex_ >= 0)
+            statusLabel_->setText(QStringLiteral(
+                "Eingaben geändert – angezeigtes Ergebnis gehört zum vorherigen Rechenfall."));
+    };
+    connect(stationaryForceActive_, &QCheckBox::toggled, this, stationaryInputChanged);
+    connect(stationaryTurning_, &QCheckBox::toggled, this, stationaryInputChanged);
+    connect(stationaryForceFrame_, &QComboBox::currentIndexChanged, this, stationaryInputChanged);
+    for (auto* value : stationaryForce_)
+        connect(value, &QDoubleSpinBox::valueChanged, this, stationaryInputChanged);
+    for (auto* value : stationaryPoint_)
+        connect(value, &QDoubleSpinBox::valueChanged, this, stationaryInputChanged);
+    displayPanel_ = buildDisplayPanel();
+    displayPanel_->setObjectName(QStringLiteral("displayControls"));
+    panelLayout->addWidget(displayPanel_);
     panelLayout->addStretch(1);
 
     auto* panelScroll = new QScrollArea;
@@ -412,6 +474,22 @@ MainWindow::MainWindow(QWidget* parent)
     panelScroll->setMinimumWidth(320);
     panelScroll->setMaximumWidth(380);
     simulationLayout->addWidget(panelScroll);
+    staticDisplaySidebar_ = new QScrollArea;
+    staticDisplaySidebar_->setObjectName(QStringLiteral("staticDisplaySidebar"));
+    staticDisplaySidebar_->setWidgetResizable(true);
+    staticDisplaySidebar_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    staticDisplaySidebar_->setFrameShape(QFrame::NoFrame);
+    staticDisplaySidebar_->setMinimumWidth(320);
+    staticDisplaySidebar_->setMaximumWidth(380);
+    auto* displayFrame = new QWidget;
+    displayFrame->setObjectName(QStringLiteral("panel"));
+    auto* displayLayout = new QVBoxLayout(displayFrame);
+    displayLayout->setContentsMargins(18, 18, 18, 18);
+    displayLayout->setSpacing(10);
+    displayLayout->addStretch();
+    staticDisplaySidebar_->setWidget(displayFrame);
+    mainArea->insertWidget(0, staticDisplaySidebar_);
+    staticDisplaySidebar_->hide();
     root->addLayout(mainArea, 1);
 
     playbackPanel_ = new QWidget;
@@ -476,9 +554,6 @@ MainWindow::MainWindow(QWidget* parent)
         updateValues();
     };
 
-    auto* setupMenu = menuBar()->addMenu(QStringLiteral("Setup"));
-    setupMenu->addAction(QStringLiteral("Grafik …"), this, &MainWindow::setupGraphics);
-    setupMenu->addAction(QStringLiteral("Materialvorschau …"), this, &MainWindow::setupMaterialPreview);
     loadSettings();
     simulationValuesVisible_ = !valuesDock_->isHidden();
     updateModeControls();
@@ -488,11 +563,33 @@ MainWindow::MainWindow(QWidget* parent)
 
 void MainWindow::updateWorkspace(int index)
 {
+    if (workspaceIndex_ >= 0 && workspaceIndex_ != index) {
+        closeGraphics();
+        cancellation_.store(true);
+        ++simulationGeneration_;
+        liveTimer_->stop();
+        resetResults();
+        lastRunDynamic_.reset();
+        statusLabel_->setText(QStringLiteral("Reiter gewechselt – Simulationszustand zurückgesetzt."));
+        statusLabel_->setToolTip(QString());
+        statusLabel_->setStyleSheet(QString());
+        timeLabel_->setText(QStringLiteral("Simulationszeit: 0.000 s"));
+    }
+    workspaceIndex_ = index;
     applyWorkspaceTheme(index);
     const bool inspection = index == 0;
+    const bool staticModel = index == 1;
     if (inspection) inspection_->setCatalogWidget(catalogPanel_);
     else mainArea_->insertWidget(0, catalogPanel_);
-    catalogPanel_->show();
+    catalogPanel_->setVisible(!staticModel);
+    if (staticModel) {
+        auto* displayLayout = qobject_cast<QVBoxLayout*>(staticDisplaySidebar_->widget()->layout());
+        displayLayout->insertWidget(0, displayPanel_);
+    } else
+        simulationControlsLayout_->insertWidget(
+            simulationControlsLayout_->count()-1, displayPanel_);
+    displayPanel_->show();
+    staticDisplaySidebar_->setVisible(staticModel);
     if (inspection && workspaceStack_->currentIndex() != 0)
         simulationValuesVisible_ = !valuesDock_->isHidden();
     workspaceStack_->setCurrentIndex(inspection ? 0 : 1);
@@ -500,6 +597,14 @@ void MainWindow::updateWorkspace(int index)
     chooseFolderButton_->setVisible(inspection);
     playbackPanel_->setVisible(!inspection);
     valuesDock_->setVisible(inspection || simulationValuesVisible_);
+    if (!inspection) {
+        const QSignalBlocker blocker(modeCombo_);
+        modeCombo_->setCurrentIndex(staticModel ? 0 : 1);
+    }
+    modeCombo_->setVisible(false);
+    updateModeControls();
+    graphicsButton_->setVisible(staticModel);
+    applyDisplayOptions();
 }
 
 void MainWindow::applyWorkspaceTheme(int index)
@@ -511,13 +616,14 @@ void MainWindow::applyWorkspaceTheme(int index)
         "QLabel, QCheckBox { background:transparent; }"
         "QCheckBox::indicator { width:15px; height:15px; border:1px solid "
         "%3; border-radius:4px; background:%4; }"
-        "QCheckBox::indicator:checked { background:%7; border-color:%8; }"
+        "QCheckBox::indicator:checked { background:%7; border-color:%8; "
+        "image:url(:/controls/checkmark.svg); }"
         "QTabBar::tab { padding:12px 20px; font-weight:600; }"
         "QLabel#title { font-size:19pt; font-weight:700; letter-spacing:2px; }"
         "QLabel#subtitle { color:%9; font-size:10pt; }"
         "QLabel#caption { color:%10; font-size:8pt; font-weight:700; "
         "letter-spacing:1.5px; }"
-        "QLabel#modelName { font-size:13pt; font-weight:600; }"
+        "QLabel#modelName { font-size:19pt; font-weight:700; letter-spacing:2px; }"
         "QLabel#status { color:#b8e7c3; font-size:11pt; }"
         "QLabel#time, QLabel#legend { color:%9; font-size:9pt; }"
         "QLabel#balance { background:%2; border:1px solid %3; "
@@ -525,7 +631,8 @@ void MainWindow::applyWorkspaceTheme(int index)
         "QLabel#detail { color:#c9d6e2; font-size:9pt; }"
         "QWidget#panel { background:%2; border:1px solid %3; "
         "border-radius:12px; }"
-        "QScrollArea#panelScroll { background:transparent; }"
+        "QWidget#simulationScene { border:1px solid %3; border-radius:12px; }"
+        "QScrollArea#panelScroll, QScrollArea#staticDisplaySidebar { background:transparent; }"
         "QPushButton { background:%5; border:1px solid %3; "
         "border-radius:7px; padding:9px 13px; font-weight:600; }"
         "QPushButton:hover { background:%6; }"
@@ -618,13 +725,12 @@ QWidget* MainWindow::buildDisplayPanel()
     };
     forceScaleCombo_ = scaleCombo();
     momentScaleCombo_ = scaleCombo();
-    visibilityCombo_ = new QComboBox;
-    visibilityCombo_->setObjectName(QStringLiteral("graphicsProfile"));
-    visibilityCombo_->addItem(QStringLiteral("Technik – durchsichtig"), 0);
-    visibilityCombo_->addItem(QStringLiteral("Optik – grafisch"), 1);
+    graphicsButton_ = new QPushButton(QStringLiteral("Darstellung"));
+    graphicsButton_->setObjectName(QStringLiteral("configureGraphics"));
+    connect(graphicsButton_, &QPushButton::clicked, this, &MainWindow::setupGraphics);
     form->addRow(QStringLiteral("Skala Kraft"), forceScaleCombo_);
     form->addRow(QStringLiteral("Skala Moment"), momentScaleCombo_);
-    form->addRow(QStringLiteral("Darstellung"), visibilityCombo_);
+    form->addRow(graphicsButton_);
     layout->addLayout(form);
     graphicsStatus_ = new QLabel;
     graphicsStatus_->setWordWrap(true);
@@ -648,7 +754,11 @@ QWidget* MainWindow::buildDisplayPanel()
     leverCheck_ = new QCheckBox(QStringLiteral("Hebelarm der Auswahl"));
     leverCheck_->setChecked(true);
     lateralCheck_ = new QCheckBox(QStringLiteral("Lateraldruckpunkt (LDP)"));
+    lateralCheck_->setObjectName(QStringLiteral("displayLateralCenter"));
     lateralCheck_->setChecked(true);
+    sailCenterCheck_ = new QCheckBox(QStringLiteral("SDP (Ersatz)"));
+    sailCenterCheck_->setObjectName(QStringLiteral("displaySailCenter"));
+    sailCenterCheck_->setChecked(true);
     // Zwei Rubriken in einem Raster: Zeilen Gewicht/Auftrieb/Summe, Spalten gesamt/Teile.
     auto* grid = new QGridLayout;
     grid->setHorizontalSpacing(14);
@@ -689,7 +799,13 @@ QWidget* MainWindow::buildDisplayPanel()
     grid->setColumnStretch(3, 1);
     layout->addLayout(grid);
     layout->addWidget(leverCheck_);
+    layout->addWidget(new QLabel(QStringLiteral("Druckpunkte")));
     layout->addWidget(lateralCheck_);
+    layout->addWidget(sailCenterCheck_);
+    pressureStatus_ = new QLabel;
+    pressureStatus_->setObjectName(QStringLiteral("pressureStatus"));
+    pressureStatus_->setWordWrap(true);
+    layout->addWidget(pressureStatus_);
 
     auto* legend = new QLabel(QStringLiteral(
         "<span style='color:%1'>━ Gewicht</span>  "
@@ -711,7 +827,7 @@ QWidget* MainWindow::buildDisplayPanel()
     valuesCheck_->setChecked(true);
     layout->addWidget(valuesCheck_);
 
-    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_};
+    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_, sailCenterCheck_};
     for (auto* check : forceChecks_) {
         displayChecks << check;
     }
@@ -721,7 +837,7 @@ QWidget* MainWindow::buildDisplayPanel()
     for (auto* check : displayChecks) {
         connect(check, &QCheckBox::toggled, this, [this](bool) { applyDisplayOptions(); });
     }
-    for (auto* combo : {forceScaleCombo_, momentScaleCombo_, visibilityCombo_}) {
+    for (auto* combo : {forceScaleCombo_, momentScaleCombo_}) {
         connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { applyDisplayOptions(); });
     }
@@ -750,15 +866,20 @@ QDockWidget* MainWindow::buildValuesDock()
     balanceLabel_->setObjectName(QStringLiteral("balance"));
     balanceLabel_->setWordWrap(true);
     balanceLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    balanceLabel_->setMinimumWidth(260);
-    balanceLabel_->setMaximumWidth(360);
     balanceLabel_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    auto* balanceScroll = new QScrollArea;
+    balanceScroll->setObjectName(QStringLiteral("balanceScroll"));
+    balanceScroll->setWidgetResizable(true);
+    balanceScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    balanceScroll->setMinimumWidth(260);
+    balanceScroll->setMaximumWidth(360);
+    balanceScroll->setWidget(balanceLabel_);
     stepInfoLabel_ = new QLabel(QStringLiteral("Zeit: –  ·  Schritt: –"));
     stepInfoLabel_->setObjectName(QStringLiteral("time"));
     auto* copyButton = new QPushButton(QStringLiteral("Werte kopieren"));
     copyButton->setObjectName(QStringLiteral("smallButton"));
     copyButton->setToolTip(QStringLiteral("Bilanz und Tabelle als Text (Strg+C)"));
-    left->addWidget(balanceLabel_, 1);
+    left->addWidget(balanceScroll, 1);
     left->addWidget(stepInfoLabel_);
     left->addWidget(copyButton);
 
@@ -858,6 +979,7 @@ void MainWindow::loadSettings()
     }
     restoreCheck(leverCheck_, QStringLiteral("darstellung/hebelarm"));
     restoreCheck(lateralCheck_, QStringLiteral("darstellung/lateraldruckpunkt"));
+    restoreCheck(sailCenterCheck_, QStringLiteral("darstellung/ersatz_sdp"));
     auto restoreCombo = [&settings](QComboBox* combo, const QString& key) {
         const QSignalBlocker blocker(combo);
         const int index = combo->findData(settings.value(key, combo->currentData()).toInt());
@@ -873,10 +995,21 @@ void MainWindow::loadSettings()
             showError(QStringLiteral("Grafikeinstellungen"), graphicsError);
         });
     }
-    {
-        const QSignalBlocker blocker(visibilityCombo_);
-        visibilityCombo_->setCurrentIndex(graphics_.active);
+    settings.beginGroup(QStringLiteral("statisch"));
+    if (!settings.contains(QStringLiteral("grafik/profile_v1"))) {
+        staticGraphics_ = graphics_;
+        staticGraphics_.active = 0;
+        if (!graphics::save(settings, staticGraphics_, &graphicsError)) {
+            QTimer::singleShot(0, this, [this, graphicsError] {
+                showError(QStringLiteral("Statische Grafikeinstellungen"), graphicsError);
+            });
+        }
+    } else if (!graphics::load(settings, &staticGraphics_, &graphicsError)) {
+        QTimer::singleShot(0, this, [this, graphicsError] {
+            showError(QStringLiteral("Statische Grafikeinstellungen"), graphicsError);
+        });
     }
+    settings.endGroup();
     graphicsReady_ = true;
     applyDisplayOptions();
 }
@@ -892,24 +1025,43 @@ void MainWindow::saveDisplaySettings() const
     }
     settings.setValue(QStringLiteral("darstellung/hebelarm"), leverCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/lateraldruckpunkt"), lateralCheck_->isChecked());
+    settings.setValue(QStringLiteral("darstellung/ersatz_sdp"), sailCenterCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/skala_kraft"), forceScaleCombo_->currentData());
     settings.setValue(QStringLiteral("darstellung/skala_moment"), momentScaleCombo_->currentData());
 }
 
 void MainWindow::setupGraphics()
 {
-    editGraphicsSettings(this, graphics_, scene_->graphicsStatus(),
+    if (workspaceIndex_ != 1) return;
+    if (graphicsPage_) {
+        sceneStack_->setCurrentWidget(graphicsPage_);
+        return;
+    }
+    graphicsPage_ = createGraphicsSettingsPage(sceneStack_, staticGraphics_, scene_->graphicsStatus(),
         [this](const graphics::Settings& proposed) {
             QSettings storage;
+            storage.beginGroup(QStringLiteral("statisch"));
             QString error;
             if (!graphics::save(storage, proposed, &error)) {
                 showError(QStringLiteral("Grafikeinstellungen"), error);
                 return false;
             }
-            graphics_ = proposed;
+            staticGraphics_ = proposed;
             applyDisplayOptions();
             return true;
-        }, [this] { return graphicsStatus_->text(); });
+        }, [this] { closeGraphics(); },
+        [this](graphics::Feature feature) { return scene_->graphicsFeatureStatus(feature); });
+    sceneStack_->addWidget(graphicsPage_);
+    sceneStack_->setCurrentWidget(graphicsPage_);
+}
+
+void MainWindow::closeGraphics()
+{
+    if (!graphicsPage_) return;
+    sceneStack_->setCurrentWidget(scene_);
+    sceneStack_->removeWidget(graphicsPage_);
+    graphicsPage_->deleteLater();
+    graphicsPage_ = nullptr;
 }
 
 void MainWindow::setupMaterialPreview()
@@ -946,7 +1098,8 @@ void MainWindow::setupMaterialPreview()
 
 void MainWindow::applyGraphicsProfile()
 {
-    auto profile = graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+    auto profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
+        : graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
     const bool reduced = profile.liveReduction && live_ && !live_->progress().finished;
     if (reduced) {
         for (auto feature : {graphics::Feature::SSAO, graphics::Feature::Shadows,
@@ -967,21 +1120,9 @@ void MainWindow::applyGraphicsProfile()
 void MainWindow::applyDisplayOptions()
 {
     if (!graphicsReady_) return;
-    const int active = visibilityCombo_->currentData().toInt();
-    if (active != graphics_.active) {
-        auto proposed = graphics_;
-        proposed.active = active;
-        QSettings storage;
-        QString error;
-        if (!graphics::save(storage, proposed, &error)) {
-            const QSignalBlocker blocker(visibilityCombo_);
-            visibilityCombo_->setCurrentIndex(graphics_.active);
-            showError(QStringLiteral("Grafikeinstellungen"), error);
-            return;
-        }
-        graphics_ = proposed;
-    }
-    const auto& profile = graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+    graphicsButton_->setToolTip(QStringLiteral("Technikdarstellung ausschließlich für das statische Modell. Änderungen werden sofort gespeichert."));
+    const auto& profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
+        : graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
     applyGraphicsProfile();
     VtkSceneWidget::DisplayOptions options;
     options.forces = forcesCheck_->isChecked();
@@ -993,6 +1134,7 @@ void MainWindow::applyDisplayOptions()
     options.moment = selection(momentChecks_);
     options.leverArm = leverCheck_->isChecked();
     options.lateralCenter = lateralCheck_->isChecked();
+    options.sailCenter = sailCenterCheck_->isChecked();
     options.visibility = profile.throughBody ? VtkSceneWidget::Visibility::ThroughBody
                                             : VtkSceneWidget::Visibility::Spatial;
     options.forceMode =
@@ -1306,6 +1448,7 @@ void MainWindow::openModel(const QString& id)
     if (entry == nullptr) {
         return;
     }
+    closeGraphics();
     modelId_ = entry->id;
     cameraCombo_->setEnabled(false);
     modelVersion_ = entry->version;
@@ -1471,6 +1614,7 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
     movementIsRudder_.clear();
     movementConfirmedValues_.clear();
     movementInputPending_.clear();
+    stationaryMovements_.clear();
     auto ids = displayData.elementMovements.keys();
     ids.sort();
     for (const auto& id : ids) {
@@ -1491,6 +1635,38 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
         rowLayout->addWidget(slider, 1);
         rowLayout->addWidget(valueLabel);
         movementLayout_->addRow(id, row);
+        auto* fixed = new QDoubleSpinBox(movementPanel_);
+        fixed->setObjectName(QStringLiteral("stationaryMovement_%1").arg(id));
+        fixed->setDecimals(3);
+        const auto preview = displayData.inspection
+            ? segelphysik::getMovementPreview(*displayData.inspection, id.toStdString())
+            : std::nullopt;
+        fixed->setRange(preview && preview->minimum_value ? *preview->minimum_value : -1e6,
+            preview && preview->maximum_value ? *preview->maximum_value : 1e6);
+        fixed->setProperty("coreMovementAvailable", preview.has_value());
+        if (preview) {
+            fixed->setValue(preview->reference_value);
+            fixed->setSuffix(QStringLiteral(" ") + QString::fromStdString(preview->value_unit));
+        } else {
+            fixed->setSpecialValueText(QStringLiteral("Core-Bewegungsmetadaten fehlen"));
+            fixed->setValue(fixed->minimum());
+        }
+        const bool bounded = preview && preview->minimum_value && preview->maximum_value;
+        fixed->setToolTip(!preview
+            ? QStringLiteral("Statischer Lauf gesperrt: Core-Bewegungsmetadaten für dieses Element fehlen.")
+            : (rudder
+            ? QStringLiteral("Core-Ruderwinkel in Grad.")
+            : QStringLiteral("Core-Bewegungsstellung in Prozent."))
+            + (bounded
+                ? QStringLiteral(" Grenzen aus der Core-Bewegungsdefinition.")
+                : QStringLiteral(" Fehlende physikalische Grenzen werden nicht erfunden; Core validiert.")));
+        movementLayout_->addRow(id + QStringLiteral(" (fest)"), fixed);
+        stationaryMovements_.insert(id, fixed);
+        connect(fixed, &QDoubleSpinBox::valueChanged, this, [this] {
+            if (lastRunDynamic_ && !*lastRunDynamic_ && displayedIndex_ >= 0)
+                statusLabel_->setText(QStringLiteral(
+                    "Stellung geändert – angezeigtes Ergebnis gehört zum vorherigen Rechenfall."));
+        });
         movementSliders_.insert(id, slider);
         movementValueLabels_.insert(id, valueLabel);
         movementIsRudder_.insert(id, rudder);
@@ -1515,7 +1691,7 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
             }
         });
     }
-    movementPanel_->setVisible(!ids.isEmpty() && modeCombo_->currentData().toBool());
+    movementPanel_->setVisible(!ids.isEmpty());
 }
 
 void MainWindow::updateMovementControls(const QJsonObject& state)
@@ -1558,20 +1734,20 @@ void MainWindow::startSimulation()
         return;
     }
 
-    const bool dynamic = modeCombo_->currentData().toBool();
-    const double duration = durationSpin_->value();
-    const double step = stepSpin_->value();
-    // Moduswechsel: aktuelle Werte übernehmen, nicht die Initialwerte.
-    QJsonObject start;
-    QString startNote;
-    if (lastRunDynamic_ && *lastRunDynamic_ != dynamic && displayedIndex_ >= 0) {
-        QString error;
-        start = stateAt(displayedIndex_, &error);
-        if (!start.isEmpty()) {
-            startNote = QStringLiteral(" (Start aus Zustand bei t = %1 s)")
-                            .arg(start.value(QStringLiteral("zeit_s")).toDouble(), 0, 'f', 2);
+    const auto* workspace = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    const bool dynamic = workspace && workspace->currentIndex() == 2;
+    if (!dynamic) {
+        for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it) {
+            if (!it.value()->property("coreMovementAvailable").toBool()) {
+                showError(QStringLiteral("Core-Bewegungsdefinition fehlt"),
+                    QStringLiteral("Keine stationäre Berechnung: Bewegungsmetadaten für %1 fehlen.").arg(it.key()));
+                return;
+            }
         }
     }
+    const double duration = durationSpin_->value();
+    const double step = stepSpin_->value();
+    QJsonObject start;
     lastRunDynamic_ = dynamic;
     cancellation_.store(false);
     resetResults();
@@ -1579,24 +1755,38 @@ void MainWindow::startSimulation()
     statusLabel_->setStyleSheet(QString());
     if (dynamic) {
         startLiveSimulation(duration, step, realtimeCheck_->isChecked(), start);
-        if (live_) {
-            statusLabel_->setText(statusLabel_->text() + startNote);
-        }
         return;
     }
+    QJsonObject stationary;
+    stationary.insert(QStringLiteral("aktiv"), stationaryForceActive_->isChecked());
+    stationary.insert(QStringLiteral("kurvenfahrt"), stationaryTurning_->isChecked());
+    stationary.insert(QStringLiteral("modellfest"), stationaryForceFrame_->currentData().toBool());
+    QJsonArray force, point, settings;
+    for (int axis = 0; axis < 3; ++axis) {
+        force.append(stationaryForce_[axis]->value());
+        point.append(stationaryPoint_[axis]->value());
+    }
+    stationary.insert(QStringLiteral("kraft_n"), force);
+    stationary.insert(QStringLiteral("angriffspunkt_modell_m"), point);
+    for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it)
+        settings.append(QJsonObject{{QStringLiteral("element_id"), it.key()},
+            {QStringLiteral("wert"), it.value()->value()}});
+    stationary.insert(QStringLiteral("stellungen"), settings);
+    start.insert(QStringLiteral("stationaer"), stationary);
 
     const QString path = modelPath_;
     const QString id = modelId_;
     const auto validation = validation_;
-    statusLabel_->setText(QStringLiteral("Statischer Core-Lauf läuft …") + startNote);
+    statusLabel_->setText(QStringLiteral("Statischer Core-Lauf läuft …"));
     timeLabel_->setText(QStringLiteral("Simulationszeit: –  ·  Rechenzeit: läuft"));
     setBusy(true);
 
-    auto* thread = QThread::create([this, path, id, validation, start] {
+    const int generation = simulationGeneration_;
+    auto* thread = QThread::create([this, path, id, validation, start, generation] {
         const auto result = runSimulation(path, validation, false, 0.0, 0.01, &cancellation_, start);
         QMetaObject::invokeMethod(this,
-            [this, id, result] {
-                if (id != modelId_) {
+            [this, id, result, generation] {
+                if (id != modelId_ || generation != simulationGeneration_) {
                     return;
                 }
                 displaySimulationResult(result);
@@ -1652,6 +1842,11 @@ void MainWindow::startLiveSimulation(double duration, double step, bool paced, c
 
 void MainWindow::simulationFinished()
 {
+    const auto* tabs = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    if (tabs && tabs->currentIndex() != 0) {
+        const QSignalBlocker blocker(modeCombo_);
+        modeCombo_->setCurrentIndex(tabs->currentIndex() == 2 ? 1 : 0);
+    }
     setBusy(openThread_ != nullptr && openThread_->isRunning());
     const auto* current = entryFor(modelId_);
     if (current != nullptr && current->version != modelVersion_) {
@@ -1769,9 +1964,31 @@ void MainWindow::displaySimulationResult(const SimulationResult& result)
         scene_->frameStates(states_);
     }
     if (!result.completed) {
+        QString message = result.diagnostic.isEmpty() ? result.status
+            : QStringLiteral("%1\n%2").arg(result.status, result.diagnostic);
+        const auto stationary = states_.isEmpty() ? QJsonObject{}
+            : states_.constLast().value(QStringLiteral("stationaer")).toObject();
+        if (!stationary.isEmpty()) {
+            const auto components = [&stationary](const QString& key) {
+                QStringList values;
+                for (const auto& value : stationary.value(key).toArray())
+                    values << QString::number(value.toDouble(), 'g', 6);
+                return values.join(QStringLiteral("; "));
+            };
+            message += QStringLiteral(
+                "\n\nNur Näherungszustand, kein bestätigtes Gleichgewicht."
+                "\nRestkraft Welt (Bewegungsresiduum X; Y; Z): [%1] N"
+                "\nRestmoment Modell (Bewegungsresiduum X; Y; Z): [%2] Nm"
+                "\nToleranzen je Komponente: %3 N / %4 Nm."
+                "\nEine nahezu unveränderte Fahrt allein genügt nicht."
+                "\nFeste Ruder-/Schwertstellungen werden nicht automatisch verändert.")
+                .arg(components(QStringLiteral("residuum_kraft_welt_n")),
+                    components(QStringLiteral("residuum_moment_modell_nm")))
+                .arg(stationary.value(QStringLiteral("krafttoleranz_n")).toDouble(), 0, 'g', 4)
+                .arg(stationary.value(QStringLiteral("momenttoleranz_nm")).toDouble(), 0, 'g', 4);
+        }
         showError(QStringLiteral("Simulation nicht abgeschlossen"),
-            result.diagnostic.isEmpty() ? result.status
-                                        : QStringLiteral("%1\n%2").arg(result.status, result.diagnostic));
+            message);
     }
 }
 
@@ -1828,6 +2045,15 @@ void MainWindow::displayState(qsizetype index, bool force)
     applyGraphicsProfile();
     currentForces_ = forces;
     hasForces_ = true;
+    pressureStatus_->setText(QStringLiteral("LDP: %1\nSDP (Ersatz): %2")
+        .arg(forces.lateral ? (forces.lateral->evaluationVersion == 2
+                ? forces.lateral->status : QStringLiteral("Altstand, nicht korrigiert"))
+            : QStringLiteral("nicht verfügbar"),
+            forces.sailCenter ? forces.sailCenter->status : QStringLiteral("keine Fremdkraft geliefert")));
+    pressureStatus_->setToolTip(QStringLiteral(
+        "LDP: äquivalenter Angriffspunkt der Seitenkraft, darf bei Gegenkräften außerhalb liegen. "
+        "SDP (Ersatz): eingefrorener Ansatzpunkt der Fremdkraft, keine berechnete Segelphysik. "
+        "Bei Näherungszuständen sind auch die Druckpunkte nur Näherungswerte."));
     updateMovementControls(state);
     updateValues();
     const auto time = state.value(QStringLiteral("zeit_s")).toDouble();
@@ -1842,7 +2068,15 @@ void MainWindow::setBusy(bool busy)
     const bool running = simulationThread_ != nullptr;
     const bool movementReady = live_ != nullptr && live_->progress().states > 0;
     testDrivePanel_->setVisible(dynamic);
-    movementPanel_->setVisible(dynamic && !movementSliders_.isEmpty());
+    stationaryForcePanel_->setVisible(!dynamic);
+    stationaryForcePanel_->setEnabled(!busy && hasModel);
+    movementPanel_->setVisible(!movementSliders_.isEmpty());
+    for (auto* fixed : stationaryMovements_) {
+        movementLayout_->setRowVisible(fixed, !dynamic);
+        fixed->setEnabled(!busy && hasModel && fixed->property("coreMovementAvailable").toBool());
+    }
+    for (auto* slider : movementSliders_)
+        movementLayout_->setRowVisible(slider->parentWidget(), dynamic);
     for (auto* slider : movementSliders_)
         slider->setEnabled(hasModel && dynamic && running && movementReady);
     testDriveCheck_->setEnabled(hasModel && dynamic && (!busy || running));
@@ -1869,9 +2103,12 @@ void MainWindow::updateModeControls()
 
 void MainWindow::clearValues()
 {
+    pressureStatus_->setText(QStringLiteral("Druckpunkte: kein Ergebnis"));
     const QSignalBlocker blocker(valuesTree_);
     valuesTree_->clear();
     rootItem_ = nullptr;
+    stationaryItem_ = nullptr;
+    courseRateItem_ = nullptr;
     groupItems_.clear();
     contributionItems_.clear();
     currentForces_ = {};
@@ -1953,12 +2190,40 @@ void MainWindow::updateValues()
     for (const auto& line : summary.lines) {
         card += QStringLiteral("<br>") + line.toHtmlEscaped();
     }
+    QJsonObject stationaryContext;
+    if (!live_ && displayedIndex_ >= 0 && displayedIndex_ < states_.size())
+        stationaryContext = states_.at(displayedIndex_).value(QStringLiteral("stationaer")).toObject();
+    if (!stationaryContext.isEmpty()) {
+        card += QStringLiteral("<br><b>Stationäres Fahrtgleichgewicht</b><br>Core: %1")
+                    .arg(stationaryContext.value(QStringLiteral("status")).toString().toHtmlEscaped());
+        if (!stationaryContext.value(QStringLiteral("konvergiert")).toBool())
+            card += QStringLiteral("<br><b>Fahrt und Lage sind nur Näherungswerte.</b>");
+        if (stationaryContext.value(QStringLiteral("referenzkurs_verwendet")).toBool())
+            card += QStringLiteral("<br>Absoluter Kurs unbestimmt: Startkurs ist Referenz.");
+        if (stationaryContext.contains(QStringLiteral("loesungstyp")))
+            card += QStringLiteral("<br>Lösungstyp: %1")
+                .arg(stationaryContext.value(QStringLiteral("loesungstyp")).toString().toHtmlEscaped());
+        const auto radius = stationaryContext.value(QStringLiteral("radius_m"));
+        if (radius.isDouble() && std::isfinite(radius.toDouble()))
+            card += QStringLiteral("<br>Kreisradius relativ zum Wasser: %1 m")
+                .arg(radius.toDouble(), 0, 'g', 8);
+        else if (stationaryContext.contains(QStringLiteral("radius_status")))
+            card += QStringLiteral("<br>Kreisradius relativ zum Wasser: %1")
+                .arg(stationaryContext.value(QStringLiteral("radius_status")).toString().toHtmlEscaped());
+        card += QStringLiteral("<br>Keine Aussage über dynamische Stabilität oder Eindeutigkeit.");
+    }
     balanceLabel_->setText(card);
-    balanceLabel_->setStyleSheet(summary.complete ? QStringLiteral("color:#b8e7c3;")
-                                                  : QStringLiteral("color:#ffd8a0;"));
-    stepInfoLabel_->setText(QStringLiteral("Zeit: %1 s  ·  Schritt: %2  ·  Vertrag V%3")
+    const bool stationaryConverged = stationaryContext.isEmpty()
+        || stationaryContext.value(QStringLiteral("konvergiert")).toBool();
+    balanceLabel_->setStyleSheet(summary.complete && stationaryConverged
+        ? QStringLiteral("color:#b8e7c3;") : QStringLiteral("color:#ffd8a0;"));
+    stepInfoLabel_->setText(stationaryContext.isEmpty()
+        ? QStringLiteral("Zeit: %1 s  ·  Schritt: %2  ·  Vertrag V%3")
             .arg(forcedisplay::formatFixed(forces.time, 2))
             .arg(forces.step)
+            .arg(forces.contract)
+        : QStringLiteral("Stationär · %1 Iterationen · Vertrag V%2")
+            .arg(stationaryContext.value(QStringLiteral("iterationen")).toInt())
             .arg(forces.contract));
 
     const QSignalBlocker blocker(valuesTree_);
@@ -1968,6 +2233,14 @@ void MainWindow::updateValues()
         rootItem_->setFlags(Qt::ItemIsEnabled);
     }
     rootItem_->setText(ColName, modelName_.isEmpty() ? forces.modelId : modelName_);
+    if (!courseRateItem_)
+        courseRateItem_ = new QTreeWidgetItem(rootItem_, {QStringLiteral("Kursdrehrate (Core)")});
+    courseRateItem_->setText(ColMagnitude, forces.courseRateRadS
+        ? QStringLiteral("%1 rad/s").arg(*forces.courseRateRadS, 0, 'g', 17)
+        : QStringLiteral("nicht verfügbar"));
+    courseRateItem_->setText(ColState, forces.courseRateStatus);
+    courseRateItem_->setToolTip(ColMagnitude, QStringLiteral(
+        "Signierte Kursdrehrate um Welt-Z, nicht Modell-Z oder Betrag von omega."));
     QSet<QString> seen;
     for (const auto& c : forces.contributions) {
         const QString groupName = forcedisplay::groupLabel(c);
@@ -2026,6 +2299,49 @@ void MainWindow::updateValues()
             it = groupItems_.erase(it);
         } else {
             ++it;
+        }
+    }
+    delete stationaryItem_;
+    stationaryItem_ = nullptr;
+    if (!live_ && displayedIndex_ >= 0 && displayedIndex_ < states_.size()) {
+        const auto state = states_.at(displayedIndex_);
+        const auto stationary = state.value(QStringLiteral("stationaer"));
+        if (stationary.isObject()) {
+            stationaryItem_ = new QTreeWidgetItem(rootItem_,
+                {QStringLiteral("Stationäre Auswertung (Core)")});
+            stationaryItem_->setExpanded(true);
+            const auto append = [](const auto& self, QTreeWidgetItem* parent,
+                                   const QString& name, const QJsonValue& value) -> void {
+                auto* item = new QTreeWidgetItem(parent, {name});
+                if (value.isObject()) {
+                    item->setExpanded(true);
+                    const auto object = value.toObject();
+                    for (auto it = object.begin(); it != object.end(); ++it)
+                        self(self,item,it.key(),it.value());
+                } else {
+                    auto encoded = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+                    encoded = encoded.mid(1,encoded.size()-2);
+                    item->setText(ColMagnitude,QString::fromUtf8(encoded));
+                    item->setToolTip(ColMagnitude,QString::fromUtf8(encoded));
+                }
+            };
+            const auto object = stationary.toObject();
+            for (auto it = object.begin(); it != object.end(); ++it)
+                append(append, stationaryItem_, it.key(), it.value());
+            append(append, stationaryItem_, QStringLiteral("Position [m]; X/Y Referenz"),
+                state.value(QStringLiteral("position_m")));
+            append(append, stationaryItem_, QStringLiteral("Orientierung Quaternion XYZW"),
+                state.value(QStringLiteral("orientierung_xyzw")));
+            append(append, stationaryItem_, QStringLiteral("Geschwindigkeit Welt [m/s]"),
+                state.value(QStringLiteral("geschwindigkeit_welt_m_s")));
+            const auto orientation = navigation::derive(forcedisplay::readPose(state), {1.,0.,0.});
+            const auto angle = [](const std::optional<double>& value) {
+                return value ? QJsonValue(*value) : QJsonValue(QJsonValue::Null);
+            };
+            append(append, stationaryItem_, QStringLiteral("Rollen [Grad]"), angle(orientation.roll));
+            append(append, stationaryItem_, QStringLiteral("Stampfen [Grad]"), angle(orientation.pitch));
+            append(append, stationaryItem_, QStringLiteral("Kurs / Gierwinkel [Grad]; Referenzstatus siehe Core"),
+                angle(orientation.heading));
         }
     }
     updateDetail();

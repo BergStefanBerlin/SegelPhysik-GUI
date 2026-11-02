@@ -135,6 +135,33 @@ void testArc()
     require(!momentArc(center, {0, 0, 0}, 2.0, 48, std::nullopt), "Zero moment produced an arc.");
 }
 
+void testCourseArrow()
+{
+    const Vec3 start{2., 3., .06};
+    const auto straight = courseArrow(start, {1., 0., .4}, 0., 2.);
+    require(straight && nearVec(straight->tip, {4., 3., .06})
+        && nearVec(straight->tangent, {1., 0., 0.}), "Zero rate must give a straight horizontal arrow.");
+    const auto left = courseArrow(start, {1., 0., 0.}, .05, 2.);
+    const auto right = courseArrow(start, {1., 0., 0.}, -.05, 2.);
+    const auto faster = courseArrow(start, {1., 0., 0.}, .3, 2.);
+    require(left && right && faster && left->tip[1] > start[1] && right->tip[1] < start[1],
+        "Course arrow must obey signed world-Z right-hand convention.");
+    require(near(left->tip[0], right->tip[0])
+        && near(left->tip[1] - start[1], start[1] - right->tip[1]),
+        "Opposite rates must mirror the arrow.");
+    require(faster->tip[1] > left->tip[1], "Higher rate must increase the bend.");
+    for (const auto& point : faster->points)
+        require(near(point[2], start[2]), "Course arrow must stay above the water plane.");
+    const auto rotated = courseArrow(start, {0., 1., 0.}, .05, 2.);
+    require(rotated && rotated->tip[0] < start[0] && rotated->tip[1] > start[1],
+        "Course arrow must follow boat heading.");
+    const auto saturated = courseArrow(start, {1., 0., 0.}, 100., 2.);
+    const auto limit = courseArrow(start, {1., 0., 0.}, 1., 2.);
+    require(saturated && limit && nearVec(saturated->tip, limit->tip),
+        "Course arrow must saturate without curling back onto the boat.");
+    require(!courseArrow(start, {0., 0., 1.}, .1, 2.), "Vertical bow must not invent a heading.");
+}
+
 void testLeverArm()
 {
     const Vec3 force{3, -4, 2};
@@ -230,6 +257,58 @@ void testV2()
     movementVersion.insert(QStringLiteral("vertragsversion"), QStringLiteral("4"));
     require(parseForceState(movementVersion).contract == QStringLiteral("4"),
         "V4 movement result contract rejected.");
+    auto stationaryVersion = object;
+    stationaryVersion.insert(QStringLiteral("vertragsversion"), QStringLiteral("5"));
+    bool missingStationaryRejected = false;
+    try { parseForceState(stationaryVersion); }
+    catch (const std::runtime_error&) { missingStationaryRejected = true; }
+    require(missingStationaryRejected, "V5 without stationary context must not look successful.");
+    stationaryVersion.insert(QStringLiteral("stationaer"), QJsonObject{
+        {QStringLiteral("status"), QStringLiteral("nicht_konvergiert")}});
+    require(parseForceState(stationaryVersion).contract == QStringLiteral("5"),
+        "V5 stationary result must preserve force metadata parsing.");
+    auto turningVersion = object;
+    turningVersion.insert(QStringLiteral("vertragsversion"), QStringLiteral("6"));
+    bool missingRateRejected = false;
+    try { parseForceState(turningVersion); }
+    catch (const std::runtime_error&) { missingRateRejected = true; }
+    require(missingRateRejected, "V6 without heading-rate contract must be rejected.");
+    turningVersion.insert(QStringLiteral("kursdrehrate_rad_s"), .5);
+    turningVersion.insert(QStringLiteral("kursdrehrate_status"), QStringLiteral("gueltig"));
+    auto turningState = parseForceState(turningVersion);
+    require(turningState.courseRateRadS && *turningState.courseRateRadS == .5,
+        "V6 signed Core heading rate must be preserved exactly.");
+    turningVersion.insert(QStringLiteral("kursdrehrate_rad_s"), QJsonValue(QJsonValue::Null));
+    turningVersion.insert(QStringLiteral("kursdrehrate_status"), QStringLiteral("nicht_bestimmbar"));
+    require(!parseForceState(turningVersion).courseRateRadS,
+        "Undefined course rate must remain unavailable, not zero.");
+    require(!parseForceState(object).courseRateRadS,
+        "Legacy contracts must not synthesize course rate.");
+    auto emptyContext = turningVersion;
+    emptyContext.insert(QStringLiteral("stationaer"), QJsonObject{});
+    bool emptyContextRejected = false;
+    try { parseForceState(emptyContext); }
+    catch (const std::runtime_error&) { emptyContextRejected = true; }
+    require(emptyContextRejected, "V6 empty stationary context must not look like a dynamic result.");
+    turningVersion.insert(QStringLiteral("stationaer"), QJsonObject{
+        {QStringLiteral("residuum_kraft_welt_n"), QJsonArray{.001, -.002, .003}},
+        {QStringLiteral("residuum_moment_modell_nm"), QJsonArray{.004, .005, -.006}},
+        {QStringLiteral("aeussere_kraft_welt_n"), QJsonArray{0.,3200.,0.}},
+        {QStringLiteral("aeusseres_moment_modell_nm"), QJsonArray{0.,0.,0.}},
+        {QStringLiteral("omega_modell_rad_s"), QJsonArray{0.,.0795,.392}},
+        {QStringLiteral("kurvenfahrt"), true},
+        {QStringLiteral("loesungstyp"), QStringLiteral("kurvenfahrt")},
+        {QStringLiteral("krafttoleranz_n"), .05},
+        {QStringLiteral("momenttoleranz_nm"), .05},
+        {QStringLiteral("konvergiert"), true}});
+    const auto motionSummary = balanceSummary(parseForceState(turningVersion));
+    const auto motionText = motionSummary.lines.join(QLatin1Char('\n'));
+    require(motionText.contains(QStringLiteral("Bewegungsresiduum Welt"))
+            && motionText.contains(QStringLiteral("Bewegungsresiduum Modell"))
+            && motionText.contains(QStringLiteral("0.001"))
+            && motionText.contains(QStringLiteral("-0.006"))
+            && motionText.contains(QStringLiteral("Äußere ΣF")),
+        "External sums and six motion residuals must remain visibly distinct.");
 
     // Jeder Datenzustand erscheint als Text, nie leer oder als 0.
     const char* expected[] = {"gültig", "Null", "ungültig", "nicht berechnet",
@@ -387,6 +466,35 @@ void testLateralCenter()
         R"(,"druckpunkte":{"lateral":{"status":"nicht_bestimmbar","position_modell_m":[9,0,9],"querkraft_modell_n":0,"quellen":[]}})")));
     require(undetermined.lateral && !undetermined.lateral->position,
         "Nicht bestimmbar liefert keine Position.");
+    const auto corrected = parseForceState(parse(base(
+        R"(,"druckpunkte":{"lateral":{"auswertung_version":2,"status":"gueltig","position_modell_m":[9,0,-0.7]},"ersatz_segel":{"status":"gueltig","quelle":"fremdkraft","position_modell_m":[0.5,0.2,3]}})")));
+    require(corrected.lateral && corrected.lateral->evaluationVersion == 2
+        && corrected.lateral->position && (*corrected.lateral->position)[0] == 9.,
+        "Corrected outside LDP must be preserved without clamping.");
+    require(corrected.sailCenter && corrected.sailCenter->position
+        && nearVec(*corrected.sailCenter->position, {.5, .2, 3.}),
+        "Replacement SDP must use all three supplied coordinates.");
+    require(valid.lateral->evaluationVersion == 0, "Legacy LDP must not claim corrected evaluation.");
+    for (const char* status : {"inaktiv", "kraft_null"}) {
+        auto data = parse(base(""));
+        data.insert(QStringLiteral("druckpunkte"), QJsonObject{
+            {QStringLiteral("ersatz_segel"), QJsonObject{
+                {QStringLiteral("status"), QString::fromLatin1(status)},
+                {QStringLiteral("quelle"), QStringLiteral("fremdkraft")}}}});
+        const auto result = parseForceState(data);
+        require(result.sailCenter && !result.sailCenter->position, "Inactive or zero SDP must not invent a position.");
+    }
+    for (const char* invalid : {
+        R"(,"druckpunkte":{"lateral":{"auswertung_version":3,"status":"gueltig","position_modell_m":[1,0,0]}})",
+        R"(,"druckpunkte":{"lateral":{"auswertung_version":2,"status":"gueltig"}})",
+        R"(,"druckpunkte":{"ersatz_segel":{"status":"gueltig","quelle":"fremdkraft"}})",
+        R"(,"druckpunkte":{"ersatz_segel":{"status":"gueltig","quelle":"segel","position_modell_m":[1,0,0]}})",
+        R"(,"druckpunkte":{"ersatz_segel":{"status":"inaktiv","quelle":"fremdkraft","position_modell_m":[1,0,0]}})"}) {
+        bool rejected = false;
+        try { parseForceState(parse(base(invalid))); }
+        catch (const std::runtime_error&) { rejected = true; }
+        require(rejected, "Malformed new pressure-point contract must be reported explicitly.");
+    }
 }
 
 } // namespace
@@ -398,6 +506,7 @@ int main()
         testScale();
         testPoseAndArrow();
         testArc();
+        testCourseArrow();
         testLeverArm();
         testV1();
         testV2();

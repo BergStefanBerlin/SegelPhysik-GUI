@@ -37,6 +37,8 @@ class VtkSceneWidget;
 class BoatInspection;
 class QStackedWidget;
 class QHBoxLayout;
+class QVBoxLayout;
+class QScrollArea;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -89,6 +91,7 @@ private:
 
     void applyDisplayOptions();
     void setupGraphics();
+    void closeGraphics();
     void setupMaterialPreview();
     void applyGraphicsProfile();
     void loadSettings();
@@ -106,12 +109,20 @@ private:
     VtkSceneWidget* scene_ = nullptr;
     BoatInspection* inspection_ = nullptr;
     QStackedWidget* workspaceStack_ = nullptr;
+    QStackedWidget* sceneStack_ = nullptr;
+    QWidget* graphicsPage_ = nullptr;
     QStackedWidget* valuesStack_ = nullptr;
     QWidget* playbackPanel_ = nullptr;
     bool simulationValuesVisible_ = true;
+    int workspaceIndex_ = -1;
+    int simulationGeneration_ = 0;
     QWidget* catalogPanel_ = nullptr;
     QHBoxLayout* mainArea_ = nullptr;
+    QWidget* displayPanel_ = nullptr;
+    QScrollArea* staticDisplaySidebar_ = nullptr;
+    QVBoxLayout* simulationControlsLayout_ = nullptr;
     graphics::Settings graphics_ = graphics::defaults();
+    graphics::Settings staticGraphics_ = graphics::defaults();
     bool graphicsReady_ = false;
     QLabel* graphicsStatus_ = nullptr;
     QPushButton* chooseFolderButton_ = nullptr;
@@ -132,6 +143,13 @@ private:
     QLabel* testDriveStatus_ = nullptr;
     QWidget* testDrivePanel_ = nullptr;
     QGroupBox* movementPanel_ = nullptr;
+    QGroupBox* stationaryForcePanel_ = nullptr;
+    QCheckBox* stationaryForceActive_ = nullptr;
+    QCheckBox* stationaryTurning_ = nullptr;
+    QComboBox* stationaryForceFrame_ = nullptr;
+    std::array<QDoubleSpinBox*, 3> stationaryForce_{};
+    std::array<QDoubleSpinBox*, 3> stationaryPoint_{};
+    QHash<QString, QDoubleSpinBox*> stationaryMovements_;
     QFormLayout* movementLayout_ = nullptr;
     QHash<QString, QSlider*> movementSliders_;
     QHash<QString, QLabel*> movementValueLabels_;
@@ -150,7 +168,7 @@ private:
     QCheckBox* forcesCheck_ = nullptr;
     QComboBox* forceScaleCombo_ = nullptr;
     QComboBox* momentScaleCombo_ = nullptr;
-    QComboBox* visibilityCombo_ = nullptr;
+    QPushButton* graphicsButton_ = nullptr;
     QComboBox* cameraCombo_ = nullptr;
     QCheckBox* navigationCheck_ = nullptr;
     // Je Rubrik (Kräfte, Momente): Gewicht gesamt/Teile, Auftrieb gesamt/Teile, Summe.
@@ -158,6 +176,8 @@ private:
     std::array<QCheckBox*, 5> momentChecks_{};
     QCheckBox* leverCheck_ = nullptr;
     QCheckBox* lateralCheck_ = nullptr;
+    QCheckBox* sailCenterCheck_ = nullptr;
+    QLabel* pressureStatus_ = nullptr;
     QCheckBox* valuesCheck_ = nullptr;
     QPushButton* refitButton_ = nullptr;
     QLabel* referenceLabel_ = nullptr;
@@ -169,6 +189,8 @@ private:
     QTreeWidget* valuesTree_ = nullptr;
     QLabel* detailLabel_ = nullptr;
     QTreeWidgetItem* rootItem_ = nullptr;
+    QTreeWidgetItem* stationaryItem_ = nullptr;
+    QTreeWidgetItem* courseRateItem_ = nullptr;
     QHash<QString, QTreeWidgetItem*> groupItems_;
     QHash<QString, QTreeWidgetItem*> contributionItems_;
     forcedisplay::ForceState currentForces_;
@@ -183,8 +205,7 @@ private:
     QString modelPath_;
     QString modelName_;
     ModelValidation validation_;
-    // Modus des letzten Laufs: Beim Moduswechsel startet der neue Lauf vom
-    // angezeigten Zustand statt von den Initialwerten.
+    // Modus des letzten Laufs fuer die Kennzeichnung veralteter Eingaben.
     std::optional<bool> lastRunDynamic_;
     QVector<QJsonObject> states_;
     QString runtimeInfo_;

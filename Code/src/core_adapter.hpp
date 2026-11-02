@@ -34,7 +34,9 @@ struct SimulationResult {
 ModelValidation validateModel(const QString& modelPath);
 // start: Core-Ergebniszustand, von dem der Lauf ausgeht (Pose,
 // Geschwindigkeiten, geflutete Elemente; Zeit beginnt neu bei 0).
-// Leer bedeutet Initialwerte des Core. Die Statik verwirft Geschwindigkeiten.
+// Leer bedeutet Initialwerte des Core. Die Hydrostatik verwirft Geschwindigkeiten.
+// start.stationaer: eingefrorene Fremdkraft und Elementstellungen fuer den
+// stationaeren Core-Vertrag; vorhandene Geschwindigkeiten sind nur Startwerte.
 SimulationResult runSimulation(const QString& modelPath,
     const ModelValidation& validation, bool dynamic, double durationSeconds,
     double stepSeconds, std::atomic_bool* cancellation,

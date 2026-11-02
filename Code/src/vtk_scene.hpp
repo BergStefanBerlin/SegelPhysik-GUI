@@ -60,6 +60,7 @@ public:
         VectorSelection moment{false, false, false, false, true};
         bool leverArm = true;
         bool lateralCenter = true;
+        bool sailCenter = true;
         Visibility visibility = Visibility::ThroughBody;
         forcedisplay::ScaleMode forceMode = forcedisplay::ScaleMode::Logarithmic;
         forcedisplay::ScaleMode momentMode = forcedisplay::ScaleMode::Logarithmic;
@@ -88,13 +89,19 @@ public:
         long long wakeLines = 0;
     };
     MotionGeometry motionGeometry() const;
+    const std::optional<forcedisplay::CourseArrowGeometry>& courseArrowGeometry() const
+    { return courseArrowGeometry_; }
+    const std::optional<forcedisplay::Vec3>& pressurePoint(bool sail) const
+    { return pressurePoints_[sail ? 1 : 0]; }
 
     void setOptions(const DisplayOptions& options);
     const DisplayOptions& options() const { return options_; }
     void setGraphicsProfile(const graphics::Profile& profile);
+    const graphics::Profile& graphicsProfile() const { return graphicsProfile_; }
     // Explizite GUI-Vorschau: 0 Original, 1 Lack, 2 Stoff, 3 Holz, 4 gebürstetes Metall.
     bool setMaterialPreview(const QString& elementId, int style);
     QString graphicsStatus() const;
+    QString graphicsFeatureStatus(graphics::Feature feature) const;
     double renderNow();
     QImage captureImage();
     double lastRenderDurationMs() const { return lastRenderDurationMs_; }
@@ -166,6 +173,7 @@ private:
 
     void onRenderStart(vtkObject* caller, unsigned long event, void* data);
     void rebuildForceGeometry();
+    void rebuildCourseArrow();
     void hideForceVisuals();
     Visual& visualFor(const QString& id);
     vtkRenderer* forceRenderer() const;
@@ -266,6 +274,15 @@ private:
     vtkSmartPointer<vtkPolyData> lateralLines_;
     vtkSmartPointer<vtkActor> lateralActor_;
     vtkSmartPointer<vtkBillboardTextActor3D> lateralLabel_;
+    vtkSmartPointer<vtkPolyData> sailPoint_;
+    vtkSmartPointer<vtkActor> sailActor_;
+    vtkSmartPointer<vtkBillboardTextActor3D> sailLabel_;
+    std::array<std::optional<forcedisplay::Vec3>, 2> pressurePoints_;
+    vtkSmartPointer<vtkPolyData> courseArrowLines_;
+    vtkSmartPointer<vtkPolyData> courseArrowHead_;
+    vtkSmartPointer<vtkActor> courseArrowActor_;
+    vtkSmartPointer<vtkActor> courseArrowHeadActor_;
+    std::optional<forcedisplay::CourseArrowGeometry> courseArrowGeometry_;
     std::vector<BodyActor> bodies_;
     QHash<QString, Visual> visuals_;
     QHash<QString, forcedisplay::Vec3> arcBasis_;
