@@ -67,6 +67,133 @@ at runtime.
 
 ## Use
 
+### Workspace tabs and colors
+
+The tabs above the workspace select its color scheme: **Bootsauswahl**
+(bordeaux red), **Statisches Modell** (dark blue), and **Dynamisches Modell**
+(dark green). Each tab retains its own color even while inactive; the active
+tab has a brighter fill and underline.
+
+**Bootsauswahl** provides read-only model inspection. The model-folder button
+sits below the model list and is absent from the other workspaces. Core-supplied
+The single object tree lists each element once in its assembly; there are no
+separate GUI, hydrostatics or hydrodynamics tabs. Ctrl/Shift selection includes
+descendants and populates the complete property table without duplicate values
+or automatic sums. The adjustable **Bereich** column identifies each property's
+domain, including movement, mass/material and computed values.
+All six columns can be resized by dragging the visible boundaries between their
+header titles. Clicking a header
+toggles ascending/descending sorting; numeric values sort by their original
+values rather than their rounded labels. The six fields within the table header
+filter their respective columns (case-insensitive, combined with AND). Each
+filter follows its column's width and horizontal scrolling; an empty filter
+shows only `*` as a placeholder, meaning no restriction. Colors appear
+as rounded square swatches. Numbers use at most two decimal places, or two
+significant digits for very small/large values. Lengths and masses can display
+in scaled units (km/mm/µm and t/g/mg); tooltips retain the exact original values
+and units. These are display changes only.
+
+The model-catalog tests accept both legacy and migrated schema-3 reference
+folders. Existing schema-3 sources retain their explicit derivations rather
+than being downgraded to schema 2; legacy fixtures still exercise conversion
+and explicit conflict handling.
+Geometry is selected directly in the right object tree; there is no separate
+mesh selector. **Quellmesh** is nested under its element and lists original
+geometry, deduplicated by the Core source identity per element.
+**Abgeleitete Daten** under the same element lists computed geometry
+and its origin/derivation. Select geometry nodes or check them to keep additional
+geometry visible; derived overlays use gold, source geometry retains its colors.
+Unselected parts remain context. Movement definitions are properties of the
+object, not a separate movement tab.
+Selected elements are opaque, the remaining context uses opacity 0.15.
+Without selection the whole model uses its normal materials. The rounded
+inspection viewport has a dark bordeaux background and no water surface.
+Model-origin axes (X red, Y green, Z blue) and an open spatial reference grid
+use equal world-space spacing along all axes. Mouse camera controls remain;
+navigation instruments are hidden. Whole-meter grid lines are continuous;
+half-meter intermediate lines consist of dots, with fixed world-space spacing
+independent of zoom and DPI. Simulation workspaces retain their water.
+The lower X/Y grid edges and the left vertical Z edge carry whole-meter labels
+in model coordinates. Both side panels share frame styling and padding, with
+their outer top edges aligned to the viewport. The object caption is above
+the inner tree, not inside it; the former source-color legend is omitted.
+Label density follows zoom and viewport size to avoid overlapping numbers;
+the underlying 1 m / 0.5 m grid spacing never changes.
+
+A model selection captures one immutable Core inspection snapshot. Subsequent
+file changes may update the catalogue but never replace or invalidate that
+opened snapshot. No GUI model/mesh reader or second geometry converter is used.
+The simulation retains its own model validation and lifecycle.
+
+Moving elements expose a checkable **Bewegungsvorschau** below the element.
+It draws the Core-transformed normal pose in cyan, available minimum in orange
+and maximum in violet, plus a yellow rotational axis. Undefined limits are
+explicitly marked in the tooltip and are not invented. Preview geometry is
+temporary, read-only and does not change the simulation or inspection camera.
+Selecting a pivot property highlights its model-fixed point and axis in yellow.
+Selecting a normal/minimum/maximum table row shows that particular Core pose,
+including lifting motions. A table selection takes precedence over the same
+element's all-poses checkbox until the table selection is cleared. Filtering out
+a selected row removes its table-driven preview. Undefined bounds stay explicit
+and cannot generate a pose.
+
+The unified Core definition supports one OBJ containing named source meshes and
+a JSON describing their physical uses. Stable element IDs and explicit
+hydrodynamic roles are independent; the GUI never infers physics from names.
+Existing model formats remain supported through the same Core pipeline.
+Real source variants needed for different physical uses are retained rather
+than silently replaced. This establishes a read-only foundation for a later
+editor; model editing, repair, automatic mesh generation and saving are not
+implemented in this step.
+
+Schemas `"2"` and `"3"` are defined in the Core
+[model specification](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
+The Core target `segelphysik_konvertieren` converts an existing model into
+`modell.json` and `boot.obj` in a **new** destination folder:
+
+```powershell
+& "C:\spdeps\gui-workspace-tabs\segelphysik-core\Release\segelphysik_konvertieren.exe" `
+  "C:\path\to\source\modell.json" "C:\path\to\new-model"
+```
+
+The destination's parent must exist. Existing destinations are rejected;
+source models are never overwritten. Choose the converted model folder in
+the GUI to inspect or simulate it. The converter preserves actual geometry
+variants; it does not repair or merge physically different meshes.
+
+For the strict **one source mesh per geometric element** contract, pass
+`--schema3` before the two paths. This merges identical per-element geometry
+and rejects actual conflicts as `CORE-MOD-0009` before creating the destination.
+Eight reference models can be migrated without changing geometry. For the
+boats `420`, `folkeboot` and `optimist`, explicitly use
+`--schema3-ableitungen` instead. Following the user's approval, this selects
+one existing source per element and geometrically verifies reproducible
+surface selections / plane cuts against the old physical uses. These boats
+do not require separate editable mass and displacement meshes.
+`ableitung.art = "ohne_deckflaeche"` excludes existing horizontal lid faces
+for an open shell; `"z_schnitt"` takes the part below the declared plane
+`z = z_m + steigung_x*x + steigung_y*y`, closing only that declared cut.
+The 420 centreboard needs an inclined cut, not an arbitrary horizontal one.
+Unsupported or materially different geometry is still rejected.
+No mesh simplification or change to mass/support/flooding algorithms is
+performed. Open mass rims remain intact. The small 420 hull display
+difference is bounded and documented in the Core specification.
+
+All eleven converted reference models are available in
+`C:\spdeps\gui-workspace-tabs\single-source-models`; select this folder in
+the GUI to use them. Originals remain readable and unchanged. Legacy
+multiple sources remain visibly marked; derived meshes are listed under
+**Abgeleitete Daten**, with the actual Core definition in their tooltip.
+The property table exposes derivation parameters without GUI schema parsing.
+Migration bounds and physical/dynamic regression criteria are specified in
+the [Core model contract](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
+
+Switching workspaces does not load a model, select a simulation mode, start/stop
+a run, change the simulation camera or its selected recorded state. Inspection
+has its own viewport so a running simulation cannot move the inspected object.
+The existing simulation-mode dropdown still controls calculations in the other
+workspaces. The initial tab is Bootsauswahl; the title block is above the tabs.
+
 ### Navigation and camera views
 
 The viewport contains a draggable **Navigation** overlay with compass,
@@ -174,6 +301,22 @@ during playback, unchanged force-table values/camera, and cancellation
 while Setup is open. User settings are redirected to a temporary directory.
 Material test images use explicitly synthetic preview assignments, not
 an inferred or persistent Folkeboot material classification.
+
+The focused `gui_workspace_tabs_100`, `gui_workspace_tabs_150` and
+`gui_workspace_tabs_200` cases check the three palettes, fixed inactive-tab
+colors and the intentional isolation of inspection from simulation controls.
+They also check that tab switching preserves the model, simulation inputs,
+camera and selected live snapshot without stopping the run. Actual window
+screenshots are written to `graphics-evidence/workspace-tabs-<scale>`.
+Run only these cases with
+`ctest --test-dir C:\spdeps\guibuild -C Release -R "^gui_workspace_tabs_" --output-on-failure`.
+
+The `gui_boat_inspection_100`, `_150` and `_200` cases exercise the actual
+Core snapshot, all advertised tree/mesh types, selection/property deduplication,
+point topology and exact context opacity. They compare model-list/viewport
+bounds with a maximum one-logical-pixel tolerance, preserve camera state and
+corrupt a temporary model file to verify watcher/snapshot isolation. Evidence
+is written to `graphics-evidence/boat-inspection-<scale>`.
 
 The Core display contract also accepts explicit `stoff`, `holz` and
 `metall_gebuerstet` surfaces in addition to existing surfaces such as `lack`.

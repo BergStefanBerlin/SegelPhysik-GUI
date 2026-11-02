@@ -3,6 +3,7 @@
 #include "vtk_scene.hpp"
 #include "graphics_dialog.hpp"
 #include "navigation.hpp"
+#include "boat_inspection.hpp"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -31,6 +32,7 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QMetaObject>
+#include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -38,6 +40,9 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStyleOptionTab>
+#include <QStackedWidget>
+#include <QTabBar>
 #include <QThread>
 #include <QTimer>
 #include <QTreeWidget>
@@ -52,6 +57,75 @@
 using forcedisplay::Contribution;
 
 namespace {
+
+struct WorkspaceTheme {
+    const char* label;
+    const char* background;
+    const char* panel;
+    const char* border;
+    const char* input;
+    const char* button;
+    const char* hover;
+    const char* primary;
+    const char* accent;
+    const char* muted;
+    const char* caption;
+    const char* alternate;
+};
+
+const std::array<WorkspaceTheme, 3> workspaceThemes{{
+    {"Bootsauswahl", "#1c1118", "#2b1923", "#65404d", "#21131b",
+        "#422632", "#593342", "#85334b", "#e7a0b3", "#c5a6b0", "#d4a0af", "#321e28"},
+    {"Statisches Modell", "#0b1420", "#111e2c", "#344c61", "#0c1722",
+        "#1b2b3d", "#263d52", "#244e7a", "#91bde9", "#a5bacb", "#88a3b9", "#162636"},
+    {"Dynamisches Modell", "#0d1b16", "#142a20", "#3b6250", "#102219",
+        "#203c2e", "#2b503c", "#256344", "#9dd9b5", "#a1c0ae", "#94bfa6", "#1b3427"}
+}};
+
+class WorkspaceTabBar final : public QTabBar {
+public:
+    explicit WorkspaceTabBar(QWidget* parent)
+        : QTabBar(parent)
+    {
+        setObjectName(QStringLiteral("workspaceTabs"));
+        setAccessibleName(QStringLiteral("Arbeitsbereich"));
+        setExpanding(false);
+        setDrawBase(false);
+        for (const auto& theme : workspaceThemes) {
+            addTab(QString::fromUtf8(theme.label));
+        }
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (int index = 0; index < count(); ++index) {
+            const auto& theme = workspaceThemes.at(index);
+            QStyleOptionTab option;
+            initStyleOption(&option, index);
+            const auto rect = tabRect(index).adjusted(0, 0, -6, -1);
+            const bool selected = index == currentIndex();
+            painter.setBrush(QColor(selected ? theme.primary : theme.panel));
+            painter.setPen(QPen(QColor(selected ? theme.accent : theme.border), 1));
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 7, 7);
+            painter.fillRect(rect.adjusted(7, 2, -7, -rect.height() + 5),
+                QColor(theme.primary));
+            painter.setPen(QColor(selected ? "#ffffff" : theme.accent));
+            painter.drawText(rect.adjusted(15, 4, -15, -4), Qt::AlignCenter, option.text);
+            if (selected) {
+                painter.fillRect(QRect(rect.left() + 7, rect.bottom() - 3,
+                    rect.width() - 14, 3), QColor(theme.accent));
+            }
+            if (option.state & QStyle::State_HasFocus) {
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(QPen(QColor(theme.accent), 1, Qt::DotLine));
+                painter.drawRoundedRect(rect.adjusted(5, 5, -5, -5), 4, 4);
+            }
+        }
+    }
+};
 
 QString runtimeText(double seconds)
 {
@@ -140,6 +214,7 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , scene_(new VtkSceneWidget(this))
 {
+    scene_->setObjectName(QStringLiteral("simulationScene"));
     setWindowTitle(QStringLiteral("SegelPhysik – Hydrostatik"));
     resize(1500, 940);
     setMinimumSize(1024, 680);
@@ -149,6 +224,9 @@ MainWindow::MainWindow(QWidget* parent)
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(18, 14, 18, 14);
     root->setSpacing(12);
+
+    auto* workspaceTabs = new WorkspaceTabBar(central);
+    connect(workspaceTabs, &QTabBar::currentChanged, this, &MainWindow::updateWorkspace);
 
     auto* header = new QHBoxLayout;
     auto* title = new QLabel(QStringLiteral("SEGELPHYSIK"));
@@ -163,13 +241,15 @@ MainWindow::MainWindow(QWidget* parent)
     header->addStretch();
     chooseFolderButton_ = new QPushButton(QStringLiteral("Modellordner wählen"));
     chooseFolderButton_->setObjectName(QStringLiteral("primaryButton"));
-    header->addWidget(chooseFolderButton_);
     root->addLayout(header);
+    root->addWidget(workspaceTabs);
 
     auto* mainArea = new QHBoxLayout;
+    mainArea_ = mainArea;
     mainArea->setSpacing(14);
 
     auto* catalogPanel = new QWidget;
+    catalogPanel_ = catalogPanel;
     catalogPanel->setObjectName(QStringLiteral("panel"));
     catalogPanel->setMinimumWidth(210);
     catalogPanel->setMaximumWidth(260);
@@ -189,8 +269,19 @@ MainWindow::MainWindow(QWidget* parent)
     catalogLayout->addWidget(catalogCaption);
     catalogLayout->addWidget(folderLabel_);
     catalogLayout->addWidget(modelList_, 1);
+    catalogLayout->addWidget(chooseFolderButton_);
     mainArea->addWidget(catalogPanel);
-    mainArea->addWidget(scene_, 1);
+    workspaceStack_ = new QStackedWidget;
+    workspaceStack_->setObjectName(QStringLiteral("workspaceStack"));
+    inspection_ = new BoatInspection;
+    workspaceStack_->addWidget(inspection_);
+    auto* simulationPanel = new QWidget;
+    auto* simulationLayout = new QHBoxLayout(simulationPanel);
+    simulationLayout->setContentsMargins(0, 0, 0, 0);
+    simulationLayout->setSpacing(14);
+    simulationLayout->addWidget(scene_, 1);
+    workspaceStack_->addWidget(simulationPanel);
+    mainArea->addWidget(workspaceStack_, 1);
 
     auto* panel = new QWidget;
     panel->setObjectName(QStringLiteral("panel"));
@@ -320,71 +411,28 @@ MainWindow::MainWindow(QWidget* parent)
     panelScroll->setFrameShape(QFrame::NoFrame);
     panelScroll->setMinimumWidth(320);
     panelScroll->setMaximumWidth(380);
-    mainArea->addWidget(panelScroll);
+    simulationLayout->addWidget(panelScroll);
     root->addLayout(mainArea, 1);
 
-    auto* playback = new QHBoxLayout;
+    playbackPanel_ = new QWidget;
+    auto* playback = new QHBoxLayout(playbackPanel_);
+    playback->setContentsMargins(0, 0, 0, 0);
     stateLabel_ = new QLabel(QStringLiteral("Zustand 0 / 0"));
     stateSlider_ = new QSlider(Qt::Horizontal);
     stateSlider_->setRange(0, 0);
     playback->addWidget(new QLabel(QStringLiteral("WIEDERGABE")));
     playback->addWidget(stateSlider_, 1);
     playback->addWidget(stateLabel_);
-    root->addLayout(playback);
+    root->addWidget(playbackPanel_);
 
     setCentralWidget(central);
     valuesDock_ = buildValuesDock();
+    auto* simulationValues = valuesDock_->widget();
+    valuesStack_ = new QStackedWidget;
+    valuesStack_->addWidget(inspection_->valuesWidget());
+    valuesStack_->addWidget(simulationValues);
+    valuesDock_->setWidget(valuesStack_);
     addDockWidget(Qt::BottomDockWidgetArea, valuesDock_);
-
-    setStyleSheet(QStringLiteral(
-        "QMainWindow, QWidget { background:#0b1420; color:#e8eef5; "
-        "font-family:'Segoe UI'; font-size:10pt; }"
-        "QLabel, QCheckBox { background:transparent; }"
-        "QCheckBox::indicator { width:15px; height:15px; border:1px solid "
-        "#4a6680; border-radius:4px; background:#0c1722; }"
-        "QCheckBox::indicator:checked { background:#36c1d2; border-color:#5fd9e6; }"
-        "QLabel#title { font-size:19pt; font-weight:700; letter-spacing:2px; }"
-        "QLabel#subtitle { color:#8ca4b8; font-size:10pt; }"
-        "QLabel#caption { color:#88a3b9; font-size:8pt; font-weight:700; "
-        "letter-spacing:1.5px; }"
-        "QLabel#modelName { font-size:13pt; font-weight:600; }"
-        "QLabel#status { color:#b8e7c3; font-size:11pt; }"
-        "QLabel#time, QLabel#legend { color:#a5bacb; font-size:9pt; }"
-        "QLabel#balance { background:#111e2c; border:1px solid #23384b; "
-        "border-radius:8px; padding:8px; }"
-        "QLabel#detail { color:#c9d6e2; font-size:9pt; }"
-        "QWidget#panel { background:#111e2c; border:1px solid #23384b; "
-        "border-radius:12px; }"
-        "QScrollArea#panelScroll { background:transparent; }"
-        "QPushButton { background:#1b2b3d; border:1px solid #344c61; "
-        "border-radius:7px; padding:9px 13px; font-weight:600; }"
-        "QPushButton:hover { background:#263d52; }"
-        "QPushButton:disabled { color:#637587; background:#17222d; }"
-        "QPushButton#primaryButton { background:#137c91; border-color:#189ab1; }"
-        "QPushButton#primaryButton:hover { background:#1795aa; }"
-        "QPushButton#smallButton { padding:5px 9px; }"
-        "QComboBox, QDoubleSpinBox { background:#0c1722; border:1px solid "
-        "#344c61; border-radius:6px; padding:6px; }"
-        "QListWidget#modelList { background:#0c1722; border:1px solid "
-        "#263b4d; border-radius:6px; padding:3px; }"
-        "QListWidget#modelList::item { padding:4px 6px; border-radius:4px; }"
-        "QListWidget#modelList::item:selected { background:#137c91; "
-        "color:#ffffff; }"
-        "QTreeWidget { background:#0c1722; alternate-background-color:#101e2b; "
-        "border:1px solid #263b4d; }"
-        "QTreeWidget::item:selected { background:#5c4a12; color:#ffd166; }"
-        "QHeaderView::section { background:#162636; color:#9fb3c3; padding:5px; "
-        "border:0; }"
-        "QDockWidget { color:#88a3b9; font-weight:700; }"
-        "QDockWidget::title { background:#111e2c; padding:6px; }"
-        "QSlider::groove:horizontal { height:5px; background:#263b4d; "
-        "border-radius:2px; }"
-        "QScrollBar:vertical { background:#0b1420; width:10px; margin:0; }"
-        "QScrollBar::handle:vertical { background:#2c4459; border-radius:5px; "
-        "min-height:24px; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
-        "QSlider::handle:horizontal { background:#36c1d2; width:15px; "
-        "margin:-6px 0; border-radius:7px; }"));
 
     folderWatcher_ = new QFileSystemWatcher(this);
     rescanTimer_ = new QTimer(this);
@@ -432,8 +480,93 @@ MainWindow::MainWindow(QWidget* parent)
     setupMenu->addAction(QStringLiteral("Grafik …"), this, &MainWindow::setupGraphics);
     setupMenu->addAction(QStringLiteral("Materialvorschau …"), this, &MainWindow::setupMaterialPreview);
     loadSettings();
+    simulationValuesVisible_ = !valuesDock_->isHidden();
     updateModeControls();
     setBusy(false);
+    updateWorkspace(workspaceTabs->currentIndex());
+}
+
+void MainWindow::updateWorkspace(int index)
+{
+    applyWorkspaceTheme(index);
+    const bool inspection = index == 0;
+    if (inspection) inspection_->setCatalogWidget(catalogPanel_);
+    else mainArea_->insertWidget(0, catalogPanel_);
+    catalogPanel_->show();
+    if (inspection && workspaceStack_->currentIndex() != 0)
+        simulationValuesVisible_ = !valuesDock_->isHidden();
+    workspaceStack_->setCurrentIndex(inspection ? 0 : 1);
+    valuesStack_->setCurrentIndex(inspection ? 0 : 1);
+    chooseFolderButton_->setVisible(inspection);
+    playbackPanel_->setVisible(!inspection);
+    valuesDock_->setVisible(inspection || simulationValuesVisible_);
+}
+
+void MainWindow::applyWorkspaceTheme(int index)
+{
+    const auto& theme = workspaceThemes.at(index);
+    setStyleSheet(QStringLiteral(
+        "QMainWindow, QWidget { background:%1; color:#e8eef5; "
+        "font-family:'Segoe UI'; font-size:10pt; }"
+        "QLabel, QCheckBox { background:transparent; }"
+        "QCheckBox::indicator { width:15px; height:15px; border:1px solid "
+        "%3; border-radius:4px; background:%4; }"
+        "QCheckBox::indicator:checked { background:%7; border-color:%8; }"
+        "QTabBar::tab { padding:12px 20px; font-weight:600; }"
+        "QLabel#title { font-size:19pt; font-weight:700; letter-spacing:2px; }"
+        "QLabel#subtitle { color:%9; font-size:10pt; }"
+        "QLabel#caption { color:%10; font-size:8pt; font-weight:700; "
+        "letter-spacing:1.5px; }"
+        "QLabel#modelName { font-size:13pt; font-weight:600; }"
+        "QLabel#status { color:#b8e7c3; font-size:11pt; }"
+        "QLabel#time, QLabel#legend { color:%9; font-size:9pt; }"
+        "QLabel#balance { background:%2; border:1px solid %3; "
+        "border-radius:8px; padding:8px; }"
+        "QLabel#detail { color:#c9d6e2; font-size:9pt; }"
+        "QWidget#panel { background:%2; border:1px solid %3; "
+        "border-radius:12px; }"
+        "QScrollArea#panelScroll { background:transparent; }"
+        "QPushButton { background:%5; border:1px solid %3; "
+        "border-radius:7px; padding:9px 13px; font-weight:600; }"
+        "QPushButton:hover { background:%6; }"
+        "QPushButton:disabled { color:%9; background:%2; }"
+        "QPushButton#primaryButton { background:%7; border-color:%8; }"
+        "QPushButton#primaryButton:hover { background:%6; }"
+        "QPushButton#smallButton { padding:5px 9px; }"
+        "QComboBox, QDoubleSpinBox { background:%4; border:1px solid "
+        "%3; border-radius:6px; padding:6px; }"
+        "QListWidget#modelList { background:%4; border:1px solid "
+        "%3; border-radius:6px; padding:3px; }"
+        "QListWidget#modelList::item { padding:4px 6px; border-radius:4px; }"
+        "QListWidget#modelList::item:selected { background:%7; "
+        "color:#ffffff; }"
+        "QTreeWidget { background:%4; alternate-background-color:%11; "
+        "border:1px solid %3; }"
+        "QTreeWidget::item:selected { background:#5c4a12; color:#ffd166; }"
+        "QHeaderView::section { background:%11; color:%9; padding:5px; "
+        "border:0; }"
+        "QDockWidget { color:%10; font-weight:700; }"
+        "QDockWidget::title { background:%2; padding:6px; }"
+        "QMenu::item:selected, QMenuBar::item:selected { background:%7; }"
+        "QSlider::groove:horizontal { height:5px; background:%3; "
+        "border-radius:2px; }"
+        "QScrollBar:vertical { background:%1; width:10px; margin:0; }"
+        "QScrollBar::handle:vertical { background:%3; border-radius:5px; "
+        "min-height:24px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        "QSlider::handle:horizontal { background:%8; width:15px; "
+        "margin:-6px 0; border-radius:7px; }")
+        .arg(QString::fromLatin1(theme.background))
+        .arg(QString::fromLatin1(theme.panel))
+        .arg(QString::fromLatin1(theme.border))
+        .arg(QString::fromLatin1(theme.input))
+        .arg(QString::fromLatin1(theme.button))
+        .arg(QString::fromLatin1(theme.hover))
+        .arg(QString::fromLatin1(theme.primary))
+        .arg(QString::fromLatin1(theme.accent))
+        .arg(QString::fromLatin1(theme.muted))
+        .arg(QString::fromLatin1(theme.caption))
+        .arg(QString::fromLatin1(theme.alternate)));
 }
 
 QWidget* MainWindow::buildDisplayPanel()
@@ -631,6 +764,7 @@ QDockWidget* MainWindow::buildValuesDock()
 
     auto* right = new QVBoxLayout;
     valuesTree_ = new QTreeWidget;
+    valuesTree_->setObjectName(QStringLiteral("simulationValues"));
     valuesTree_->setColumnCount(ColumnCount);
     valuesTree_->setHeaderLabels({QStringLiteral("Beitrag"), QStringLiteral("Betrag"),
         QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z"), QStringLiteral("Zustand"),
@@ -679,6 +813,7 @@ MainWindow::~MainWindow()
 {
     shuttingDown_.store(true);
     cancellation_.store(true);
+    for (auto* thread : openThreads_) thread->wait();
     for (const auto& thread : {openThread_, simulationThread_, catalogThread_}) {
         if (thread != nullptr) {
             thread->wait();
@@ -941,7 +1076,13 @@ void MainWindow::setModelFolder(const QString& folder)
     if (usable) {
         QSettings().setValue(folderSettingKey, modelFolder_);
     }
+    ++openGeneration_;
+    modelId_.clear();
+    modelVersion_.clear();
+    validation_ = {};
     modelCache_.clear();
+    inspection_->clear(QStringLiteral("Modellordner wird eingelesen …"));
+    setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
     reloadCatalog();
 }
 
@@ -1059,6 +1200,13 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
     const bool running = simulationThread_ != nullptr;
     const bool changed = current == nullptr || current->version != previousVersion;
     if (!modelId_.isEmpty() && (changed || reopenAfterCatalog_)) {
+        const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
+        if (opened && opened->data.inspection) {
+            modelLabel_->setText(QStringLiteral("%1\n(geänderte Modellfassung im Ordner; Inspektion unverändert)")
+                .arg(modelName_));
+            reopenAfterCatalog_ = false;
+            return;
+        }
         if (running) {
             // Laufende Simulationen bleiben unberührt (A-G-00022).
             modelLabel_->setText(QStringLiteral("%1\n(geänderte Modellfassung im Ordner)").arg(modelName_));
@@ -1163,6 +1311,7 @@ void MainWindow::openModel(const QString& id)
     modelVersion_ = entry->version;
     modelPath_ = entry->path;
     modelName_ = entry->name.isEmpty() ? entry->id : entry->name;
+    inspection_->clear(QStringLiteral("Modell wird vom Core geladen …"));
     validation_ = {};
     lastRunDynamic_.reset();
     resetResults();
@@ -1201,7 +1350,8 @@ void MainWindow::openModel(const QString& id)
                 }
                 auto fresh = std::make_shared<OpenedModel>();
                 fresh->data = loadDisplayData(*catalog, selected.id, selected.version);
-                fresh->parts = toDisplayParts(fresh->data.geometry);
+                if (!fresh->data.geometry.teile.empty())
+                    fresh->parts = toDisplayParts(fresh->data.geometry);
                 opened = fresh;
             }
             if (selected.usable) {
@@ -1233,6 +1383,7 @@ void MainWindow::openModel(const QString& id)
                     statusLabel_->setToolTip(error);
                     statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
                     scene_->clearModel();
+                    inspection_->clear(error);
                     showModelProblems(selected.problems + problemsFromText(error));
                     return;
                 }
@@ -1242,12 +1393,14 @@ void MainWindow::openModel(const QString& id)
             Qt::QueuedConnection);
     });
     openThread_ = thread;
+    openThreads_.insert(thread);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     connect(thread, &QThread::finished, this, [this, thread] {
+        openThreads_.remove(thread);
         if (openThread_ == thread) {
             openThread_ = nullptr;
         }
-        setBusy(simulationThread_ != nullptr);
+        setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
     });
     thread->start();
 }
@@ -1256,9 +1409,12 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     const ModelValidation& validation)
 {
     QString error;
+    inspection_->setSnapshot(opened->data.inspection);
     scene_->setElementGroups(opened->data.elementGroups);
     configureMovementControls(opened->data);
-    if (!scene_->setModel(opened->parts, &error)) {
+    if (opened->parts.isEmpty()) {
+        scene_->clearModel();
+    } else if (!scene_->setModel(opened->parts, &error)) {
         statusLabel_->setText(QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
         statusLabel_->setToolTip(error);
         statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));

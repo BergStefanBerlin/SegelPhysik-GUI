@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -106,6 +107,12 @@ public:
     bool setCameraView(const CameraView& view);
     bool setCameraPreset(const QString& id, QString* error);
     void setNavigationVisible(bool visible);
+    void setInspectionMode();
+    void setInspectionSelection(const QSet<QString>& elementIds, bool hasSelection = false);
+    double inspectionOpacity(const QString& elementId) const;
+    void setInspectionPreview(const QVector<DisplayPart>& parts,
+        const std::vector<std::array<forcedisplay::Vec3, 2>>& axes,
+        const std::vector<forcedisplay::Vec3>& pivots = {});
 
     // Referenzen <= 0 gelten als nicht gesetzt; R_M wird dann aus dem ersten
     // gültigen Zustand bestimmt (A-G-00011).
@@ -176,6 +183,8 @@ private:
     void updateWaterAnimation();
     void updateWaterPlane();
     void rebuildEnvironment();
+    void rebuildInspectionGrid();
+    void updateInspectionMask();
     void rebuildWaterDisplay(const std::function<void(double, double, unsigned char*)>& waterRgba);
     void updateTrail();
     void updateWaterMotion();
@@ -186,12 +195,18 @@ private:
     void frameBounds(const double bounds[6], double zoom);
 
     QVTKOpenGLNativeWidget* vtkWidget_ = nullptr;
+    bool inspectionMode_ = false;
+    bool inspectionHasSelection_ = false;
+    QSet<QString> inspectionElements_;
     navigation::Overlay* navigation_ = nullptr;
     vtkSmartPointer<vtkGenericOpenGLRenderWindow> renderWindow_;
     vtkSmartPointer<vtkRenderer> renderer_;
     vtkSmartPointer<vtkRenderer> overlay_;
     vtkSmartPointer<vtkRenderer> axesRenderer_;
     vtkSmartPointer<vtkAxesActor> axesActor_;
+    vtkSmartPointer<vtkAxesActor> inspectionAxes_;
+    std::vector<vtkSmartPointer<vtkActor>> inspectionPreviewActors_;
+    std::vector<vtkSmartPointer<vtkBillboardTextActor3D>> inspectionGridLabels_;
     vtkSmartPointer<vtkTexture> skyTexture_;
     vtkSmartPointer<vtkTexture> proceduralSkyTexture_;
     QString loadedEnvironmentPath_;

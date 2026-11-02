@@ -4,22 +4,30 @@
 #include "vtk_scene.hpp"
 #include "main_window.hpp"
 #include "navigation.hpp"
+#include "boat_inspection.hpp"
 
 #include <segelphysik/katalog.hpp>
+#include <segelphysik/modell.hpp>
 #include <QApplication>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QImage>
 #include <QLabel>
+#include <QLayout>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QKeyEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -32,9 +40,13 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSlider>
 #include <QSizeGrip>
 #include <QTimer>
+#include <QTabBar>
+#include <QTemporaryDir>
+#include <QThread>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVTKOpenGLNativeWidget.h>
@@ -44,6 +56,9 @@
 #include <vtkCubeSource.h>
 #include <vtkCellArray.h>
 #include <vtkActor.h>
+#include <vtkAxesActor.h>
+#include <vtkBillboardTextActor3D.h>
+#include <vtkPropCollection.h>
 #include <vtkActorCollection.h>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkOutputWindow.h>
@@ -509,6 +524,569 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
     report.insert(QStringLiteral("420NavigationSelectedSnapshotBothProfiles"), true);
 }
 
+void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
+    const QDir& evidence, QJsonObject& report)
+{
+    auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    require(tabs && tabs->count() == 3 && tabs->currentIndex() == 0,
+        "three workspace tabs, initially boat selection");
+    const QStringList labels{QStringLiteral("Bootsauswahl"), QStringLiteral("Statisches Modell"),
+        QStringLiteral("Dynamisches Modell")};
+    const std::array<QColor, 3> selectedColors{QColor("#85334b"), QColor("#244e7a"), QColor("#256344")};
+    const std::array<QColor, 3> inactiveColors{QColor("#2b1923"), QColor("#111e2c"), QColor("#142a20")};
+    const std::array<QColor, 3> backgrounds{QColor("#1c1118"), QColor("#0b1420"), QColor("#0d1b16")};
+    auto* central = window.centralWidget();
+    const auto camera = scene.cameraView();
+    const auto mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"))->currentIndex();
+    const auto duration = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("simulationDuration"))->value();
+    auto* models = window.findChild<QListWidget*>(QStringLiteral("modelList"));
+    require(models != nullptr, "model list for workspace identity check");
+    const auto selectedModel = models->currentItem()->data(Qt::UserRole).toString();
+    for (int selected = 0; selected < 3; ++selected) {
+        tabs->setCurrentIndex(selected);
+        QApplication::processEvents();
+        require(window.centralWidget() == central,
+            "workspace switch must reuse the central widget");
+        auto* inspectionTree = window.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+        require(inspectionTree && inspectionTree->isVisible() == (selected == 0),
+            "only boat selection exposes object inspection");
+        QPushButton* folder = nullptr;
+        for (auto* button : window.findChildren<QPushButton*>())
+            if (button->text() == QStringLiteral("Modellordner wählen")) folder = button;
+        require(folder && folder->isVisible() == (selected == 0),
+            "folder selection exists only in boat selection");
+        require(window.findChild<QComboBox*>(QStringLiteral("simulationMode"))->currentIndex() == mode
+            && window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationDuration"))->value() == duration
+            && models->currentItem()
+            && models->currentItem()->data(Qt::UserRole).toString() == selectedModel,
+            "workspace switch changed model or simulation inputs");
+        const auto currentCamera = scene.cameraView();
+        require(camera.position == currentCamera.position && camera.focalPoint == currentCamera.focalPoint
+            && camera.viewUp == currentCamera.viewUp, "workspace switch changed camera");
+        require(central->palette().color(QPalette::Window) == backgrounds[selected],
+            "entire workspace must use selected theme");
+        const auto image = tabs->grab().toImage();
+        for (int tab = 0; tab < 3; ++tab) {
+            require(tabs->tabText(tab) == labels[tab], "workspace tab label");
+            const auto rect = tabs->tabRect(tab);
+            const auto sample = QPointF(rect.left() + 10, rect.center().y()) * image.devicePixelRatio();
+            require(image.pixelColor(sample.toPoint()) ==
+                (selected == tab ? selectedColors[tab] : inactiveColors[tab]),
+                "each tab must keep its own color, including inactive tabs");
+        }
+        require(window.grab().save(evidence.filePath(
+            QStringLiteral("workspace_%1.bmp").arg(selected)), "BMP"), "workspace theme screenshot");
+    }
+    tabs->setCurrentIndex(1);
+    report.insert(QStringLiteral("workspaceTabsIsolatedInspectionAndFixedInactiveColors"), true);
+}
+
+void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject& report)
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary inspection fixture folder");
+    const auto catalog = segelphysik::modellkatalog(std::filesystem::path(models.toStdWString()));
+    const auto* entry = catalog.eintrag("folkeboot");
+    require(entry, "Folkeboot inspection fixture");
+    const QDir copy(QDir(temporary.path()).filePath(QStringLiteral("v2")));
+    std::filesystem::copy(
+        segelphysik::katalog_datei(catalog, entry->modell_id, entry->modell_fassung).parent_path(),
+        std::filesystem::path(copy.absolutePath().toStdWString()),
+        std::filesystem::copy_options::recursive);
+    QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("BoatInspection"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
+    QSettings().clear();
+    MainWindow window;
+    window.setModelFolder(copy.absolutePath());
+    window.selectInitialModel(QStringLiteral("folkeboot"));
+    window.show();
+    auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+    auto* values = window.findChild<QTreeWidget*>(QStringLiteral("inspectionValues"));
+    auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    require(tree && values && tabs, "inspection controls exist");
+    require(!window.findChild<QTabBar*>(QStringLiteral("inspectionTreeTypes")),
+        "one object tree replaces domain tabs");
+    require(values->columnCount() == 6 && values->headerItem()->text(1) == QStringLiteral("Bereich"),
+        "complete property table includes domain area");
+    require(!window.findChild<QComboBox*>(QStringLiteral("inspectionMeshTypes")),
+        "geometry selection must use right object tree, not a separate mesh combo");
+    waitUntil([&] { return tree->topLevelItemCount() == 1; },
+        "inspection snapshot load timeout");
+    auto* inspectionScene = dynamic_cast<VtkSceneWidget*>(
+        window.findChild<QWidget*>(QStringLiteral("inspectionScene")));
+    auto* simulationScene = dynamic_cast<VtkSceneWidget*>(
+        window.findChild<QWidget*>(QStringLiteral("simulationScene")));
+    require(inspectionScene && simulationScene, "separate views preserve simulation scene");
+    inspectionScene->renderNow();
+    auto* viewport = inspectionScene->findChild<QVTKOpenGLNativeWidget*>();
+    require(viewport && !viewport->mask().isEmpty()
+        && !viewport->mask().contains(QPoint(0, 0))
+        && viewport->mask().contains(viewport->rect().center()),
+        "inspection render content is clipped to rounded corners");
+    auto* renderer = viewport->renderWindow()->GetRenderers()->GetFirstRenderer();
+    auto* props = renderer->GetViewProps();
+    props->InitTraversal();
+    bool modelAxes = false, spatialGrid = false;
+    int meterLabels = 0;
+    int verticalMeterLabels = 0;
+    while (auto* prop = props->GetNextProp()) {
+        if (auto* label = vtkBillboardTextActor3D::SafeDownCast(prop)) {
+            const auto caption = QString::fromUtf8(label->GetInput());
+            if (caption.endsWith(QStringLiteral(" m"))) {
+                bool valid = false;
+                const double coordinate = caption.chopped(2).toDouble(&valid);
+                require(valid && coordinate == std::round(coordinate),
+                    "grid captions show actual whole-meter coordinates");
+                const double* position = label->GetPosition();
+                require(std::abs(position[0]-coordinate) < 1e-10
+                    || std::abs(position[1]-coordinate) < 1e-10
+                    || std::abs(position[2]-coordinate) < 1e-10,
+                    "meter label is attached to its actual X, Y or Z coordinate");
+                if (std::abs(position[2]-coordinate) < 1e-10) ++verticalMeterLabels;
+                ++meterLabels;
+            }
+        }
+        if (auto* axes = vtkAxesActor::SafeDownCast(prop))
+            modelAxes = axes->GetVisibility() && axes->GetPosition()[0] == 0.0
+                && axes->GetPosition()[1] == 0.0 && axes->GetPosition()[2] == 0.0;
+        auto* actor = vtkActor::SafeDownCast(prop);
+        if (!actor || !actor->GetVisibility() || actor->GetUseBounds()) continue;
+        auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+        if (!mapper || !mapper->GetInput()) continue;
+        auto* mesh = mapper->GetInput();
+        require(mesh->GetNumberOfPolys() == 0,
+            "inspection has no visible water or depth surface");
+        if (mesh->GetNumberOfLines() > 0) {
+            double bounds[6];
+            mesh->GetBounds(bounds);
+            spatialGrid = spatialGrid || (bounds[0] < bounds[1] && bounds[2] < bounds[3]
+                && bounds[4] < bounds[5]);
+            if (bounds[0] < bounds[1] && bounds[2] < bounds[3] && bounds[4] < bounds[5]) {
+                require(mesh->GetNumberOfVerts() > 0, "half-meter grid lines use point topology");
+                auto* lines = mesh->GetLines();
+                lines->InitTraversal();
+                vtkIdType count = 0;
+                const vtkIdType* ids = nullptr;
+                while (lines->GetNextCell(count, ids)) {
+                    require(count == 2, "solid reference lines have two endpoints");
+                    double a[3], b[3];
+                    mesh->GetPoint(ids[0], a);
+                    mesh->GetPoint(ids[1], b);
+                    bool integerCoordinate = false;
+                    for (int axis = 0; axis < 3; ++axis)
+                        if (a[axis] == b[axis] && std::abs(a[axis] - std::round(a[axis])) < 1e-10)
+                            integerCoordinate = true;
+                    require(integerCoordinate, "solid grid lines lie at whole-meter coordinates");
+                }
+            }
+        }
+    }
+    require(modelAxes, "model-origin axes are visible");
+    require(spatialGrid, "three-dimensional grid is visible");
+    require(inspectionScene->property("inspectionGridLabelCount").toInt() >= 2,
+        "lower X/Y grid axes carry meter labels");
+    require(meterLabels == inspectionScene->property("inspectionGridLabelCount").toInt(),
+        "meter labels are real rendered actors without duplicates");
+    require(verticalMeterLabels > 1, "left vertical grid edge has multiple actual Z meter labels");
+    require(!window.findChild<QLabel*>(QStringLiteral("inspectionGeometryLegend")),
+        "source-color legend is removed");
+    require(tree->isHeaderHidden(), "object caption is outside the inner tree");
+    auto* overlay = inspectionScene->findChild<QWidget*>(QStringLiteral("navigationOverlay"));
+    require(overlay && !overlay->isVisible(), "boat selection has no navigation instruments");
+    QPushButton* folderButton = nullptr;
+    for (auto* button : window.findChildren<QPushButton*>())
+        if (button->text() == QStringLiteral("Modellordner wählen")) folderButton = button;
+    require(folderButton && folderButton->isVisible(), "folder button in boat selection");
+    const auto catalogRect = folderButton->parentWidget()->rect();
+    const auto catalogTop = folderButton->parentWidget()->mapToGlobal(catalogRect.topLeft()).y();
+    const auto catalogBottom = catalogTop + catalogRect.height();
+    const auto viewportTop = inspectionScene->mapToGlobal(QPoint()).y();
+    require(std::abs(catalogTop - viewportTop) <= 1
+        && std::abs(catalogBottom - viewportTop - inspectionScene->height()) <= 1,
+        "catalog column and actual inspection viewport must have matching bounds within 1 logical pixel");
+    const auto* objectPanel = tree->parentWidget();
+    require(std::abs(objectPanel->mapToGlobal(QPoint()).y() - viewportTop) <= 1
+        && objectPanel->height() == folderButton->parentWidget()->height(),
+        "both outer side panels align with the rendering viewport");
+    const auto leftMargins = folderButton->parentWidget()->layout()->contentsMargins();
+    require(objectPanel->layout()->contentsMargins() == leftMargins,
+        "side panels share outer-to-inner frame padding");
+    bool externalCaption = false;
+    for (auto* label : objectPanel->findChildren<QLabel*>())
+        if (label->text() == QStringLiteral("Objekt / Teil")) {
+            externalCaption = label->mapToGlobal(QPoint()).y() + label->height()
+                <= tree->mapToGlobal(QPoint()).y();
+        }
+    require(externalCaption, "object caption is displayed above the inner framed list");
+    auto* title = window.findChild<QLabel*>(QStringLiteral("title"));
+    require(title && title->mapToGlobal(QPoint()).y() < tabs->mapToGlobal(QPoint()).y(),
+        "title above workspace tabs");
+    auto* root = tree->topLevelItem(0);
+    root->setSelected(true);
+    QApplication::processEvents();
+    require(values->topLevelItemCount() > 0, "root selection includes descendant properties");
+    const int rootValues = values->topLevelItemCount();
+    if (root->childCount()) {
+        root->child(0)->setSelected(true);
+        QApplication::processEvents();
+        require(values->topLevelItemCount() == rootValues, "overlapping selection deduplicates properties");
+    }
+    QSet<QString> propertyKeys;
+    QSet<QString> propertyAreas;
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        auto* row = values->topLevelItem(i);
+        require(!row->text(1).isEmpty(), "every property has a Core-supplied domain area");
+        propertyAreas.insert(row->text(1));
+        const auto key = row->text(0) + QLatin1Char('|') + row->text(1) + QLatin1Char('|') + row->text(2);
+        require(!propertyKeys.contains(key), "property table has no duplicate rows");
+        propertyKeys.insert(key);
+    }
+    require(propertyAreas.size() >= 4, "one selection includes multiple physical property areas");
+    require(values->header()->sectionResizeMode(5) == QHeaderView::Interactive
+        && !values->header()->stretchLastSection(), "all six columns are manually resizable");
+    const auto originalWidth = values->columnWidth(5);
+    values->setColumnWidth(5, originalWidth+35);
+    require(values->columnWidth(5) == originalWidth+35, "last column width actually changes");
+    const auto checkFilterAlignment = [&] {
+        for (int i = 0; i < values->columnCount(); ++i) {
+            auto* filter = window.findChild<QLineEdit*>(QStringLiteral("inspectionFilter%1").arg(i));
+            require(filter && filter->placeholderText() == QStringLiteral("*")
+                && filter->text().isEmpty(), "empty filters display only a star placeholder");
+            require(filter->width() == values->columnWidth(i)
+                && filter->x() == values->header()->sectionViewportPosition(i),
+                "each filter follows its exact column width and scrolled position");
+        }
+    };
+    checkFilterAlignment();
+    auto* headerViewport = values->header()->viewport();
+    const int firstWidth = values->columnWidth(0);
+    const QPointF boundary(firstWidth-1, 10);
+    const QPointF dragged = boundary + QPointF(57,0);
+    const QPointF global = headerViewport->mapToGlobal(boundary.toPoint());
+    QMouseEvent press(QEvent::MouseButtonPress, boundary, global,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(headerViewport, &press);
+    QMouseEvent move(QEvent::MouseMove, dragged, global+QPointF(57,0),
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(headerViewport, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, dragged, global+QPointF(57,0),
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(headerViewport, &release);
+    QApplication::processEvents();
+    require(values->columnWidth(0) == firstWidth+57,
+        "dragging the actual header boundary changes the column width");
+    checkFilterAlignment();
+    values->horizontalScrollBar()->setValue(values->horizontalScrollBar()->maximum());
+    QApplication::processEvents();
+    checkFilterAlignment();
+    values->horizontalScrollBar()->setValue(0);
+    auto* areaFilter = window.findChild<QLineEdit*>(QStringLiteral("inspectionFilter1"));
+    auto* nameFilter = window.findChild<QLineEdit*>(QStringLiteral("inspectionFilter2"));
+    require(areaFilter && nameFilter, "per-column filters exist");
+    areaFilter->setText(QStringLiteral("Bewegung"));
+    int visible = 0;
+    for (int i = 0; i < values->topLevelItemCount(); ++i)
+        if (!values->topLevelItem(i)->isHidden()) {
+            ++visible;
+            require(values->topLevelItem(i)->text(1) == QStringLiteral("Bewegung"),
+                "area filtering hides other domains");
+        }
+    require(visible > 0 && visible < rootValues, "filter changes actual visible rows");
+    nameFilter->setText(QStringLiteral("no-such-property"));
+    for (int i = 0; i < values->topLevelItemCount(); ++i)
+        require(values->topLevelItem(i)->isHidden(), "column filters combine with AND");
+    areaFilter->clear(); nameFilter->clear();
+    values->sortItems(3, Qt::AscendingOrder);
+    double previous = -std::numeric_limits<double>::infinity();
+    bool colorFound = false, pivotFound = false;
+    QTreeWidgetItem* pivotRow = nullptr;
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        auto* row = values->topLevelItem(i);
+        const auto numeric = row->data(3, Qt::UserRole+10);
+        if (numeric.isValid()) {
+            require(numeric.toDouble() >= previous, "value column sorts numerically ascending");
+            previous = numeric.toDouble();
+            require(row->toolTip(3).size() > 0, "numeric display retains full original tooltip");
+            const auto mantissa = row->text(3).section(QLatin1Char('e'),0,0);
+            require(!mantissa.contains(QLatin1Char('.'))
+                || mantissa.section(QLatin1Char('.'),1).size() <= 2,
+                "displayed scalar numbers have at most two decimal places");
+        }
+        colorFound = colorFound || row->data(3,Qt::UserRole+11).value<QColor>().isValid();
+        if (row->data(0,Qt::UserRole+13).toString() == QStringLiteral("pivot")) pivotRow = row;
+    }
+    require(colorFound, "color property is painted as a rounded swatch");
+    values->sortItems(3, Qt::DescendingOrder);
+    previous = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        const auto numeric = values->topLevelItem(i)->data(3,Qt::UserRole+10);
+        if (numeric.isValid()) {
+            require(numeric.toDouble() <= previous, "value column sorts numerically descending");
+            previous = numeric.toDouble();
+        }
+    }
+    if (pivotRow) {
+        pivotRow->setSelected(true);
+        pivotFound = inspectionScene->property("inspectionPivotCount").toInt() == 1;
+        require(inspectionScene->property("inspectionMovementPoseCount").toInt() == 0,
+            "pivot selection shows point and axis rather than every pose");
+        values->clearSelection();
+    }
+    require(pivotFound, "selecting actual pivot property displays model-fixed pivot");
+    const auto checkMovementBounds = [&](bool expectBounds) {
+      const auto tableCamera = inspectionScene->cameraView();
+      int extremes = 0;
+      for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        auto* row = values->topLevelItem(i);
+        const auto action = row->data(0,Qt::UserRole+13).toString();
+        if (action != QStringLiteral("minimum") && action != QStringLiteral("maximum")) {
+            if (row->text(2).startsWith(QStringLiteral("Vorschau ")))
+                require(row->text(5) == QStringLiteral("nicht_vorhanden"),
+                    "undefined bounds remain explicit and have no clickable preview action");
+            continue;
+        }
+        row->setSelected(true);
+        require(inspectionScene->property("inspectionMovementPoseCount").toInt() == 1,
+            "selecting an available movement bound shows exactly its Core-transformed pose");
+        const auto camera = inspectionScene->cameraView();
+        require(camera.position == tableCamera.position && camera.focalPoint == tableCamera.focalPoint,
+            "table-selected previews preserve camera");
+        nameFilter->setText(QStringLiteral("no-such-property"));
+        require(inspectionScene->property("inspectionMovementPoseCount").toInt() == 0,
+            "filtering away selected movement bound removes its preview");
+        nameFilter->clear();
+        values->clearSelection();
+        ++extremes;
+      }
+      require(expectBounds ? extremes >= 2 : extremes == 0,
+          "only genuinely defined lower and upper movement bounds are selectable");
+    };
+    checkMovementBounds(false);
+    values->sortItems(0, Qt::AscendingOrder);
+    areaFilter->setText(QStringLiteral("Darstellung"));
+    values->scrollToTop();
+    QApplication::processEvents();
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_property_colors.bmp")), "BMP"),
+        "rounded color property screenshot");
+    areaFilter->clear();
+    tree->clearSelection();
+    require(values->topLevelItemCount() == 0, "empty selection clears table");
+    QString focusedElement;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const auto elements = (*it)->data(0, Qt::UserRole + 1).toStringList();
+        if (elements.size() == 1
+            && inspectionScene->inspectionOpacity(elements.front()) > 0.0) {
+            (*it)->setSelected(true);
+            focusedElement = elements.front();
+            break;
+        }
+    }
+    require(!focusedElement.isEmpty(), "selectable displayed part exists");
+    require(inspectionScene->inspectionOpacity(focusedElement) == 1.0,
+        "actual tree element selection is opaque");
+    tree->clearSelection();
+    const auto inspectionCamera = inspectionScene->cameraView();
+    int geometries = 0;
+    QSet<QString> sourceIds;
+    QSet<QString> elementIds;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) {
+            const auto ids = (*it)->data(0, Qt::UserRole + 1).toStringList();
+            require(ids.size() == 1 && !elementIds.contains(ids.front()),
+                "each element appears once in the canonical object hierarchy");
+            elementIds.insert(ids.front());
+        }
+        if (!(*it)->data(0, Qt::UserRole + 2).isValid()) continue;
+        auto* geometry = *it;
+        tree->clearSelection();
+        geometry->setSelected(true);
+        QApplication::processEvents();
+        require(inspectionScene->property("hasInspectionMesh").toBool(), "each advertised geometry renders");
+        const auto camera = inspectionScene->cameraView();
+        require(camera.position == inspectionCamera.position && camera.focalPoint == inspectionCamera.focalPoint,
+            "geometry changes preserve camera");
+        geometry->setCheckState(0, Qt::Checked);
+        tree->clearSelection();
+        require(inspectionScene->property("hasInspectionMesh").toBool(),
+            "checked geometry remains renderable without a selected node");
+        geometry->setCheckState(0, Qt::Unchecked);
+        ++geometries;
+        require(!geometry->toolTip(0).isEmpty(), "geometry provenance is visible");
+        if (geometry->text(0).startsWith(QStringLiteral("Quellmesh"))) {
+            const auto key = geometry->parent()->text(0) + geometry->text(0);
+            require(!sourceIds.contains(key), "source reused by roles is listed only once");
+            sourceIds.insert(key);
+        }
+    }
+    require(geometries > 0 && !sourceIds.isEmpty(), "source geometries exist");
+    require(!elementIds.isEmpty(), "canonical object tree retains model elements");
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_unified_source.bmp")), "BMP"),
+        "unified source model screenshot");
+    QTreeWidgetItem* derivedRoot = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        if ((*it)->text(0) == QStringLiteral("Abgeleitete Daten") && (*it)->childCount()) {
+            derivedRoot = *it;
+            break;
+        }
+    require(derivedRoot, "derived geometry branch exists under its element");
+    require(derivedRoot->childCount() > 0, "derived geometry remains available in unified format");
+    derivedRoot->setExpanded(true);
+    auto* derived = derivedRoot->child(0);
+    derived->setSelected(true);
+    tree->scrollToItem(derived);
+    QApplication::processEvents();
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_unified_derived.bmp")), "BMP"),
+        "unified derived geometry screenshot");
+    tree->clearSelection();
+    int movementPreviews = 0;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
+        if (id.isEmpty()) continue;
+        auto* previewItem = *it;
+        previewItem->setCheckState(0, Qt::Checked);
+        tree->clearSelection();
+        inspectionScene->renderNow();
+        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() > 0,
+            "checked movement preview is visible without changing simulation");
+        const auto camera = inspectionScene->cameraView();
+        require(camera.position == inspectionCamera.position && camera.focalPoint == inspectionCamera.focalPoint,
+            "movement preview preserves inspection camera");
+        require(previewItem->toolTip(0).contains(QStringLiteral("Normal:")),
+            "movement preview explains pose colors");
+        tree->scrollToItem(previewItem);
+        if (!movementPreviews)
+            require(window.grab().save(evidence.filePath(QStringLiteral("boat_movement_preview.bmp")), "BMP"),
+                "movement preview screenshot");
+        previewItem->setCheckState(0, Qt::Unchecked);
+        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() == 0,
+            "unchecking preview removes only temporary movement graphics");
+        ++movementPreviews;
+    }
+    require(movementPreviews > 0, "moving elements expose a preview in the common object tree");
+    const auto simulationCamera = simulationScene->cameraView();
+    testWorkspaceTabs(window, *simulationScene, evidence, report);
+    tabs->setCurrentIndex(0);
+    require(simulationScene->cameraView().position == simulationCamera.position,
+        "inspection never changes simulation camera");
+    const auto treeBefore = tree->topLevelItemCount();
+    QFile changed(copy.filePath(QStringLiteral("modell.json")));
+    require(changed.open(QIODevice::WriteOnly | QIODevice::Truncate), "change captured fixture");
+    changed.write("{");
+    changed.close();
+    QElapsedTimer watcher;
+    watcher.start();
+    while (watcher.elapsed() < 1400) {
+        QApplication::processEvents();
+        QThread::msleep(10);
+    }
+    require(tree->topLevelItemCount() == treeBefore,
+        "file watcher must not replace or invalidate opened inspection");
+    tree->topLevelItem(0)->setSelected(true);
+    require(values->topLevelItemCount() > 0, "properties still work after corrupting source file");
+    const auto frozenSelection = tree->selectedItems().front()->data(0, Qt::UserRole).toString();
+    const int frozenRows = values->topLevelItemCount();
+    tabs->setCurrentIndex(1);
+    tabs->setCurrentIndex(2);
+    tabs->setCurrentIndex(0);
+    require(!tree->selectedItems().empty()
+        && tree->selectedItems().front()->data(0, Qt::UserRole).toString() == frozenSelection
+        && values->topLevelItemCount() == frozenRows,
+        "workspace switching preserves inspection node and property selection");
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_inspection.bmp")), "BMP"),
+        "inspection screenshot");
+    tree->clearSelection();
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_display.bmp")), "BMP"),
+        "default boat display screenshot");
+
+    segelphysik::InspectionMesh pointMesh;
+    pointMesh.id = "point";
+    pointMesh.element_id = "mass";
+    pointMesh.type = "massenpunkte";
+    pointMesh.topology = "punkte";
+    pointMesh.points_m = {{{1.0, 2.0, 3.0}}};
+    const auto points = toDisplayParts(std::vector<segelphysik::InspectionMesh>{pointMesh});
+    require(points.size() == 1 && points[0].mesh->GetNumberOfVerts() == 1
+        && points[0].mesh->GetNumberOfPolys() == 0, "point mesh conversion preserves topology");
+    QString error;
+    require(inspectionScene->setModel(points, &error), "point topology rendered without fake triangles");
+    inspectionScene->setInspectionSelection({QStringLiteral("other")}, true);
+    require(std::abs(inspectionScene->inspectionOpacity(QStringLiteral("mass")) - 0.15) < 1e-12,
+        "nonselected context opacity is exactly 0.15");
+    inspectionScene->setInspectionSelection({QStringLiteral("mass")}, true);
+    require(inspectionScene->inspectionOpacity(QStringLiteral("mass")) == 1.0,
+        "selected element is opaque");
+    const auto singleFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source"));
+    segelphysik::konvertiere_modell_v3(
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/modell.json")).toStdWString()),
+        std::filesystem::path(singleFolder.toStdWString()));
+    window.setModelFolder(singleFolder);
+    window.selectInitialModel(QStringLiteral("quader"));
+    waitUntil([&] { return tree->topLevelItemCount() == 1
+        && inspectionScene->property("hasInspectionMesh").toBool(); },
+        "single-source model GUI load timeout");
+    inspectionScene->renderNow();
+    int singleSources = 0;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
+            "schema 3 must not retain competing source references");
+        if ((*it)->text(0).startsWith(QStringLiteral("Quellmesh"))) ++singleSources;
+    }
+    require(singleSources == 1 && inspectionScene->property("hasInspectionMesh").toBool(),
+        "strict single-source model renders through the same GUI pipeline");
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3.bmp")), "BMP"),
+        "strict single-source render screenshot");
+    const auto derivedFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source-derived"));
+    segelphysik::konvertiere_modell_v3(
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/modell.json")).toStdWString()),
+        std::filesystem::path(derivedFolder.toStdWString()), true);
+    window.setModelFolder(derivedFolder);
+    window.selectInitialModel(QStringLiteral("optimist"));
+    waitUntil([&] { return tree->topLevelItemCount() == 1
+        && inspectionScene->property("hasInspectionMesh").toBool(); },
+        "derived single-source boat GUI load timeout");
+    QSet<QString> sourceOwners;
+    QTreeWidgetItem* derivedVolume = nullptr;
+    QTreeWidgetItem* derivedMass = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
+            "derived boat has no competing sources");
+        if ((*it)->text(0).startsWith(QStringLiteral("Quellmesh"))) {
+            const auto owners = (*it)->data(0,Qt::UserRole+1).toStringList();
+            require(owners.size() == 1 && !sourceOwners.contains(owners.front()),
+                "derived boat exposes exactly one source per element");
+            sourceOwners.insert(owners.front());
+        }
+        if ((*it)->text(0) == QStringLiteral("hydrostatik_volumen")) derivedVolume = *it;
+        if ((*it)->text(0) == QStringLiteral("massen_mesh")) derivedMass = *it;
+    }
+    require(derivedVolume && derivedMass && sourceOwners.size() > 1,
+        "plane-cut volume and open mass shell appear as derived data under elements");
+    require(derivedVolume->toolTip(0).contains(QStringLiteral("z_schnitt"))
+        && derivedMass->toolTip(0).contains(QStringLiteral("ohne_deckflaeche")),
+        "derived geometry controls explain the actual Core derivation");
+    tree->expandAll();
+    derivedVolume->setCheckState(0,Qt::Checked);
+    derivedVolume->setSelected(true);
+    inspectionScene->renderNow();
+    require(values->topLevelItemCount() > 0, "derived element selection exposes all properties");
+    bool derivedUseListed = false;
+    for (QTreeWidgetItemIterator it(values); *it; ++it)
+        if ((*it)->text(2) == QStringLiteral("Verwendungen")
+            && (*it)->text(3).contains(QStringLiteral("hydrostatik_volumen (Ableitung)")))
+            derivedUseListed = true;
+    require(derivedUseListed, "source usage table includes derived physical uses, not just unchanged copies");
+    require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3_derived.bmp")), "BMP"),
+        "single-source boat with actual derived volume screenshot");
+    tree->clearSelection();
+    tree->topLevelItem(0)->setSelected(true);
+    checkMovementBounds(true);
+    report.insert(QStringLiteral("boatInspectionTreesMeshesValuesFixedSnapshotAndLayout"), true);
+    report.insert(QStringLiteral("unifiedModelFormatRendered"), true);
+}
+
 void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& report)
 {
     require(evidence.mkpath(QStringLiteral("gui-test-settings")), "isolated GUI settings directory");
@@ -547,7 +1125,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     auto* cameraCombo = window.findChild<QComboBox*>(QStringLiteral("cameraPreset"));
     auto* navigationCheck = window.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
     auto* slider = window.findChild<QSlider*>();
-    auto* values = window.findChild<QTreeWidget*>();
+    auto* values = window.findChild<QTreeWidget*>(QStringLiteral("simulationValues"));
     require(run && stop && mode && duration && profiles && vectors && slider && values && status
         && cameraCombo && navigationCheck,
         "MainWindow integration controls absent");
@@ -555,9 +1133,11 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     require(!unexpectedDialog, "unexpected model load error");
     VtkSceneWidget* scene = nullptr;
     for (auto* widget : window.findChildren<QWidget*>()) {
-        if (auto* candidate = dynamic_cast<VtkSceneWidget*>(widget)) scene = candidate;
+        if (auto* candidate = dynamic_cast<VtkSceneWidget*>(widget);
+            candidate && candidate->objectName() == QStringLiteral("simulationScene")) scene = candidate;
     }
     require(scene != nullptr, "MainWindow scene absent");
+    testWorkspaceTabs(window, *scene, evidence, report);
     auto* overlay = scene->findChild<QWidget*>(QStringLiteral("navigationOverlay"));
     require(overlay && overlay->isVisible(), "viewport navigation overlay absent");
     require(cameraCombo->isEnabled() && cameraCombo->count() == 15, "14 camera presets plus free view");
@@ -602,6 +1182,19 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     waitUntil([&] { return slider->maximum() > 2 || unexpectedDialog; }, "GUI live states absent");
     require(!unexpectedDialog, "unexpected live error");
     slider->setValue(0);
+    auto* workspaceTabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    for (int index = 0; index < workspaceTabs->count(); ++index) {
+        workspaceTabs->setCurrentIndex(index);
+        if (index == 0) {
+            auto* inspectionTree = window.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+            require(inspectionTree && inspectionTree->topLevelItemCount() > 0,
+                "inspection remains usable during live simulation");
+            inspectionTree->topLevelItem(0)->setSelected(true);
+        }
+        require(mode->currentIndex() == 1 && slider->value() == 0 && stop->isEnabled(),
+            "workspace switch must not change simulation mode, selected state or stop a live run");
+    }
+    workspaceTabs->setCurrentIndex(2);
     const auto camera = scene->cameraView();
     auto* compassWidget = scene->findChild<QWidget*>(QStringLiteral("navigation_compass"));
     auto* compass = dynamic_cast<navigation::Instrument*>(compassWidget);
@@ -661,8 +1254,9 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     graphicsAction->trigger();
     require(setupVisited, "Setup not usable during live run");
     waitUntil([&] { return !stop->isEnabled() || unexpectedDialog; }, "GUI cancellation timeout");
-    require(!unexpectedDialog && status->text().contains(QStringLiteral("abgebrochen")),
-        "GUI cancellation did not preserve partial status");
+    if (unexpectedDialog || !status->text().contains(QStringLiteral("abgebrochen")))
+        throw std::runtime_error("GUI cancellation did not preserve partial status: "
+            + status->text().toStdString());
     require(slider->maximum() > 0, "GUI cancellation lost recorded states");
     profiles->setCurrentIndex(0);
     profiles->setCurrentIndex(1);
@@ -721,6 +1315,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
             && sword->value() == 1000,
         "movement controls do not match model defaults or project-wide limits");
     movementMode->setCurrentIndex(1);
+    movementWindow.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(2);
     require(movementPanel->isVisible(), "dynamic movement panel is hidden");
     waitUntil([&] { return movementRun->isEnabled() || unexpectedDialog; },
         "dynamic movement run did not become available");
@@ -1188,6 +1783,24 @@ int main(int argc, char** argv)
     vtkNew<RenderErrors> renderErrors;
     vtkOutputWindow::SetInstance(renderErrors);
     try {
+        if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--inspection-only")) {
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "inspection evidence directory");
+            QJsonObject report;
+            testBoatInspection(app.arguments()[2], evidence, report);
+            require(renderErrors->count == 0, "VTK error in inspection test");
+            std::cout << QJsonDocument(report).toJson().toStdString();
+            return 0;
+        }
+        if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--main-window-only")) {
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "main-window evidence directory");
+            QJsonObject report;
+            testMainWindow(app.arguments()[2], evidence, report);
+            require(renderErrors->count == 0, "VTK error in focused main-window test");
+            std::cout << QJsonDocument(report).toJson().toStdString();
+            return 0;
+        }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--water-motion-only")) {
             testWaterMotion(app.arguments()[2], app.arguments()[3]);
             require(renderErrors->count == 0, "VTK error in focused water-motion test");

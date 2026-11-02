@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QMainWindow>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 
 #include <array>
@@ -33,6 +34,9 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class VtkSceneWidget;
+class BoatInspection;
+class QStackedWidget;
+class QHBoxLayout;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -55,6 +59,8 @@ private:
 
     QWidget* buildDisplayPanel();
     QDockWidget* buildValuesDock();
+    void applyWorkspaceTheme(int index);
+    void updateWorkspace(int index);
     void chooseModelFolder();
     void reloadCatalog();
     void applyCatalog(const CatalogSnapshot& snapshot);
@@ -98,6 +104,13 @@ private:
     void copyValues() const;
 
     VtkSceneWidget* scene_ = nullptr;
+    BoatInspection* inspection_ = nullptr;
+    QStackedWidget* workspaceStack_ = nullptr;
+    QStackedWidget* valuesStack_ = nullptr;
+    QWidget* playbackPanel_ = nullptr;
+    bool simulationValuesVisible_ = true;
+    QWidget* catalogPanel_ = nullptr;
+    QHBoxLayout* mainArea_ = nullptr;
     graphics::Settings graphics_ = graphics::defaults();
     bool graphicsReady_ = false;
     QLabel* graphicsStatus_ = nullptr;
@@ -188,6 +201,7 @@ private:
     std::atomic_bool cancellation_{false};
     std::atomic_bool shuttingDown_{false};
     QPointer<QThread> openThread_;
+    QSet<QThread*> openThreads_;
     QPointer<QThread> simulationThread_;
     QPointer<QThread> catalogThread_;
 };

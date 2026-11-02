@@ -13,6 +13,8 @@
 #include <QVBoxLayout>
 
 #include <QVTKOpenGLNativeWidget.h>
+#include <QPainterPath>
+#include <QRegion>
 
 #include <vtkActor.h>
 #include <vtkAxesActor.h>
@@ -52,6 +54,7 @@
 #include <vtkSSAOPass.h>
 #include <vtkStripper.h>
 #include <vtkTextProperty.h>
+#include <vtkTextActor.h>
 #include <vtkTexture.h>
 #include <vtkTriangleFilter.h>
 #include <vtkTransform.h>
@@ -669,7 +672,7 @@ vtkSmartPointer<vtkTransform> reflectedPoseTransform(const forcedisplay::Pose& p
 // Äquirektangulärer Himmel (Z oben): dunkler Zenit, heller Dunst am
 // Horizont, gedämpfte Sonne, darunter dunkles Wasser. Dient als Skybox und
 // als Umgebungslicht für Spiegelungen.
-vtkSmartPointer<vtkTexture> makeSkyTexture()
+vtkSmartPointer<vtkTexture> makeSkyTexture(bool inspection = false)
 {
     constexpr int width = 1024;
     constexpr int height = 512;
@@ -684,7 +687,11 @@ vtkSmartPointer<vtkTexture> makeSkyTexture()
             const Vec3 direction{std::cos(elevation) * std::cos(azimuth),
                 std::cos(elevation) * std::sin(azimuth), std::sin(elevation)};
             double rgb[3];
-            if (elevation >= 0.0) {
+            if (inspection) {
+                rgb[0] = 198.0 / 255.0;
+                rgb[1] = 149.0 / 255.0;
+                rgb[2] = 165.0 / 255.0;
+            } else if (elevation >= 0.0) {
                 const double t = std::pow(elevation / (0.5 * pi), 0.45);
                 const double zenith[3] = {0.07, 0.15, 0.27};
                 for (int c = 0; c < 3; ++c) {
@@ -1086,6 +1093,7 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
 
 void VtkSceneWidget::addEnvironmentActors()
 {
+    if (inspectionAxes_) renderer_->AddActor(inspectionAxes_);
     renderer_->AddActor(skybox_);
     renderer_->AddActor(deepActor_);
     renderer_->AddActor(waterActor_);
@@ -1104,6 +1112,8 @@ void VtkSceneWidget::clearModel()
 {
     resetMotionHistory();
     renderer_->RemoveAllViewProps();
+    inspectionPreviewActors_.clear();
+    inspectionGridLabels_.clear();
     overlay_->RemoveAllViewProps();
     addEnvironmentActors();
     bodies_.clear();
@@ -1148,7 +1158,8 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             auto tangents = vtkSmartPointer<vtkPolyDataTangents>::New();
             tangents->SetInputConnection(normals->GetOutputPort());
             auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-            mapper->SetInputConnection(tangents->GetOutputPort());
+            if (bodyMesh->GetNumberOfPolys() == 0) mapper->SetInputData(bodyMesh);
+            else mapper->SetInputConnection(tangents->GetOutputPort());
             auto bodyActor = vtkSmartPointer<vtkActor>::New();
             bodyActor->SetMapper(mapper);
             double baseColor[3] = {i % 2 == 0 ? 0.82 : 0.43,
@@ -1159,11 +1170,16 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             bodyActor->GetProperty()->SetColor(baseColor[0], baseColor[1], baseColor[2]);
             const double opacity = applySurface(bodyActor->GetProperty(), part.surface);
             bodyActor->GetProperty()->BackfaceCullingOff();
+            if (bodyMesh->GetNumberOfPolys() == 0) {
+                bodyActor->GetProperty()->SetPointSize(7.0);
+                bodyActor->GetProperty()->RenderPointsAsSpheresOn();
+            }
             renderer_->AddActor(bodyActor);
 
             auto plane = vtkSmartPointer<vtkPlane>::New();
             auto cutter = vtkSmartPointer<vtkCutter>::New();
-            cutter->SetInputData(outwardNormals(bodyMesh));
+            cutter->SetInputData(bodyMesh->GetNumberOfPolys() == 0
+                ? bodyMesh : outwardNormals(bodyMesh));
             cutter->SetCutFunction(plane);
             auto waterlineData = vtkSmartPointer<vtkPolyData>::New();
             auto waterlineMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
@@ -1233,6 +1249,7 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         lateralLabel_->VisibilityOff();
         updateWaterPlane();
         frameBodies();
+        if (inspectionMode_) applyBodyStyle();
         renderWindow_->Render();
         return true;
     } catch (const std::exception& exception) {
@@ -2112,6 +2129,135 @@ void VtkSceneWidget::moveForceActors()
     overlay_->SetPreserveDepthBuffer(options_.visibility == Visibility::Spatial);
 }
 
+void VtkSceneWidget::setInspectionMode()
+{
+    inspectionMode_ = true;
+    setStyleSheet(QStringLiteral("border:1px solid #704554; border-radius:12px;"));
+    layout()->setContentsMargins(1, 1, 1, 1);
+    updateInspectionMask();
+    inspectionAxes_ = vtkSmartPointer<vtkAxesActor>::New();
+    inspectionAxes_->SetXAxisLabelText("X");
+    inspectionAxes_->SetYAxisLabelText("Y");
+    inspectionAxes_->SetZAxisLabelText("Z");
+    const std::array<std::array<double, 3>, 3> axisColors = {{
+        {0.91, 0.49, 0.47}, {0.51, 0.78, 0.61}, {0.51, 0.71, 0.95}}};
+    const std::array<vtkCaptionActor2D*, 3> captions = {{
+        inspectionAxes_->GetXAxisCaptionActor2D(), inspectionAxes_->GetYAxisCaptionActor2D(),
+        inspectionAxes_->GetZAxisCaptionActor2D()}};
+    for (std::size_t i = 0; i < captions.size(); ++i) {
+        captions[i]->GetTextActor()->SetTextScaleModeToNone();
+        auto* text = captions[i]->GetCaptionTextProperty();
+        text->SetFontSize(14);
+        text->SetColor(axisColors[i].data());
+        text->ShadowOff();
+        text->ItalicOff();
+        text->BoldOff();
+    }
+    inspectionAxes_->PickableOff();
+    inspectionAxes_->UseBoundsOff();
+    renderer_->AddActor(inspectionAxes_);
+    setNavigationVisible(false);
+    auto options = options_;
+    options.forces = false;
+    options.leverArm = false;
+    options.lateralCenter = false;
+    setOptions(options);
+    auto profile = graphics::defaults(1);
+    profile.environmentPath.clear();
+    for (auto feature : {graphics::Feature::Axes, graphics::Feature::Trail,
+             graphics::Feature::WaterTrack, graphics::Feature::Wake,
+             graphics::Feature::Waterline, graphics::Feature::Reflection,
+             graphics::Feature::Water, graphics::Feature::Sky,
+             graphics::Feature::BodyTransparency})
+        profile.enabled[static_cast<std::size_t>(feature)] = false;
+    profile.enabled[static_cast<std::size_t>(graphics::Feature::Grid)] = true;
+    proceduralSkyTexture_ = makeSkyTexture(true);
+    skyTexture_ = proceduralSkyTexture_;
+    loadedEnvironmentPath_.clear();
+    renderer_->SetEnvironmentTexture(skyTexture_);
+    skybox_->SetTexture(skyTexture_);
+    setGraphicsProfile(profile);
+    rebuildEnvironment();
+    requestRender();
+}
+
+void VtkSceneWidget::setInspectionSelection(const QSet<QString>& elementIds, bool hasSelection)
+{
+    inspectionElements_ = elementIds;
+    inspectionHasSelection_ = hasSelection;
+    applyBodyStyle();
+    requestRender();
+}
+
+double VtkSceneWidget::inspectionOpacity(const QString& elementId) const
+{
+    for (const auto& body : bodies_)
+        if (body.elementId == elementId) return body.body->GetProperty()->GetOpacity();
+    return 0.0;
+}
+
+void VtkSceneWidget::setInspectionPreview(const QVector<DisplayPart>& parts,
+    const std::vector<std::array<forcedisplay::Vec3, 2>>& axes,
+    const std::vector<forcedisplay::Vec3>& pivots)
+{
+    for (const auto& actor : inspectionPreviewActors_) renderer_->RemoveActor(actor);
+    inspectionPreviewActors_.clear();
+    for (const auto& part : parts) {
+        vtkNew<vtkPolyDataMapper> mapper;
+        mapper->SetInputData(part.mesh);
+        mapper->ScalarVisibilityOff();
+        auto actor = vtkSmartPointer<vtkActor>::New();
+        actor->SetMapper(mapper);
+        actor->PickableOff();
+        actor->UseBoundsOff();
+        actor->GetProperty()->SetColor(part.color[0], part.color[1], part.color[2]);
+        actor->GetProperty()->SetOpacity(0.55);
+        actor->GetProperty()->SetRepresentationToWireframe();
+        actor->GetProperty()->LightingOff();
+        renderer_->AddActor(actor);
+        inspectionPreviewActors_.push_back(actor);
+    }
+    if (!axes.empty()) {
+        vtkNew<vtkPoints> points;
+        vtkNew<vtkCellArray> lines;
+        for (const auto& axis : axes) {
+            const vtkIdType ids[2] = {points->InsertNextPoint(axis[0].data()),
+                points->InsertNextPoint(axis[1].data())};
+            lines->InsertNextCell(2, ids);
+        }
+        vtkNew<vtkPolyData> mesh;
+        mesh->SetPoints(points);
+        mesh->SetLines(lines);
+        auto actor = makeOverlayActor(mesh);
+        actor->PickableOff();
+        actor->UseBoundsOff();
+        actor->GetProperty()->SetColor(0.95, 0.85, 0.35);
+        actor->GetProperty()->SetLineWidth(3.0f);
+        renderer_->AddActor(actor);
+        inspectionPreviewActors_.push_back(actor);
+    }
+    if (!pivots.empty()) {
+        vtkNew<vtkPoints> points;
+        vtkNew<vtkCellArray> vertices;
+        for (const auto& point : pivots) {
+            const auto id = points->InsertNextPoint(point.data());
+            vertices->InsertNextCell(1, &id);
+        }
+        vtkNew<vtkPolyData> mesh;
+        mesh->SetPoints(points);
+        mesh->SetVerts(vertices);
+        auto actor = makeOverlayActor(mesh);
+        actor->PickableOff();
+        actor->UseBoundsOff();
+        actor->GetProperty()->SetColor(1., .85, .2);
+        actor->GetProperty()->SetPointSize(14.f);
+        actor->GetProperty()->RenderPointsAsSpheresOn();
+        renderer_->AddActor(actor);
+        inspectionPreviewActors_.push_back(actor);
+    }
+    requestRender();
+}
+
 void VtkSceneWidget::applyBodyStyle()
 {
     for (auto& body : bodies_) {
@@ -2165,7 +2311,9 @@ void VtkSceneWidget::applyBodyStyle()
         const bool bodyTransparency = graphicsProfile_.on(graphics::Feature::BodyTransparency);
         const double surfaceOpacity = cloth && graphicsProfile_.on(graphics::Feature::Cloth)
             ? 0.88 : materialOpacity;
-        const double opacity = bodyTransparency ? std::min(surfaceOpacity, graphicsProfile_.bodyOpacity) : surfaceOpacity;
+        const double opacity = inspectionMode_ && inspectionHasSelection_
+            ? (inspectionElements_.contains(body.elementId) ? 1.0 : 0.15)
+            : bodyTransparency ? std::min(surfaceOpacity, graphicsProfile_.bodyOpacity) : surfaceOpacity;
         property->SetOpacity(opacity);
 
         auto* reflectionProperty = body.reflection->GetProperty();
@@ -2200,6 +2348,11 @@ void VtkSceneWidget::applyGraphicsProfile()
         renderer_->GradientBackgroundOff();
         renderer_->SetBackground(0.055, 0.07, 0.09);
         renderer_->SetBackground2(0.055, 0.07, 0.09);
+    }
+    if (inspectionMode_) {
+        renderer_->SetBackground(0.125, 0.094, 0.125);
+        renderer_->SetBackground2(0.22, 0.137, 0.18);
+        renderer_->GradientBackgroundOn();
     }
     renderer_->SetUseFXAA(graphicsProfile_.on(graphics::Feature::FXAA));
     renderer_->SetUseSSAO(graphicsProfile_.on(graphics::Feature::SSAO));
@@ -2587,6 +2740,7 @@ void VtkSceneWidget::rebuildForceGeometry()
 bool VtkSceneWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == vtkWidget_) {
+        if (event->type() == QEvent::Resize && inspectionMode_) updateInspectionMask();
         if (event->type() == QEvent::MouseButtonPress) {
             const auto* mouse = static_cast<QMouseEvent*>(event);
             pressActive_ = mouse->button() == Qt::LeftButton;
@@ -2647,8 +2801,132 @@ void VtkSceneWidget::updateWaterPlane()
     geometryDirty_ = true;
 }
 
+void VtkSceneWidget::updateInspectionMask()
+{
+    QPainterPath outline;
+    outline.addRoundedRect(QRectF(vtkWidget_->rect()), 11.0, 11.0);
+    vtkWidget_->setMask(QRegion(outline.toFillPolygon().toPolygon()));
+}
+
+void VtkSceneWidget::rebuildInspectionGrid()
+{
+    for (const auto& label : inspectionGridLabels_) renderer_->RemoveActor(label);
+    inspectionGridLabels_.clear();
+    setProperty("inspectionGridLabelCount", 0);
+    double bounds[6];
+    gridMesh_->Initialize();
+    if (!bodyBounds(bounds)) {
+        gridActor_->VisibilityOff();
+        inspectionAxes_->VisibilityOff();
+        return;
+    }
+    constexpr double step = 0.5;
+    std::array<double, 3> low{}, high{};
+    for (int axis = 0; axis < 3; ++axis) {
+        low[axis] = std::floor(std::min(bounds[2 * axis], 0.0) / step) * step - step;
+        high[axis] = std::ceil(std::max(bounds[2 * axis + 1], 0.0) / step) * step + step;
+    }
+    vtkNew<vtkPoints> points;
+    vtkNew<vtkCellArray> lines;
+    vtkNew<vtkCellArray> dots;
+    vtkNew<vtkUnsignedCharArray> colors;
+    colors->SetNumberOfComponents(4);
+    const unsigned char color[4] = {181, 145, 164, 70};
+    const auto line = [&](const std::array<double, 3>& from, const std::array<double, 3>& to,
+                          bool solid) {
+        if (!solid) {
+            double length = 0.0;
+            for (int axis = 0; axis < 3; ++axis) length += std::abs(to[axis] - from[axis]);
+            const int count = std::max(1, static_cast<int>(std::ceil(length / 0.1)));
+            for (int i = 0; i <= count; ++i) {
+                std::array<double, 3> point{};
+                for (int axis = 0; axis < 3; ++axis)
+                    point[axis] = from[axis] + (to[axis] - from[axis]) * i / count;
+                const vtkIdType id = points->InsertNextPoint(point.data());
+                dots->InsertNextCell(1, &id);
+                colors->InsertNextTypedTuple(color);
+            }
+            return;
+        }
+        const vtkIdType ids[2] = {points->InsertNextPoint(from.data()),
+            points->InsertNextPoint(to.data())};
+        lines->InsertNextCell(2, ids);
+        colors->InsertNextTypedTuple(color);
+        colors->InsertNextTypedTuple(color);
+    };
+    // Three open reference faces; equal world-space spacing, fixed to model coordinates.
+    for (int normal = 0; normal < 3; ++normal) {
+        const int a = (normal + 1) % 3, b = (normal + 2) % 3;
+        for (int direction = 0; direction < 2; ++direction) {
+            const int fixed = direction == 0 ? a : b;
+            const int varying = direction == 0 ? b : a;
+            const int count = static_cast<int>(std::llround((high[fixed] - low[fixed]) / step));
+            for (int i = 0; i <= count; ++i) {
+                auto from = low, to = low;
+                from[fixed] = to[fixed] = low[fixed] + i * step;
+                to[varying] = high[varying];
+                const bool solid = std::llround(from[fixed] * 2.0) % 2 == 0;
+                line(from, to, solid);
+            }
+        }
+    }
+    gridMesh_->SetPoints(points);
+    gridMesh_->SetLines(lines);
+    gridMesh_->SetVerts(dots);
+    gridMesh_->GetPointData()->SetScalars(colors);
+    gridMesh_->Modified();
+    gridActor_->VisibilityOn();
+    gridActor_->GetProperty()->SetPointSize(1.5f);
+    gridActor_->GetProperty()->RenderPointsAsSpheresOn();
+    inspectionAxes_->SetTotalLength(2.0 * step, 2.0 * step, 2.0 * step);
+    inspectionAxes_->VisibilityOn();
+    std::vector<QRectF> labelRects;
+    for (int axis = 0; axis < 3; ++axis) {
+        auto endpoint = low;
+        endpoint[axis] = high[axis];
+        const auto screenDelta = toLogicalScreen(endpoint) - toLogicalScreen(low);
+        const double screenLength = std::hypot(screenDelta.x(), screenDelta.y());
+        const double spacing = std::max(1., std::ceil(
+            44. * (high[axis] - low[axis]) / std::max(1., screenLength)));
+        for (double coordinate = std::ceil(low[axis]/spacing)*spacing;
+             coordinate <= high[axis]; coordinate += spacing) {
+            auto position = low;
+            position[axis] = coordinate;
+            if (axis < 2) {
+                position[1-axis] -= .12;
+                position[2] -= .06;
+            } else {
+                position[0] -= .12;
+                position[1] -= .12;
+            }
+            const auto caption = QStringLiteral("%1 m").arg(coordinate, 0, 'f', 0).toUtf8();
+            const auto screen = toLogicalScreen(position);
+            const double width = 8. * caption.size() + 8.;
+            const QRectF labelRect(screen.x()-width/2., screen.y()-18., width, 24.);
+            if (std::any_of(labelRects.begin(), labelRects.end(),
+                [&](const auto& other) { return other.intersects(labelRect); })) continue;
+            labelRects.push_back(labelRect);
+            auto label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+            label->SetInput(caption.constData());
+            label->SetPosition(position.data());
+            label->PickableOff();
+            label->UseBoundsOff();
+            label->GetTextProperty()->SetFontSize(12);
+            label->GetTextProperty()->SetColor(.85,.76,.81);
+            label->GetTextProperty()->SetJustificationToCentered();
+            renderer_->AddActor(label);
+            inspectionGridLabels_.push_back(label);
+        }
+    }
+    setProperty("inspectionGridLabelCount", static_cast<int>(inspectionGridLabels_.size()));
+}
+
 void VtkSceneWidget::rebuildEnvironment()
 {
+    if (inspectionMode_) {
+        rebuildInspectionGrid();
+        return;
+    }
     auto* camera = renderer_->GetActiveCamera();
     double position[3];
     double focal[3];
@@ -2676,9 +2954,13 @@ void VtkSceneWidget::rebuildEnvironment()
         const double opacity = graphicsProfile_.on(graphics::Feature::Fresnel)
             ? mix(graphicsProfile_.waterOpacity, 0.95, grazing) : graphicsProfile_.waterOpacity;
         const double alpha = fade * std::clamp(opacity, 0.0, 0.95);
-        rgba[0] = toByte(mix(waterColor[0], horizonColor[0], haze));
-        rgba[1] = toByte(mix(waterColor[1], horizonColor[1], haze));
-        rgba[2] = toByte(mix(waterColor[2], horizonColor[2], haze));
+        const double inspectionWater[3] = {101.0 / 255.0, 40.0 / 255.0, 63.0 / 255.0};
+        const double inspectionSky[3] = {198.0 / 255.0, 149.0 / 255.0, 165.0 / 255.0};
+        const auto* water = inspectionMode_ ? inspectionWater : waterColor;
+        const auto* sky = inspectionMode_ ? inspectionSky : horizonColor;
+        rgba[0] = toByte(mix(water[0], sky[0], haze));
+        rgba[1] = toByte(mix(water[1], sky[1], haze));
+        rgba[2] = toByte(mix(water[2], sky[2], haze));
         rgba[3] = toByte(alpha);
     };
     auto setVertex = [&](vtkIdType id, double x, double y) {

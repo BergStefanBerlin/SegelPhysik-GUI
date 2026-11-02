@@ -1,0 +1,176 @@
+{
+  "status": "finalisiert",
+  "thema": "GUI Bootsauswahl",
+  "spezifikation": "../Spezifikation_GUI_Bootsauswahl.md",
+  "stand": "2026-11-02",
+  "zielversion": "G-0.8",
+  "ergaenzung": "Abschnitt 11 am 02.11.2026 finalisiert; beide Pläne umgesetzt. Nach anschließender Nutzerfreigabe für ausreichend genaue Physikerhaltung auch die drei Konfliktboote mit expliziten Core-Ableitungen migriert; alle elf Modelle technisch geprüft. Persönliche Abnahme separat; tatsächliche Nachweise im Plan.",
+  "nachtraegliche_freigaben": [
+    {
+      "datum": "2026-11-02",
+      "quelle": "Nutzer bestätigt Darstellungsvorschau: runde Ränder, Wasser in Bootsauswahl entfernen, Hauptobjektkoordinatensystem und kubisches Raster einblenden.",
+      "anforderungen": ["A-G-00074"],
+      "umsetzungsschritte": ["U-G-000066"],
+      "status": "technisch_umgesetzt_nutzerabnahme_offen"
+    },
+    {
+      "datum": "2026-11-02",
+      "quelle": "Nutzer beauftragt Spezifikation und Umsetzung eines eindeutigen ausbaufähigen Definitionspfades nach Alternative 2: stabile ID, getrennte Rolle, gemeinsame OBJ und JSON-Verwendung; Berechnungen und Darstellungen erhalten.",
+      "anforderungen": ["A-G-00070", "A-G-00071", "A-G-00072", "A-G-00073"],
+      "umsetzungsschritte": ["U-G-000063", "U-G-000064", "U-G-000065"],
+      "status": "technisch_umgesetzt_nutzerabnahme_offen"
+    },
+    {
+      "datum": "2026-11-01",
+      "quelle": "Nutzer fordert gemeinsame Anbindung statt doppelter Interfaces und Importwege; bisher sichtbare Funktion bleibt unverändert.",
+      "anforderungen": ["A-G-00069"],
+      "umsetzungsschritte": ["U-G-000055", "U-G-000061", "U-G-000062"],
+      "status": "technisch_umgesetzt_nutzerabnahme_offen"
+    }
+  ],
+  "inspektionsstand": "Bestätigt: Core liest einmal, danach bleiben Bäume, Werte und Meshes fix und gültig, unabhängig von Dateiänderungen. Neues Einlesen nur auf ausdrückliche Anforderung. Mesh-Updates und Modifikation später.",
+  "fachliche_entscheidungen": {
+    "K1": "Bestätigt: Kompass, Lage- und Geschwindigkeitsanzeigen ausblenden; Drehen, Verschieben und Zoomen per Maus bleiben.",
+    "K2": "Bestätigt: Nicht ausgewählte Teile dezent transparent wie Glas; Auswahl normal und deckend.",
+    "K3": "Bestätigt: Ohne Objektauswahl gesamtes Boot normal darstellen.",
+    "K4": "Entschieden: alle vorhandenen Objektbaumtypen und fachlichen Eigenschaften einschließlich Physiknetzen als lesbare Inspektion. Core-Vertragserweiterung für C-0.8; GUI-Ziel G-0.8. Spätere Reparaturen sind noch kein Schreibauftrag.",
+    "K5": "Mit Unterobjekten: ausgewählte Knoten und sämtliche Nachkommen. Keine zusätzliche Nur-Auswahl-Umschaltung beauftragt.",
+    "K6": "Bestätigt: gemeinsame Tabelle mit Objekt/Pfad, Überschneidungen einmal, keine automatische Summierung.",
+    "K7": "Bestätigt: Wasser gedeckt bordeauxfarben, Himmel heller Bordeaux-Rosé; konkrete Töne per Vorschau."
+  },
+  "hinweis": "Finalisiert am 01.11.2026, anschließend Umsetzung beauftragt und technisch nachgewiesen. Angenommene Punkte sind A-G-00057 bis A-G-00066 zugeordnet; ergänzende Integrationsanforderungen A-G-00067 und A-G-00068 stammen aus weiteren Nutzerentscheidungen, A-G-00069 aus der Wiederverwendungsforderung. Persönliche Abnahme offen; tatsächliche Tests und Baselinefehler siehe Umsetzungsplan.",
+  "geltungsbereich": "Reiter Bootsauswahl. Andere Ansichten werden hier nicht ausgestaltet. Übergreifend erfasst sind das Entfernen des Buttons Modellordner wählen aus den anderen Ansichten und der gemeinsame Titelblock oberhalb der Ansichtsauswahlreiter.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00044",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00075"],
+      "umsetzungsschritte": ["U-G-000067", "U-G-000069", "U-G-000072"],
+      "thema": "Ein gemeinsamer Objektbaum mit einer Quelle je Element",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#a-g-00075-ein-element-eine-quelle-ein-objektbaum",
+      "beschreibung": "Fachreiter entfernen, jedes Element einmal in seiner Baugruppe; Quelle und Ableitungen darunter getrennt. Keine zweite globale Elementliste, Altbestandskonflikte nicht nur verstecken."
+    },
+    {
+      "id": "IDEE-G-00045",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00076"],
+      "umsetzungsschritte": ["U-G-000067", "U-G-000070", "U-G-000072"],
+      "thema": "Vollständige Objekttabelle mit Bereichsspalte",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#a-g-00076-sämtliche-objektinformationen-in-einer-tabelle",
+      "beschreibung": "Alle vorhandenen Fachinformationen einschließlich Bewegung und berechneter Werte gemeinsam anzeigen. Objekt/Pfad, Bereich, Eigenschaft, Wert, Einheit, Status; Spaltenbreiten einstellbar. Nachkommen-/Mehrfachauswahl ohne Doppelwerte oder automatische Summen."
+    },
+    {
+      "id": "IDEE-G-00046",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00077"],
+      "umsetzungsschritte": ["U-G-000067", "U-G-000071", "U-G-000072"],
+      "thema": "Dreh-/Kippachsen und Normal-/Extremvorschauen",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#a-g-00077-bewegung-direkt-am-element-sichtbar-machen",
+      "beschreibung": "Vorschauen am Element aus tatsächlichen Core-Bewegungsdaten; Normalstellung und vorhandene Extreme unterscheidbar. Keine Änderung der Quelle oder Simulation, fehlende Grenzen nicht erfinden."
+    },
+    {
+      "id": "IDEE-G-00047",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00078"],
+      "umsetzungsschritte": ["U-G-000067", "U-G-000068", "U-G-000072"],
+      "thema": "Festes 1-m-/0,5-m-Darstellungsraster",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#a-g-00078-festes-metrisches-koordinatenraster",
+      "beschreibung": "Ganzzahlige Meterlinien einschließlich 0 durchgezogen; Zwischenlinien bei n+0,5 m gepunktet, nicht gestrichelt. Einheitlich in allen drei Richtungen, modellfest, unabhängig von Zoom/DPI. Keine Änderung physikalischer Stützstellen."
+    },
+    {
+      "id": "IDEE-G-00034",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00057"],
+      "thema": "Position und Sichtbarkeit der Modellordnerauswahl",
+      "bezug": "Bootsauswahl / Modellauswahl",
+      "beschreibung": "Der Button Modellordner wählen wird unterhalb der Modellauswahl angeordnet. Er ist ausschließlich im Reiter Bootsauswahl sichtbar und verschwindet aus den anderen Ansichten."
+    },
+    {
+      "id": "IDEE-G-00035",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00058"],
+      "thema": "Gemeinsame Höhe von Auswahl und Darstellung",
+      "bezug": "Bootsauswahl / Layout",
+      "beschreibung": "Die Modellauswahl und der darunterliegende Button bilden gemeinsam eine Spalte mit derselben Gesamthöhe wie das Darstellungsfenster."
+    },
+    {
+      "id": "IDEE-G-00036",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00059"],
+      "thema": "Keine Navigationselemente in der Bootsauswahl",
+      "bezug": "Bootsauswahl / Darstellung",
+      "beschreibung": "In der Bootsauswahl gibt es keine Navigationselemente. Diese Aussage bezieht sich ausschließlich auf die Bootsauswahl.",
+      "offene_details": [
+        "Keine; K1 und Gesamtspezifikation sind finalisiert."
+      ]
+    },
+    {
+      "id": "IDEE-G-00037",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00060"],
+      "thema": "Darstellung des ausgewählten Bootes oder Objekts",
+      "bezug": "Bootsauswahl / Darstellungsfenster",
+      "beschreibung": "Das Darstellungsfenster zeigt das ausgewählte Boot beziehungsweise Objekt."
+    },
+    {
+      "id": "IDEE-G-00038",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00061"],
+      "thema": "Menschenlesbarer Objektbaum",
+      "bezug": "Bootsauswahl / bisheriges Rechenfenster",
+      "beschreibung": "Im bisherigen Rechenfenster wird ein menschenlesbarer Objektbaum mit allen Teilen dargestellt."
+    },
+    {
+      "id": "IDEE-G-00039",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00062"],
+      "thema": "Reiter für verschiedene Objektbäume",
+      "bezug": "Bootsauswahl / Objektbaumdarstellung",
+      "beschreibung": "Oberhalb des Objektbaums gibt es Reiter zur Auswahl verschiedener Objektbäume, beispielsweise Hydrodynamik und GUI.",
+      "offene_details": [
+        "Keine; alle verfügbaren Typen aus dem finalen Core-C-0.8-Vertrag."
+      ]
+    },
+    {
+      "id": "IDEE-G-00040",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00063"],
+      "thema": "Tabellarische Werte des ausgewählten Knotens",
+      "bezug": "Bootsauswahl / unteres Wertefenster",
+      "beschreibung": "Das untere Fenster Werte zeigt die ausgewählten Knoten mit sämtlichen Unterobjekten tabellarisch. Bei Mehrfachauswahl dient Objekt/Pfad zur Zuordnung; Überschneidungen einmal anzeigen, keine automatische Summierung.",
+      "offene_details": [
+        "K5 und K6 sind fachlich geklärt; eine zusätzliche Nur-Auswahl-Umschaltung ist nicht beauftragt."
+      ]
+    },
+    {
+      "id": "IDEE-G-00041",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00064"],
+      "thema": "Titel und Untertitel oberhalb der Ansichtsauswahl",
+      "bezug": "GUI / gemeinsamer Kopfbereich",
+      "beschreibung": "SEGELPHYSIK und der Untertitel Hydrostatik · Gleichgewicht · Bewegung stehen oberhalb der Auswahlreiter Bootsauswahl, Statisches Modell und Dynamisches Modell. Die bisherige Reihenfolge von Titelblock und Auswahlreitern wird getauscht; die Texte bleiben unverändert."
+    },
+    {
+      "id": "IDEE-G-00042",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00065"],
+      "thema": "Grafischer Fokus auf die Objektbaumauswahl",
+      "bezug": "Bootsauswahl / rechter Objektbaum und Darstellungsfenster",
+      "beschreibung": "Im rechten Auswahlfeld können ein einzelnes Subobjekt, mehrere Subobjekte oder eine Gruppe ausgewählt werden. Die ausgewählten Objekte beziehungsweise die ausgewählte Gruppe werden im Darstellungsfenster grafisch hervorgehoben. Alle übrigen Elemente bleiben als räumlicher Kontext erkennbar, sind aber deutlich zurückgenommen, sodass klar ist, dass sie nicht zur aktuellen Auswahl gehören.",
+      "offene_details": [
+        "K2 und K3 geklärt: übrige Teile transparent wie Glas; ohne Auswahl gesamtes Boot normal."
+      ]
+    },
+    {
+      "id": "IDEE-G-00043",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00066"],
+      "thema": "Bordeauxfarbene Wasser- und Himmelsdarstellung",
+      "bezug": "Bootsauswahl / Darstellungsfenster",
+      "beschreibung": "In der Bootsauswahl wird die Wasserebene bordeauxfarben dargestellt, der Himmel hellbordeaux. Die Farbgebung gilt ausschließlich für diese Ansicht.",
+      "offene_details": [
+        "Keine Implementierungsblockade; Wasser #65283F, Himmel #C695A5 als Ausgangswerte, persönliche Sichtabnahme später."
+      ]
+    }
+  ]
+}

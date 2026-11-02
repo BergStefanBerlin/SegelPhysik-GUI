@@ -176,12 +176,13 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
     data.version = version;
     data.path = QString::fromStdWString(
         segelphysik::katalog_datei(catalog, id, fassung).wstring());
-    data.geometry = segelphysik::darstellungsgeometrie(catalog, id, fassung);
+    data.inspection = segelphysik::readModelInspection(catalog, id, fassung);
+    data.geometry = segelphysik::darstellungsgeometrie(*data.inspection);
     for (const auto& diagnostic : data.geometry.diagnosen) {
         data.partDiagnostics << diagnosticText(diagnostic);
     }
     try {
-        const auto structure = segelphysik::modellstruktur(catalog, id, fassung);
+        const auto structure = segelphysik::modellstruktur(*data.inspection);
         data.totalMassKg = structure.gesamtmasse_kg;
         data.bounds = structure.huellquader_m;
         for (const auto& group : structure.gruppen) {

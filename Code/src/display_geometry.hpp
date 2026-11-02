@@ -1,6 +1,7 @@
 #pragma once
 
 #include <segelphysik/katalog.hpp>
+#include <segelphysik/inspektion.hpp>
 
 #include <QString>
 #include <QVector>
@@ -27,3 +28,4 @@ struct DisplayPart {
 // Wandelt die vom Core gelieferte Darstellungsgeometrie in VTK-Netze um.
 // Wirft std::runtime_error, wenn kein Teil darstellbar ist.
 QVector<DisplayPart> toDisplayParts(const segelphysik::Darstellungsgeometrie& geometry);
+QVector<DisplayPart> toDisplayParts(const std::vector<segelphysik::InspectionMesh>& meshes);

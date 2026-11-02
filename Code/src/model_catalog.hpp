@@ -6,6 +6,7 @@
 // gehören in einen Worker-Thread.
 
 #include <segelphysik/katalog.hpp>
+#include <segelphysik/inspektion.hpp>
 
 #include <QHash>
 #include <QString>
@@ -57,6 +58,7 @@ CatalogSnapshot loadCatalog(const QString& folder);
 QStringList watchedModelPaths(const QString& folder);
 
 struct ModelDisplayData {
+    std::shared_ptr<const segelphysik::ModelInspection> inspection;
     QString modelId;
     QString version;
     QString path;
