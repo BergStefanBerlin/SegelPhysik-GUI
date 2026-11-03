@@ -178,6 +178,16 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
         segelphysik::katalog_datei(catalog, id, fassung).wstring());
     data.inspection = segelphysik::readModelInspection(catalog, id, fassung);
     data.geometry = segelphysik::darstellungsgeometrie(*data.inspection);
+    for (const auto& node : segelphysik::getObjectTree(*data.inspection, "objekte")) {
+        if (node.kind != "element" || node.element_ids.size() != 1) continue;
+        for (const auto& property : segelphysik::getObjectProperties(
+                 *data.inspection, "objekte", {node.id}, false)) {
+            if (property.id != "Hydrodynamik/rolle") continue;
+            if (const auto* role = std::get_if<std::string>(&property.value))
+                data.hydrodynamicRoles.insert(QString::fromStdString(node.element_ids.front()),
+                    QString::fromStdString(*role));
+        }
+    }
     for (const auto& diagnostic : data.geometry.diagnosen) {
         data.partDiagnostics << diagnosticText(diagnostic);
     }

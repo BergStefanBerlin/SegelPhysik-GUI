@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QSet>
 #include <QStringList>
 #include <QUuid>
 
@@ -119,6 +120,42 @@ segelphysik::Zustand startState(const QJsonObject& state, bool keepMotion)
     return result;
 }
 
+std::optional<segelphysik::DynamischeFremdkraftKonfiguration> dynamicForceConfiguration(
+    const QJsonObject& start, segelphysik::Zustand& state)
+{
+    const auto key = QStringLiteral("dynamische_fremdkraft");
+    if (!start.contains(key)) return std::nullopt;
+    const auto value = start.value(key);
+    if (!value.isObject())
+        throw std::invalid_argument("Dynamische Fremdkraft muss ein Objekt sein.");
+    const auto configuration = value.toObject();
+    if (!configuration.value(QStringLiteral("aktiv")).isBool()
+        || !configuration.value(QStringLiteral("stellungen")).isArray()
+        || (configuration.contains(QStringLiteral("modellfest"))
+            && (!configuration.value(QStringLiteral("modellfest")).isBool()
+                || !configuration.value(QStringLiteral("modellfest")).toBool())))
+        throw std::invalid_argument("Dynamische Fremdkraft ohne explizite modellfeste Kraft-/Stellungsdefinition.");
+    segelphysik::DynamischeFremdkraftKonfiguration result;
+    result.aktiv = configuration.value(QStringLiteral("aktiv")).toBool();
+    result.kraft_modellfest_n = finiteArray<3>(configuration, QStringLiteral("kraft_n"));
+    result.angriffspunkt_modell_m =
+        finiteArray<3>(configuration, QStringLiteral("angriffspunkt_modell_m"));
+    decltype(state.bewegungsstellungen) settings;
+    QSet<QString> ids;
+    for (const auto& entry : configuration.value(QStringLiteral("stellungen")).toArray()) {
+        const auto setting = entry.toObject();
+        const auto id = setting.value(QStringLiteral("element_id")).toString();
+        const auto number = setting.value(QStringLiteral("wert"));
+        if (id.isEmpty() || ids.contains(id) || !number.isDouble()
+            || !std::isfinite(number.toDouble()))
+            throw std::invalid_argument("Dynamische Fremdkraft ohne eindeutige gueltige Core-Bewegungsstellung.");
+        ids.insert(id);
+        settings.push_back({id.toStdString(), number.toDouble()});
+    }
+    state.bewegungsstellungen = std::move(settings);
+    return result;
+}
+
 } // namespace
 
 ModelValidation validateModel(const QString& modelPath)
@@ -212,7 +249,11 @@ SimulationResult runSimulation(const QString& modelPath,
         options.abbruch = cancellation;
         auto physicalStart = start;
         physicalStart.remove(QStringLiteral("stationaer"));
+        physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
         options.start = startState(physicalStart, dynamic || start.contains(QStringLiteral("stationaer")));
+        if (!dynamic && start.contains(QStringLiteral("dynamische_fremdkraft")))
+            throw std::invalid_argument("Dynamische Fremdkraft ist nur im dynamischen Lauf erlaubt.");
+        options.dynamische_fremdkraft = dynamicForceConfiguration(start, options.start);
         if (start.contains(QStringLiteral("stationaer"))) {
             const auto stationary = start.value(QStringLiteral("stationaer")).toObject();
             segelphysik::StationaereGleichgewichtKonfiguration configuration;
@@ -256,7 +297,8 @@ SimulationResult runSimulation(const QString& modelPath,
                 state.value(QStringLiteral("vertragsversion")).toString();
             if ((contract != QStringLiteral("1") && contract != QStringLiteral("2")
                     && contract != QStringLiteral("3") && contract != QStringLiteral("4")
-                    && contract != QStringLiteral("5") && contract != QStringLiteral("6"))
+                    && contract != QStringLiteral("5") && contract != QStringLiteral("6")
+                    && contract != QStringLiteral("7"))
                 || state.value(QStringLiteral("modell_id")).toString()
                     != validation.modelId
                 || state.value(QStringLiteral("modell_fassung")).toString()
@@ -270,7 +312,25 @@ SimulationResult runSimulation(const QString& modelPath,
                 && !state.value(QStringLiteral("stationaer")).isObject())
                 throw std::runtime_error(
                     "Core-Zustand V5 ohne stationaeren Ergebnisvertrag.");
-            if (contract == QStringLiteral("6")) {
+            if (contract == QStringLiteral("7")) {
+                if (!state.value(QStringLiteral("dynamische_fremdkraft")).isObject())
+                    throw std::runtime_error("Core-Zustand V7 ohne dynamischen Fremdkraftvertrag.");
+                const auto force = state.value(QStringLiteral("dynamische_fremdkraft")).toObject();
+                if (!force.value(QStringLiteral("aktiv")).isBool()
+                    || force.value(QStringLiteral("modellfest")) != QJsonValue(true)
+                    || !hasFiniteNumber(force, QStringLiteral("auswertung_schritt"))
+                    || force.value(QStringLiteral("auswertung_schritt")).toDouble() < 0.
+                    || std::floor(force.value(QStringLiteral("auswertung_schritt")).toDouble())
+                        != force.value(QStringLiteral("auswertung_schritt")).toDouble()
+                    || !hasFiniteNumber(force, QStringLiteral("auswertung_zeit_s"))
+                    || force.value(QStringLiteral("modell_fassung")) != QJsonValue(validation.fingerprint)
+                    || force.value(QStringLiteral("auswertung_schritt")) != state.value(QStringLiteral("schritt"))
+                    || force.value(QStringLiteral("auswertung_zeit_s")) != state.value(QStringLiteral("zeit_s")))
+                    throw std::runtime_error("Core-Zustand V7 mit inkonsistentem dynamischem Fremdkraftvertrag.");
+                finiteArray<3>(force, QStringLiteral("kraft_modellfest_n"));
+                finiteArray<3>(force, QStringLiteral("angriffspunkt_modell_m"));
+            }
+            if (contract == QStringLiteral("6") || contract == QStringLiteral("7")) {
                 const auto rate = state.value(QStringLiteral("kursdrehrate_rad_s"));
                 const auto rateStatus = state.value(QStringLiteral("kursdrehrate_status")).toString();
                 if (!((rateStatus == QStringLiteral("gueltig") && rate.isDouble()
@@ -396,7 +456,10 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     }
     std::unique_ptr<LiveSimulation> live(new LiveSimulation);
     try {
-        live->impl_->start = startState(start, true);
+        auto physicalStart = start;
+        physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
+        live->impl_->start = startState(physicalStart, true);
+        const auto force = dynamicForceConfiguration(start, live->impl_->start);
         if (live->impl_->start.letzte_bewegungsereigniskennung
             == std::numeric_limits<std::size_t>::max())
             return fail(QStringLiteral("Bewegungs-Ereigniskennung erschoepft."));
@@ -414,6 +477,9 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
                 ? QStringLiteral("Testantrieb zum Laufstart aktiv.")
                 : QStringLiteral("Testantrieb aus; im laufenden Versuch schaltbar.");
         }
+        if (force)
+            live->impl_->start = segelphysik::dynamische_fremdkraft_start(
+                live->impl_->workerModel, live->impl_->start, *force);
         const bool hasHydrodynamicHull = std::any_of(
             live->impl_->workerModel.elemente.cbegin(),
             live->impl_->workerModel.elemente.cend(),

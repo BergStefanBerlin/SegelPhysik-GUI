@@ -4,15 +4,19 @@
 #include "graphics_dialog.hpp"
 #include "navigation.hpp"
 #include "boat_inspection.hpp"
+#include "filter_header.hpp"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QColor>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -27,6 +31,7 @@
 #include <QJsonDocument>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMessageBox>
@@ -36,6 +41,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QSettings>
 #include <QShortcut>
@@ -58,6 +64,110 @@
 using forcedisplay::Contribution;
 
 namespace {
+
+constexpr int staticRawValueRole = Qt::UserRole + 10;
+
+class StaticValueItem final : public QTreeWidgetItem {
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+    bool operator<(const QTreeWidgetItem& other) const override
+    {
+        const int column = treeWidget()->sortColumn();
+        const auto a = data(column, staticRawValueRole);
+        const auto b = other.data(column, staticRawValueRole);
+        if (column >= 3 && column <= 6 && (a.isValid() || b.isValid())) {
+            if (a.isValid() != b.isValid()) return a.isValid();
+            return a.toDouble() < b.toDouble();
+        }
+        return QString::localeAwareCompare(text(column), other.text(column)) < 0;
+    }
+};
+
+class StaticNavigationColumn final : public QScrollArea {
+public:
+    StaticNavigationColumn()
+    {
+        setWidgetResizable(true);
+        setFixedWidth(200);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setFrameShape(QFrame::NoFrame);
+    }
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QScrollArea::resizeEvent(event);
+        if (!widget()) return;
+        auto* speed = widget()->findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+        if (!speed) return;
+        const int instrumentHeight = std::max(100, (height() - speed->sizeHint().height() - 18) / 3);
+        setFixedWidth(instrumentHeight);
+        widget()->setFixedWidth(instrumentHeight);
+    }
+};
+
+class StaticViewsColumn final : public QWidget {
+public:
+    StaticViewsColumn(std::array<VtkSceneWidget*, 3>& scenes, std::array<QWidget*, 3>& viewSlots)
+    {
+        setObjectName(QStringLiteral("staticViewsColumn"));
+        const std::array<QString, 3> names{
+            QStringLiteral("Seite"), QStringLiteral("Heck"), QStringLiteral("Draufsicht")};
+        const std::array<VtkSceneWidget::OrthographicView, 3> views{
+            VtkSceneWidget::OrthographicView::Port, VtkSceneWidget::OrthographicView::Stern,
+            VtkSceneWidget::OrthographicView::Top};
+        for (std::size_t i = 0; i < scenes.size(); ++i) {
+            viewSlots[i] = new QWidget(this);
+            viewSlots[i]->setObjectName(QStringLiteral("staticViewSlot%1").arg(i));
+            auto* layout = new QVBoxLayout(viewSlots[i]);
+            layout->setContentsMargins(0, 0, 0, 0);
+            scenes[i] = new VtkSceneWidget(viewSlots[i]);
+            layout->addWidget(scenes[i]);
+            scenes[i]->setObjectName(QStringLiteral("staticScene%1").arg(i));
+            scenes[i]->setNavigationVisible(false);
+            scenes[i]->setOrthographicView(views[i]);
+            scenes[i]->setViewName(names[i]);
+        }
+        slots_ = viewSlots;
+        setFixedWidth(150);
+    }
+
+protected:
+    bool event(QEvent* event) override
+    {
+        const bool handled = QWidget::event(event);
+        if (event->type() == QEvent::LayoutRequest) updateViewLayout();
+        return handled;
+    }
+
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QWidget::resizeEvent(event);
+        updateViewLayout();
+    }
+
+private:
+    void updateViewLayout()
+    {
+        const int gap = 6;
+        int minimumImageHeight = 1;
+        for (auto* slot : slots_) {
+            const auto minimum = slot->layout()->minimumSize();
+            minimumImageHeight = std::max(minimumImageHeight,
+                std::max(minimum.height(), static_cast<int>(
+                    std::ceil(4.0 * minimum.width() / 3.0))));
+        }
+        setMinimumHeight(3 * minimumImageHeight + 2 * gap);
+        const int imageHeight = std::max(minimumImageHeight, (height() - 2*gap) / 3);
+        const int imageWidth = qRound(3.0 * imageHeight / 4.0);
+        setFixedWidth(imageWidth);
+        for (std::size_t i = 0; i < slots_.size(); ++i) {
+            const int y = static_cast<int>(i) * (imageHeight + gap);
+            slots_[i]->setGeometry(0, y, imageWidth, imageHeight);
+        }
+    }
+
+   std::array<QWidget*, 3> slots_{};
+};
 
 struct WorkspaceTheme {
     const char* label;
@@ -291,7 +401,17 @@ MainWindow::MainWindow(QWidget* parent)
     sceneStack_ = new QStackedWidget;
     sceneStack_->setObjectName(QStringLiteral("sceneStack"));
     sceneStack_->addWidget(scene_);
+    largeScene_ = scene_;
+    staticNavigationColumn_ = new StaticNavigationColumn;
+    staticNavigationColumn_->setObjectName(QStringLiteral("staticNavigationColumn"));
+    simulationLayout->addWidget(staticNavigationColumn_);
+    staticNavigationColumn_->hide();
     simulationLayout->addWidget(sceneStack_, 1);
+    staticViewsColumn_ = new StaticViewsColumn(staticScenes_, staticViewSlots_);
+    for (auto* view : staticScenes_)
+        view->onDoubleClicked = [this, view] { swapStaticView(view); };
+    simulationLayout->addWidget(staticViewsColumn_);
+    staticViewsColumn_->hide();
     workspaceStack_->addWidget(simulationPanel);
     mainArea->addWidget(workspaceStack_, 1);
 
@@ -321,6 +441,7 @@ MainWindow::MainWindow(QWidget* parent)
     durationSpin_->setSuffix(QStringLiteral(" s"));
     durationSpin_->setSpecialValueText(QStringLiteral("bis Abbruch"));
     stepSpin_ = new QDoubleSpinBox;
+    stepSpin_->setObjectName(QStringLiteral("simulationStep"));
     stepSpin_->setRange(0.0001, 1.0);
     stepSpin_->setDecimals(4);
     stepSpin_->setSingleStep(0.01);
@@ -331,6 +452,7 @@ MainWindow::MainWindow(QWidget* parent)
     parameterForm_->addRow(QStringLiteral("Dauer"), durationSpin_);
     parameterForm_->addRow(QStringLiteral("Schrittweite"), stepSpin_);
     realtimeCheck_ = new QCheckBox(QStringLiteral("Echtzeit (1 s = 1 s)"));
+    realtimeCheck_->setObjectName(QStringLiteral("realtime"));
     realtimeCheck_->setChecked(true);
     realtimeCheck_->setToolTip(QStringLiteral(
         "Ein: Der Core rechnet jeden Schritt erst, wenn seine Simulationszeit "
@@ -353,18 +475,6 @@ MainWindow::MainWindow(QWidget* parent)
     stationaryForceActive_ = new QCheckBox(QStringLiteral("Fremdkraft aktiv"));
     stationaryForceActive_->setObjectName(QStringLiteral("stationaryForceActive"));
     stationaryForm->addRow(stationaryForceActive_);
-    stationaryTurning_ = new QCheckBox(QStringLiteral("Stationäre Kurvenfahrt zulassen"));
-    stationaryTurning_->setObjectName(QStringLiteral("stationaryTurning"));
-    stationaryTurning_->setChecked(true);
-    stationaryTurning_->setToolTip(QStringLiteral(
-        "Ein: Core sucht konstante bootsfeste Fahrt, Roll-/Stampflage und Kursdrehrate.\n"
-        "Aus: bisheriger geradliniger Modus mit Drehrate null.\n"
-        "Kraft und Ruder-/Schwertstellungen bleiben im Lauf unverändert."));
-    stationaryForm->addRow(stationaryTurning_);
-    stationaryForceFrame_ = new QComboBox;
-    stationaryForceFrame_->addItem(QStringLiteral("Weltfest"), false);
-    stationaryForceFrame_->addItem(QStringLiteral("Modellfest"), true);
-    stationaryForm->addRow(QStringLiteral("Kraftbezug"), stationaryForceFrame_);
     auto* forceVector = new QGroupBox(QStringLiteral("Kraftvektor (X, Y, Z)"));
     auto* forceVectorForm = new QFormLayout(forceVector);
     auto* applicationPoint = new QGroupBox(QStringLiteral("Gemeinsamer Ansatzpunkt (Modell)"));
@@ -414,6 +524,22 @@ MainWindow::MainWindow(QWidget* parent)
     testDriveStatus_ = new QLabel(QStringLiteral("Nur Testfunktion, keine Widerstandsphysik."));
     testDriveStatus_->setWordWrap(true);
     testLayout->addRow(testDriveCheck_);
+    cameraFrameCombo_ = new QComboBox;
+    cameraFrameCombo_->setObjectName(QStringLiteral("dynamicCameraFrame"));
+    cameraFrameCombo_->addItem(QStringLiteral("Körpermodell"), true);
+    cameraFrameCombo_->addItem(QStringLiteral("Weltmodell"), false);
+    cameraFrameCombo_->setToolTip(QStringLiteral(
+        "Kamerabezug der freien Ansicht: Körpermodell folgt der Bootspose; "
+        "Weltmodell folgt der Bootsposition mit weltorientierter Kamera. Keine Änderung der Antriebsphysik "
+        "oder der modellfesten Tabellenkoordinaten."));
+    cameraFramePanel_ = new QWidget;
+    auto* frameLayout = new QFormLayout(cameraFramePanel_);
+    frameLayout->setContentsMargins(0, 0, 0, 0);
+    frameLayout->addRow(QStringLiteral("Kamerabezug"), cameraFrameCombo_);
+    panelLayout->addWidget(cameraFramePanel_);
+    connect(cameraFrameCombo_, &QComboBox::currentIndexChanged, this, [this] {
+        scene_->setBodyFixedCamera(workspaceIndex_ != 2 || cameraFrameCombo_->currentData().toBool());
+    });
     testLayout->addRow(QStringLiteral("Testkraft"), testForceSpin_);
     testLayout->addRow(QStringLiteral("Maximale Fahrt"), testSpeedSpin_);
     testLayout->addRow(testDriveStatus_);
@@ -454,8 +580,6 @@ MainWindow::MainWindow(QWidget* parent)
                 "Eingaben geändert – angezeigtes Ergebnis gehört zum vorherigen Rechenfall."));
     };
     connect(stationaryForceActive_, &QCheckBox::toggled, this, stationaryInputChanged);
-    connect(stationaryTurning_, &QCheckBox::toggled, this, stationaryInputChanged);
-    connect(stationaryForceFrame_, &QComboBox::currentIndexChanged, this, stationaryInputChanged);
     for (auto* value : stationaryForce_)
         connect(value, &QDoubleSpinBox::valueChanged, this, stationaryInputChanged);
     for (auto* value : stationaryPoint_)
@@ -564,7 +688,25 @@ MainWindow::MainWindow(QWidget* parent)
 void MainWindow::updateWorkspace(int index)
 {
     if (workspaceIndex_ >= 0 && workspaceIndex_ != index) {
+        saveDisplaySettings();
         closeGraphics();
+        if (workspaceIndex_ > 0) {
+            swapStaticView(scene_);
+            for (std::size_t i = 0; i < staticScenes_.size(); ++i) {
+                if (staticViewSlots_[i]->isAncestorOf(staticScenes_[i])) continue;
+                for (auto* slot : staticViewSlots_) {
+                    if (!slot->isAncestorOf(staticScenes_[i])) continue;
+                    auto* occupant = qobject_cast<QVBoxLayout*>(staticViewSlots_[i]->layout())->itemAt(0)->widget();
+                    slot->layout()->removeWidget(staticScenes_[i]);
+                    staticViewSlots_[i]->layout()->removeWidget(occupant);
+                    slot->layout()->addWidget(occupant);
+                    staticViewSlots_[i]->layout()->addWidget(staticScenes_[i]);
+                    occupant->show();
+                    staticScenes_[i]->show();
+                    break;
+                }
+            }
+        }
         cancellation_.store(true);
         ++simulationGeneration_;
         liveTimer_->stop();
@@ -576,26 +718,44 @@ void MainWindow::updateWorkspace(int index)
         timeLabel_->setText(QStringLiteral("Simulationszeit: 0.000 s"));
     }
     workspaceIndex_ = index;
+    restoreModeDisplaySettings();
     applyWorkspaceTheme(index);
     const bool inspection = index == 0;
     const bool staticModel = index == 1;
+    const bool simulation = index > 0;
+    scene_->dockNavigation(simulation ? staticNavigationColumn_ : nullptr);
+    staticNavigationColumn_->setVisible(simulation && navigationCheck_->isChecked());
+    if (simulation) scene_->onDoubleClicked = [this] { swapStaticView(scene_); };
+    else scene_->onDoubleClicked = {};
+    scene_->setViewName(simulation ? QStringLiteral("Frei") : QString());
     if (inspection) inspection_->setCatalogWidget(catalogPanel_);
     else mainArea_->insertWidget(0, catalogPanel_);
-    catalogPanel_->setVisible(!staticModel);
-    if (staticModel) {
+    catalogPanel_->setVisible(!simulation);
+    if (simulation) {
         auto* displayLayout = qobject_cast<QVBoxLayout*>(staticDisplaySidebar_->widget()->layout());
         displayLayout->insertWidget(0, displayPanel_);
     } else
         simulationControlsLayout_->insertWidget(
             simulationControlsLayout_->count()-1, displayPanel_);
     displayPanel_->show();
-    staticDisplaySidebar_->setVisible(staticModel);
+    staticDisplaySidebar_->setVisible(simulation);
+    staticViewsColumn_->setVisible(simulation && attitudeViewsCheck_->isChecked());
+    attitudeViewsCheck_->setVisible(simulation);
+    for (auto* control : vectorControls_) control->setVisible(!simulation);
+    staticForceMenu_->setVisible(simulation);
+    graphicsStatus_->setVisible(!simulation);
+    pressureStatus_->setVisible(!simulation);
+    legacyValues_->setVisible(!simulation);
+    staticValues_->setVisible(simulation);
+    scene_->setBodyFixedCamera(staticModel || cameraFrameCombo_->currentData().toBool());
+    cameraCombo_->ensurePolished();
+    cameraCombo_->setMinimumHeight(cameraCombo_->sizeHint().height());
     if (inspection && workspaceStack_->currentIndex() != 0)
         simulationValuesVisible_ = !valuesDock_->isHidden();
     workspaceStack_->setCurrentIndex(inspection ? 0 : 1);
     valuesStack_->setCurrentIndex(inspection ? 0 : 1);
     chooseFolderButton_->setVisible(inspection);
-    playbackPanel_->setVisible(!inspection);
+    playbackPanel_->setVisible(index == 2);
     valuesDock_->setVisible(inspection || simulationValuesVisible_);
     if (!inspection) {
         const QSignalBlocker blocker(modeCombo_);
@@ -603,8 +763,26 @@ void MainWindow::updateWorkspace(int index)
     }
     modeCombo_->setVisible(false);
     updateModeControls();
-    graphicsButton_->setVisible(staticModel);
+    graphicsButton_->setVisible(simulation);
     applyDisplayOptions();
+}
+
+void MainWindow::swapStaticView(VtkSceneWidget* view)
+{
+    if (workspaceIndex_ <= 0 || graphicsPage_ || view == largeScene_) return;
+    for (auto* slot : staticViewSlots_) {
+        if (!slot->isAncestorOf(view)) continue;
+        auto* previous = largeScene_;
+        sceneStack_->removeWidget(previous);
+        slot->layout()->removeWidget(view);
+        sceneStack_->addWidget(view);
+        slot->layout()->addWidget(previous);
+        largeScene_ = view;
+        sceneStack_->setCurrentWidget(view);
+        previous->show();
+        view->show();
+        return;
+    }
 }
 
 void MainWindow::applyWorkspaceTheme(int index)
@@ -643,12 +821,12 @@ void MainWindow::applyWorkspaceTheme(int index)
         "QComboBox, QDoubleSpinBox { background:%4; border:1px solid "
         "%3; border-radius:6px; padding:6px; }"
         "QListWidget#modelList { background:%4; border:1px solid "
-        "%3; border-radius:6px; padding:3px; }"
+        "%3; border-radius:12px; padding:3px; }"
         "QListWidget#modelList::item { padding:4px 6px; border-radius:4px; }"
         "QListWidget#modelList::item:selected { background:%7; "
         "color:#ffffff; }"
         "QTreeWidget { background:%4; alternate-background-color:%11; "
-        "border:1px solid %3; }"
+        "border:1px solid %3; border-radius:12px; }"
         "QTreeWidget::item:selected { background:#5c4a12; color:#ffd166; }"
         "QHeaderView::section { background:%11; color:%9; padding:5px; "
         "border:0; }"
@@ -691,8 +869,8 @@ QWidget* MainWindow::buildDisplayPanel()
     forcesCheck_->setChecked(true);
     layout->addWidget(forcesCheck_);
 
-    auto* form = new QFormLayout;
-    form->setSpacing(6);
+    auto* cameraRow = new QHBoxLayout;
+    cameraRow->setSpacing(6);
     cameraCombo_ = new QComboBox;
     cameraCombo_->setObjectName(QStringLiteral("cameraPreset"));
     cameraCombo_->setEnabled(false);
@@ -710,12 +888,27 @@ QWidget* MainWindow::buildDisplayPanel()
         if (!scene_->setCameraPreset(id, &error))
             showError(QStringLiteral("Kameraansicht"), error);
     });
-    form->addRow(QStringLiteral("Kamera"), cameraCombo_);
+    cameraRow->addWidget(new QLabel(QStringLiteral("Kamera")));
+    cameraRow->addWidget(cameraCombo_, 1);
+    layout->addLayout(cameraRow);
     navigationCheck_ = new QCheckBox(QStringLiteral("Kompass und Lageanzeigen"));
     navigationCheck_->setObjectName(QStringLiteral("displayNavigation"));
     navigationCheck_->setChecked(true);
-    connect(navigationCheck_, &QCheckBox::toggled, scene_, &VtkSceneWidget::setNavigationVisible);
-    form->addRow(navigationCheck_);
+    connect(navigationCheck_, &QCheckBox::toggled, this, [this](bool visible) {
+        scene_->setNavigationVisible(visible);
+        staticNavigationColumn_->setVisible(workspaceIndex_ > 0 && visible);
+        saveDisplaySettings();
+    });
+    layout->addWidget(navigationCheck_);
+    attitudeViewsCheck_ = new QCheckBox(QStringLiteral("Lageansichten"));
+    attitudeViewsCheck_->setObjectName(QStringLiteral("displayAttitudeViews"));
+    attitudeViewsCheck_->setChecked(true);
+    attitudeViewsCheck_->setToolTip(QStringLiteral("Rechte Spalte mit Seite, Heck und Draufsicht anzeigen."));
+    layout->addWidget(attitudeViewsCheck_);
+    connect(attitudeViewsCheck_, &QCheckBox::toggled, this, [this](bool visible) {
+        staticViewsColumn_->setVisible(workspaceIndex_ > 0 && visible);
+        saveDisplaySettings();
+    });
     auto scaleCombo = [] {
         auto* combo = new QComboBox;
         combo->addItem(QStringLiteral("logarithmisch"),
@@ -728,14 +921,67 @@ QWidget* MainWindow::buildDisplayPanel()
     graphicsButton_ = new QPushButton(QStringLiteral("Darstellung"));
     graphicsButton_->setObjectName(QStringLiteral("configureGraphics"));
     connect(graphicsButton_, &QPushButton::clicked, this, &MainWindow::setupGraphics);
-    form->addRow(QStringLiteral("Skala Kraft"), forceScaleCombo_);
-    form->addRow(QStringLiteral("Skala Moment"), momentScaleCombo_);
-    form->addRow(graphicsButton_);
-    layout->addLayout(form);
+    layout->addWidget(graphicsButton_);
+    auto* vectorScales = new QWidget;
+    auto* scaleForm = new QFormLayout(vectorScales);
+    scaleForm->setContentsMargins(0, 0, 0, 0);
+    scaleForm->setSpacing(6);
+    scaleForm->addRow(QStringLiteral("Skala Kraft"), forceScaleCombo_);
+    scaleForm->addRow(QStringLiteral("Skala Moment"), momentScaleCombo_);
+    layout->addWidget(vectorScales);
     graphicsStatus_ = new QLabel;
     graphicsStatus_->setWordWrap(true);
     graphicsStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(graphicsStatus_);
+
+    staticForceMenu_ = new QWidget;
+    staticForceMenu_->setObjectName(QStringLiteral("staticForceMenu"));
+    auto* staticMenuLayout = new QVBoxLayout(staticForceMenu_);
+    staticMenuLayout->setContentsMargins(0, 0, 0, 0);
+    for (std::size_t rowIndex = 0; rowIndex < staticForceStyles_.size(); ++rowIndex) {
+        const auto i = rowIndex < 2 ? 1 - rowIndex : rowIndex;
+        if (rowIndex == 0 || rowIndex == 5)
+            staticMenuLayout->addWidget(new QLabel(rowIndex == 0
+                ? QStringLiteral("<b>Kraftpfeile (einfach)</b>")
+                : QStringLiteral("<b>Kraftpfeile (vollständig)</b>")));
+        const auto& style = staticForceStyles_[i];
+        auto* row = new QHBoxLayout;
+        auto* check = new QCheckBox(style.name);
+        check->setObjectName(QStringLiteral("staticForce_%1").arg(style.key));
+        check->setChecked(style.enabled);
+        check->setToolTip(style.explanation);
+        auto* color = new QPushButton;
+        color->setObjectName(QStringLiteral("staticColor_%1").arg(style.key));
+        color->setFixedSize(26, 22);
+        color->setAccessibleName(QStringLiteral("Farbe %1").arg(style.name));
+        staticForceChecks_[i] = check;
+        staticColorButtons_[i] = color;
+        row->addWidget(check, 1);
+        row->addWidget(color, 0, Qt::AlignRight);
+        staticMenuLayout->addLayout(row);
+        connect(check, &QCheckBox::toggled, this, [this, i](bool on) {
+            staticForceStyles_[i].enabled = on;
+            applyDisplayOptions();
+        });
+        connect(color, &QPushButton::clicked, this, [this, i] {
+            const auto chosen = QColorDialog::getColor(QColor(staticForceStyles_[i].color),
+                this, QStringLiteral("Farbe: %1").arg(staticForceStyles_[i].name));
+            if (!chosen.isValid()) return;
+            staticForceStyles_[i].color = chosen.name(QColor::HexRgb);
+            applyDisplayOptions();
+        });
+    }
+    auto* defaultColors = new QPushButton(QStringLiteral("Default Farben"));
+    defaultColors->setObjectName(QStringLiteral("staticDefaultColors"));
+    staticMenuLayout->addWidget(defaultColors);
+    connect(defaultColors, &QPushButton::clicked, this, [this] {
+        const auto defaults = forcedisplay::staticForceDefaults();
+        for (std::size_t i = 0; i < defaults.size(); ++i)
+            staticForceStyles_[i].color = defaults[i].color;
+        applyDisplayOptions();
+    });
+    layout->addWidget(staticForceMenu_);
+    staticForceMenu_->hide();
 
     auto* referenceRow = new QHBoxLayout;
     referenceLabel_ = new QLabel(QStringLiteral("R_F: –  ·  R_M: –"));
@@ -822,6 +1068,10 @@ QWidget* MainWindow::buildDisplayPanel()
     legend->setObjectName(QStringLiteral("legend"));
     legend->setWordWrap(true);
     layout->addWidget(legend);
+    vectorControls_ = {forcesCheck_, referenceLabel_, refitButton_, leverCheck_,
+        lateralCheck_, sailCenterCheck_, legend, vectorScales};
+    for (int i = 0; i < grid->count(); ++i)
+        if (auto* widget = grid->itemAt(i)->widget()) vectorControls_ << widget;
 
     valuesCheck_ = new QCheckBox(QStringLiteral("Wertefenster anzeigen"));
     valuesCheck_->setChecked(true);
@@ -906,14 +1156,59 @@ QDockWidget* MainWindow::buildValuesDock()
     right->addWidget(valuesTree_, 1);
     right->addWidget(detailLabel_);
 
-    layout->addLayout(left);
-    layout->addLayout(right, 1);
+    legacyValues_ = new QWidget;
+    auto* legacyLayout = new QHBoxLayout(legacyValues_);
+    legacyLayout->setContentsMargins(0, 0, 0, 0);
+    legacyLayout->addLayout(left);
+    legacyLayout->addLayout(right, 1);
+    layout->addWidget(legacyValues_, 1);
+    staticValues_ = new QTreeWidget;
+    staticValues_->setObjectName(QStringLiteral("staticForceValues"));
+    auto* header = new FilterHeader(staticValues_);
+    staticValues_->setHeader(header);
+    staticValues_->setHeaderLabels({QStringLiteral("Objekt/Pfad"), QStringLiteral("Art"),
+        QStringLiteral("Bezeichnung"), QStringLiteral("Betrag"), QStringLiteral("X"),
+        QStringLiteral("Y"), QStringLiteral("Z"), QStringLiteral("Einheit"),
+        QStringLiteral("Bezugspunkt"), QStringLiteral("Status")});
+    staticValues_->setToolTip(QStringLiteral(
+        "Kräfte und Momente im Modellkoordinatensystem; Momente um S. "
+        "Spaltenfilter kombinieren sich. Die Pfeilauswahl beeinflusst diese Tabelle nicht."));
+    staticValues_->setRootIsDecorated(false);
+    staticValues_->setAlternatingRowColors(true);
+    staticValues_->setUniformRowHeights(true);
+    staticValues_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    staticValues_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    header->setSectionResizeMode(QHeaderView::Interactive);
+    header->setStretchLastSection(false);
+    header->setMinimumSectionSize(45);
+    const std::array<int, 10> widths{180, 85, 230, 110, 100, 100, 100, 75, 220, 160};
+    for (int i = 0; i < 10; ++i) {
+        staticValues_->setColumnWidth(i, widths[i]);
+        auto* filter = new QLineEdit(header->viewport());
+        staticValueFilters_[i] = filter;
+        filter->setObjectName(QStringLiteral("staticValueFilter%1").arg(i));
+        filter->setPlaceholderText(QStringLiteral("*"));
+        filter->setClearButtonEnabled(true);
+        filter->setToolTip(staticValues_->headerItem()->text(i) + QStringLiteral(" filtern"));
+        connect(filter, &QLineEdit::textChanged, this, [this] { filterStaticValues(); });
+    }
+    header->setFilters(staticValueFilters_);
+    staticValues_->setSortingEnabled(true);
+    staticValues_->sortItems(0, Qt::AscendingOrder);
+    layout->addWidget(staticValues_, 1);
+    staticValues_->hide();
     dock->setWidget(content);
 
     connect(copyButton, &QPushButton::clicked, this, [this] { copyValues(); });
     auto* shortcut = new QShortcut(QKeySequence::Copy, content);
     shortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(shortcut, &QShortcut::activated, this, [this] { copyValues(); });
+    connect(staticValues_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        const auto selected = staticValues_->selectedItems();
+        const auto id = selected.isEmpty() ? QString()
+            : selected.front()->data(0, Qt::UserRole).toString();
+        scene_->setSelected(id);
+    });
     connect(valuesTree_, &QTreeWidget::itemSelectionChanged, this, [this] {
         const auto items = valuesTree_->selectedItems();
         const QString id =
@@ -932,6 +1227,7 @@ QDockWidget* MainWindow::buildValuesDock()
 
 MainWindow::~MainWindow()
 {
+    scene_->dockNavigation(nullptr);
     shuttingDown_.store(true);
     cancellation_.store(true);
     for (auto* thread : openThreads_) thread->wait();
@@ -972,6 +1268,7 @@ void MainWindow::loadSettings()
     };
     restoreCheck(forcesCheck_, QStringLiteral("darstellung/pfeile"));
     restoreCheck(navigationCheck_, QStringLiteral("darstellung/navigation"));
+    restoreCheck(attitudeViewsCheck_, QStringLiteral("statisch/lageansichten"));
     scene_->setNavigationVisible(navigationCheck_->isChecked());
     for (std::size_t i = 0; i < forceChecks_.size(); ++i) {
         restoreCheck(forceChecks_[i], QStringLiteral("darstellung/kraft_%1").arg(i));
@@ -980,6 +1277,22 @@ void MainWindow::loadSettings()
     restoreCheck(leverCheck_, QStringLiteral("darstellung/hebelarm"));
     restoreCheck(lateralCheck_, QStringLiteral("darstellung/lateraldruckpunkt"));
     restoreCheck(sailCenterCheck_, QStringLiteral("darstellung/ersatz_sdp"));
+    for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
+        auto& style = staticForceStyles_[i];
+        const QString key = QStringLiteral("statisch/kraftmenue/%1/").arg(style.key);
+        const auto stored = settings.value(key + QStringLiteral("farbe"), style.color).toString();
+        if (QColor(stored).isValid()) {
+            style.color = stored;
+        } else {
+            QTimer::singleShot(0, this, [this, stored] {
+                showError(QStringLiteral("Statische Kraftfarben"),
+                    QStringLiteral("Ungültige gespeicherte Farbe: %1. Bitte neu auswählen.").arg(stored));
+            });
+        }
+        style.enabled = settings.value(key + QStringLiteral("ein"), style.enabled).toBool();
+        const QSignalBlocker blocker(staticForceChecks_[i]);
+        staticForceChecks_[i]->setChecked(style.enabled);
+    }
     auto restoreCombo = [&settings](QComboBox* combo, const QString& key) {
         const QSignalBlocker blocker(combo);
         const int index = combo->findData(settings.value(key, combo->currentData()).toInt());
@@ -1014,10 +1327,13 @@ void MainWindow::loadSettings()
     applyDisplayOptions();
 }
 
-void MainWindow::saveDisplaySettings() const
+void MainWindow::saveDisplaySettings()
 {
+    if (!graphicsReady_ || workspaceIndex_ <= 0) return;
     QSettings settings;
-    settings.setValue(QStringLiteral("darstellung/navigation"), navigationCheck_->isChecked());
+    const QString mode = workspaceIndex_ == 2 ? QStringLiteral("dynamisch/") : QStringLiteral("statisch/");
+    settings.setValue(mode + QStringLiteral("navigation"), navigationCheck_->isChecked());
+    settings.setValue(mode + QStringLiteral("lageansichten"), attitudeViewsCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/pfeile"), forcesCheck_->isChecked());
     for (std::size_t i = 0; i < forceChecks_.size(); ++i) {
         settings.setValue(QStringLiteral("darstellung/kraft_%1").arg(i), forceChecks_[i]->isChecked());
@@ -1028,25 +1344,62 @@ void MainWindow::saveDisplaySettings() const
     settings.setValue(QStringLiteral("darstellung/ersatz_sdp"), sailCenterCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/skala_kraft"), forceScaleCombo_->currentData());
     settings.setValue(QStringLiteral("darstellung/skala_moment"), momentScaleCombo_->currentData());
+    for (const auto& style : staticForceStyles_) {
+        const QString key = mode + QStringLiteral("kraftmenue/%1/").arg(style.key);
+        settings.setValue(key + QStringLiteral("farbe"), style.color);
+        settings.setValue(key + QStringLiteral("ein"), style.enabled);
+    }
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        showError(QStringLiteral("Darstellung speichern"),
+            QStringLiteral("Darstellungseinstellungen konnten nicht gespeichert werden."));
+}
+
+void MainWindow::restoreModeDisplaySettings()
+{
+    if (!graphicsReady_ || workspaceIndex_ <= 0) return;
+    QSettings settings;
+    const QString mode = workspaceIndex_ == 2 ? QStringLiteral("dynamisch/") : QStringLiteral("statisch/");
+    {
+        const QSignalBlocker navigation(navigationCheck_), attitude(attitudeViewsCheck_);
+        navigationCheck_->setChecked(settings.value(mode + QStringLiteral("navigation"),
+            settings.value(QStringLiteral("darstellung/navigation"), true)).toBool());
+        attitudeViewsCheck_->setChecked(settings.value(mode + QStringLiteral("lageansichten"), true).toBool());
+    }
+    staticForceStyles_ = forcedisplay::staticForceDefaults();
+    for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
+        auto& style = staticForceStyles_[i];
+        const QString key = mode + QStringLiteral("kraftmenue/%1/").arg(style.key);
+        const QString color = settings.value(key + QStringLiteral("farbe"), style.color).toString();
+        if (QColor(color).isValid()) style.color = color;
+        else showError(QStringLiteral("Darstellungsfarbe"),
+            QStringLiteral("Ungültige gespeicherte Farbe für %1: %2").arg(style.name, color));
+        style.enabled = settings.value(key + QStringLiteral("ein"), style.enabled).toBool();
+        const QSignalBlocker blocker(staticForceChecks_[i]);
+        staticForceChecks_[i]->setChecked(style.enabled);
+    }
+    scene_->setNavigationVisible(navigationCheck_->isChecked());
 }
 
 void MainWindow::setupGraphics()
 {
-    if (workspaceIndex_ != 1) return;
+    if (workspaceIndex_ <= 0) return;
     if (graphicsPage_) {
         sceneStack_->setCurrentWidget(graphicsPage_);
         return;
     }
-    graphicsPage_ = createGraphicsSettingsPage(sceneStack_, staticGraphics_, scene_->graphicsStatus(),
-        [this](const graphics::Settings& proposed) {
+    const bool dynamic = workspaceIndex_ == 2;
+    graphicsPage_ = createGraphicsSettingsPage(sceneStack_, dynamic ? graphics_ : staticGraphics_, scene_->graphicsStatus(),
+        [this, dynamic](const graphics::Settings& proposed) {
             QSettings storage;
-            storage.beginGroup(QStringLiteral("statisch"));
+            if (!dynamic) storage.beginGroup(QStringLiteral("statisch"));
             QString error;
             if (!graphics::save(storage, proposed, &error)) {
                 showError(QStringLiteral("Grafikeinstellungen"), error);
                 return false;
             }
-            staticGraphics_ = proposed;
+            if (dynamic) graphics_ = proposed;
+            else staticGraphics_ = proposed;
             applyDisplayOptions();
             return true;
         }, [this] { closeGraphics(); },
@@ -1058,7 +1411,7 @@ void MainWindow::setupGraphics()
 void MainWindow::closeGraphics()
 {
     if (!graphicsPage_) return;
-    sceneStack_->setCurrentWidget(scene_);
+    sceneStack_->setCurrentWidget(largeScene_);
     sceneStack_->removeWidget(graphicsPage_);
     graphicsPage_->deleteLater();
     graphicsPage_ = nullptr;
@@ -1099,7 +1452,7 @@ void MainWindow::setupMaterialPreview()
 void MainWindow::applyGraphicsProfile()
 {
     auto profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
-        : graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+        : graphics_.profiles[0];
     const bool reduced = profile.liveReduction && live_ && !live_->progress().finished;
     if (reduced) {
         for (auto feature : {graphics::Feature::SSAO, graphics::Feature::Shadows,
@@ -1108,6 +1461,8 @@ void MainWindow::applyGraphicsProfile()
         }
     }
     scene_->setGraphicsProfile(profile);
+    if (workspaceIndex_ > 0)
+        for (auto* view : staticScenes_) view->setGraphicsProfile(profile);
     if (scene_->motionStateCount() == 0 && displayedIndex_ >= 0 && displayedIndex_ < stateCount()) {
         displayState(displayedIndex_, true);
     }
@@ -1120,9 +1475,9 @@ void MainWindow::applyGraphicsProfile()
 void MainWindow::applyDisplayOptions()
 {
     if (!graphicsReady_) return;
-    graphicsButton_->setToolTip(QStringLiteral("Technikdarstellung ausschließlich für das statische Modell. Änderungen werden sofort gespeichert."));
+    graphicsButton_->setToolTip(QStringLiteral("Technikdarstellung für Frei. Seite, Heck und Draufsicht bleiben fest schematisch. Änderungen werden sofort gespeichert."));
     const auto& profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
-        : graphics_.profiles[static_cast<std::size_t>(graphics_.active)];
+        : graphics_.profiles[0];
     applyGraphicsProfile();
     VtkSceneWidget::DisplayOptions options;
     options.forces = forcesCheck_->isChecked();
@@ -1135,6 +1490,15 @@ void MainWindow::applyDisplayOptions()
     options.leverArm = leverCheck_->isChecked();
     options.lateralCenter = lateralCheck_->isChecked();
     options.sailCenter = sailCenterCheck_->isChecked();
+    if (workspaceIndex_ > 0) {
+        options.forces = false;
+        options.staticForces = true;
+        options.staticStyles = staticForceStyles_;
+        options.leverArm = false;
+        options.lateralCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Lateral)].enabled;
+        options.sailCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Sail)].enabled;
+        options.courseArrow = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Direction)].enabled;
+    }
     options.visibility = profile.throughBody ? VtkSceneWidget::Visibility::ThroughBody
                                             : VtkSceneWidget::Visibility::Spatial;
     options.forceMode =
@@ -1153,9 +1517,30 @@ void MainWindow::applyDisplayOptions()
         widget->setEnabled(options.forces);
     }
     scene_->setOptions(options);
+    for (auto* view : staticScenes_) view->setOptions(options);
+    updateStaticForceMenu();
     saveDisplaySettings();
     // Ausblenden ändert nur die Grafik; die Skala-Spalte folgt dem Skalenmodus.
     updateValues();
+}
+
+void MainWindow::updateStaticForceMenu()
+{
+    const auto sums = forcedisplay::staticResultants(currentForces_,
+        scene_->statePose().value_or(forcedisplay::Pose{}), hydrodynamicRoles_);
+    for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
+        const auto& style = staticForceStyles_[i];
+        auto* check = staticForceChecks_[i];
+        check->setStyleSheet(QStringLiteral("QCheckBox { color: %1; }").arg(style.color));
+        check->setEnabled(hasForces_ && sums[i].available);
+        check->setToolTip(style.explanation + QStringLiteral("\n")
+            + (i >= 5 ? QStringLiteral(
+                "Resultierende, Bezug S: kein nachgewiesener Angriffspunkt und keine vollständige Momentenäquivalenz.\n") : QString())
+            + (hasForces_ ? sums[i].diagnostic : QStringLiteral("Noch kein Core-Ergebnis")));
+        staticColorButtons_[i]->setStyleSheet(
+            QStringLiteral("QPushButton { background-color: %1; border: 1px solid #8794a2; }").arg(style.color));
+        staticColorButtons_[i]->setToolTip(QStringLiteral("%1: %2").arg(style.name, style.color));
+    }
 }
 
 void MainWindow::initialReferences(const ModelDisplayData& model)
@@ -1169,6 +1554,7 @@ void MainWindow::initialReferences(const ModelDisplayData& model)
         force = std::max(*model.totalMassKg * gravity, 1.0);
     }
     scene_->setReferences(force, moment);
+    for (auto* view : staticScenes_) view->setReferences(force, moment);
     storeReferences();
     updateReferenceLabel();
 }
@@ -1436,6 +1822,7 @@ void MainWindow::resetResults()
     updateSliderRange(0);
     stateLabel_->setText(QStringLiteral("Zustand 0 / 0"));
     scene_->clearState();
+    for (auto* view : staticScenes_) view->clearState();
     clearValues();
 }
 
@@ -1526,6 +1913,7 @@ void MainWindow::openModel(const QString& id)
                     statusLabel_->setToolTip(error);
                     statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
                     scene_->clearModel();
+                    for (auto* view : staticScenes_) view->clearModel();
                     inspection_->clear(error);
                     showModelProblems(selected.problems + problemsFromText(error));
                     return;
@@ -1554,9 +1942,14 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     QString error;
     inspection_->setSnapshot(opened->data.inspection);
     scene_->setElementGroups(opened->data.elementGroups);
+    hydrodynamicRoles_ = opened->data.hydrodynamicRoles;
+    scene_->setHydrodynamicRoles(hydrodynamicRoles_);
+    for (auto* view : staticScenes_) view->setHydrodynamicRoles(hydrodynamicRoles_);
+    for (auto* view : staticScenes_) view->setElementGroups(opened->data.elementGroups);
     configureMovementControls(opened->data);
     if (opened->parts.isEmpty()) {
         scene_->clearModel();
+        for (auto* view : staticScenes_) view->clearModel();
     } else if (!scene_->setModel(opened->parts, &error)) {
         statusLabel_->setText(QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
         statusLabel_->setToolTip(error);
@@ -1564,6 +1957,15 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
         showModelProblems(entry.problems + problemsFromText(error));
         setBusy(false);
         return;
+    }
+    for (auto* view : staticScenes_) {
+        if (!opened->parts.isEmpty() && !view->setModel(opened->parts, &error)) {
+            for (auto* other : staticScenes_) other->clearModel();
+            statusLabel_->setText(QStringLiteral("Zusatzansicht nicht verfügbar: %1").arg(error));
+            showModelProblems(entry.problems + problemsFromText(error));
+            setBusy(false);
+            return;
+        }
     }
     cameraCombo_->setEnabled(true);
     {
@@ -1736,31 +2138,70 @@ void MainWindow::startSimulation()
 
     const auto* workspace = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
     const bool dynamic = workspace && workspace->currentIndex() == 2;
-    if (!dynamic) {
-        for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it) {
-            if (!it.value()->property("coreMovementAvailable").toBool()) {
-                showError(QStringLiteral("Core-Bewegungsdefinition fehlt"),
-                    QStringLiteral("Keine stationäre Berechnung: Bewegungsmetadaten für %1 fehlen.").arg(it.key()));
-                return;
-            }
+    for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it) {
+        if (!it.value()->property("coreMovementAvailable").toBool()) {
+            showError(QStringLiteral("Core-Bewegungsdefinition fehlt"),
+                QStringLiteral("Kein Core-Lauf: Bewegungsmetadaten für %1 fehlen.").arg(it.key()));
+            return;
         }
     }
-    const double duration = durationSpin_->value();
-    const double step = stepSpin_->value();
+    double duration = durationSpin_->value();
+    double step = stepSpin_->value();
+    if (dynamic) {
+        QDialog dialog(this);
+        dialog.setObjectName(QStringLiteral("dynamicRunDialog"));
+        dialog.setWindowTitle(QStringLiteral("Dynamischen Core-Lauf starten"));
+        auto* layout = new QFormLayout(&dialog);
+        auto* runDuration = new QDoubleSpinBox(&dialog);
+        runDuration->setObjectName(QStringLiteral("runDuration"));
+        runDuration->setRange(durationSpin_->minimum(), durationSpin_->maximum());
+        runDuration->setDecimals(3);
+        runDuration->setSuffix(QStringLiteral(" s"));
+        runDuration->setSpecialValueText(QStringLiteral("Bis Abbruch"));
+        runDuration->setValue(duration);
+        auto* runStep = new QDoubleSpinBox(&dialog);
+        runStep->setObjectName(QStringLiteral("runStep"));
+        runStep->setRange(stepSpin_->minimum(), stepSpin_->maximum());
+        runStep->setDecimals(4);
+        runStep->setSuffix(QStringLiteral(" s"));
+        runStep->setValue(step);
+        auto* paced = new QCheckBox(QStringLiteral("Echtzeit (1 s = 1 s)"), &dialog);
+        paced->setObjectName(QStringLiteral("runRealtime"));
+        paced->setChecked(realtimeCheck_->isChecked());
+        layout->addRow(QStringLiteral("Dauer"), runDuration);
+        layout->addRow(QStringLiteral("Schrittweite"), runStep);
+        layout->addRow(QStringLiteral("Takt"), paced);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Starten"));
+        layout->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+            if (runDuration->value() > 0.
+                && runDuration->value() / runStep->value() > LiveSimulation::maximumStates - 1) {
+                showError(QStringLiteral("Laufparameter"),
+                    QStringLiteral("Dauer und Schrittweite ergeben zu viele Zustände (maximal %1).")
+                        .arg(LiveSimulation::maximumStates));
+                return;
+            }
+            dialog.accept();
+        });
+        if (dialog.exec() != QDialog::Accepted) return;
+        duration = runDuration->value();
+        step = runStep->value();
+        durationSpin_->setValue(duration);
+        stepSpin_->setValue(step);
+        realtimeCheck_->setChecked(paced->isChecked());
+    }
     QJsonObject start;
     lastRunDynamic_ = dynamic;
     cancellation_.store(false);
     resetResults();
     statusLabel_->setToolTip(QString());
     statusLabel_->setStyleSheet(QString());
-    if (dynamic) {
-        startLiveSimulation(duration, step, realtimeCheck_->isChecked(), start);
-        return;
-    }
     QJsonObject stationary;
     stationary.insert(QStringLiteral("aktiv"), stationaryForceActive_->isChecked());
-    stationary.insert(QStringLiteral("kurvenfahrt"), stationaryTurning_->isChecked());
-    stationary.insert(QStringLiteral("modellfest"), stationaryForceFrame_->currentData().toBool());
+    stationary.insert(QStringLiteral("kurvenfahrt"), true);
+    stationary.insert(QStringLiteral("modellfest"), true);
     QJsonArray force, point, settings;
     for (int axis = 0; axis < 3; ++axis) {
         force.append(stationaryForce_[axis]->value());
@@ -1772,6 +2213,11 @@ void MainWindow::startSimulation()
         settings.append(QJsonObject{{QStringLiteral("element_id"), it.key()},
             {QStringLiteral("wert"), it.value()->value()}});
     stationary.insert(QStringLiteral("stellungen"), settings);
+    if (dynamic) {
+        start.insert(QStringLiteral("dynamische_fremdkraft"), stationary);
+        startLiveSimulation(duration, step, realtimeCheck_->isChecked(), start);
+        return;
+    }
     start.insert(QStringLiteral("stationaer"), stationary);
 
     const QString path = modelPath_;
@@ -1809,8 +2255,7 @@ void MainWindow::startLiveSimulation(double duration, double step, bool paced, c
 {
     QString error;
     std::shared_ptr<LiveSimulation> live =
-        LiveSimulation::create(modelPath_, validation_, duration, step, paced, &error, start,
-            TestDriveOptions{testDriveCheck_->isChecked(), testForceSpin_->value(), testSpeedLimit_});
+        LiveSimulation::create(modelPath_, validation_, duration, step, paced, &error, start);
     if (!live) {
         statusLabel_->setText(QStringLiteral("Core-Lauf nicht gestartet"));
         showError(QStringLiteral("Core-Simulation"), error);
@@ -2035,7 +2480,13 @@ void MainWindow::displayState(qsizetype index, bool force)
         }
         if (!motionError.isEmpty()) scene_->invalidateMotionHistory(index + 1, motionError);
     }
-    if (!error.isEmpty() || !scene_->setState(state, forces, &error)) {
+    bool rendered = error.isEmpty() && scene_->setState(state, forces, &error);
+    if (rendered && workspaceIndex_ > 0)
+        for (auto* view : staticScenes_)
+            if (!view->setState(state, forces, &error)) { rendered = false; break; }
+    if (!rendered) {
+        scene_->clearState();
+        for (auto* view : staticScenes_) view->clearState();
         cancellation_.store(true);
         statusLabel_->setText(QStringLiteral("Darstellung des Zustands fehlgeschlagen"));
         showError(QStringLiteral("Core-Zustand"), error);
@@ -2045,6 +2496,7 @@ void MainWindow::displayState(qsizetype index, bool force)
     applyGraphicsProfile();
     currentForces_ = forces;
     hasForces_ = true;
+    updateStaticForceMenu();
     pressureStatus_->setText(QStringLiteral("LDP: %1\nSDP (Ersatz): %2")
         .arg(forces.lateral ? (forces.lateral->evaluationVersion == 2
                 ? forces.lateral->status : QStringLiteral("Altstand, nicht korrigiert"))
@@ -2066,19 +2518,19 @@ void MainWindow::setBusy(bool busy)
     const bool hasModel = validation_.valid && !modelPath_.isEmpty();
     const bool dynamic = modeCombo_->currentData().toBool();
     const bool running = simulationThread_ != nullptr;
-    const bool movementReady = live_ != nullptr && live_->progress().states > 0;
-    testDrivePanel_->setVisible(dynamic);
-    stationaryForcePanel_->setVisible(!dynamic);
+    testDrivePanel_->hide();
+    cameraFramePanel_->setVisible(dynamic);
+    stationaryForcePanel_->setVisible(true);
     stationaryForcePanel_->setEnabled(!busy && hasModel);
     movementPanel_->setVisible(!movementSliders_.isEmpty());
     for (auto* fixed : stationaryMovements_) {
-        movementLayout_->setRowVisible(fixed, !dynamic);
+        movementLayout_->setRowVisible(fixed, true);
         fixed->setEnabled(!busy && hasModel && fixed->property("coreMovementAvailable").toBool());
     }
     for (auto* slider : movementSliders_)
-        movementLayout_->setRowVisible(slider->parentWidget(), dynamic);
+        movementLayout_->setRowVisible(slider->parentWidget(), false);
     for (auto* slider : movementSliders_)
-        slider->setEnabled(hasModel && dynamic && running && movementReady);
+        slider->setEnabled(false);
     testDriveCheck_->setEnabled(hasModel && dynamic && (!busy || running));
     testForceSpin_->setEnabled(!busy && dynamic);
     testSpeedSpin_->setEnabled(!busy && dynamic);
@@ -2094,15 +2546,15 @@ void MainWindow::setBusy(bool busy)
 
 void MainWindow::updateModeControls()
 {
-    const bool dynamic = modeCombo_->currentData().toBool();
-    parameterForm_->setRowVisible(durationSpin_, dynamic);
-    parameterForm_->setRowVisible(stepSpin_, dynamic);
-    parameterForm_->setRowVisible(realtimeCheck_, dynamic);
+    parameterForm_->setRowVisible(durationSpin_, false);
+    parameterForm_->setRowVisible(stepSpin_, false);
+    parameterForm_->setRowVisible(realtimeCheck_, false);
     setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
 }
 
 void MainWindow::clearValues()
 {
+    staticValues_->clear();
     pressureStatus_->setText(QStringLiteral("Druckpunkte: kein Ergebnis"));
     const QSignalBlocker blocker(valuesTree_);
     valuesTree_->clear();
@@ -2113,6 +2565,7 @@ void MainWindow::clearValues()
     contributionItems_.clear();
     currentForces_ = {};
     hasForces_ = false;
+    updateStaticForceMenu();
     problems_.clear();
     valuesTree_->headerItem()->setText(ColName, QStringLiteral("Beitrag"));
     balanceLabel_->setText(QStringLiteral("Keine Daten – Core-Lauf starten."));
@@ -2175,12 +2628,125 @@ void MainWindow::showModelProblems(const QVector<ModelProblem>& problems)
     }
 }
 
+void MainWindow::filterStaticValues()
+{
+    for (int i = 0; i < staticValues_->topLevelItemCount(); ++i) {
+        auto* row = staticValues_->topLevelItem(i);
+        bool matches = true;
+        for (int c = 0; c < staticValues_->columnCount(); ++c)
+            matches = matches && row->text(c).contains(
+                staticValueFilters_[c]->text(), Qt::CaseInsensitive);
+        row->setHidden(!matches);
+    }
+}
+
+void MainWindow::updateStaticValues()
+{
+    const QSignalBlocker blocker(staticValues_);
+    staticValues_->setSortingEnabled(false);
+    QHash<QString, QTreeWidgetItem*> rows;
+    for (int i = 0; i < staticValues_->topLevelItemCount(); ++i) {
+        auto* row = staticValues_->topLevelItem(i);
+        rows.insert(row->data(0, Qt::UserRole).toString(), row);
+    }
+    const auto pose = scene_->statePose();
+    forcedisplay::Pose inverse;
+    if (pose) {
+        inverse.quaternionXyzw = pose->quaternionXyzw;
+        for (int i = 0; i < 3; ++i) inverse.quaternionXyzw[i] *= -1.;
+    }
+    auto contributions = currentForces_.contributions;
+    auto derived = forcedisplay::derivedContributions(currentForces_);
+    const auto sums = forcedisplay::staticResultants(currentForces_,
+        pose.value_or(forcedisplay::Pose{}), hydrodynamicRoles_);
+    for (auto& c : derived) {
+        const auto type = c.category == forcedisplay::Category::Weight
+            ? forcedisplay::StaticForce::Weight : forcedisplay::StaticForce::Buoyancy;
+        const auto& sum = sums[static_cast<std::size_t>(type)];
+        if (c.kind == forcedisplay::Kind::Moment) {
+            // moment_s_nm ist bereits auf den Modellbezug S bezogen.
+            c.frame = QStringLiteral("modell");
+            c.point = currentForces_.reference;
+        } else if (c.total) {
+            c.frame = QStringLiteral("modell");
+            c.vector = pose && sum.forceWorld
+                ? std::optional<forcedisplay::Vec3>(
+                    forcedisplay::toWorldVector(inverse, *sum.forceWorld)) : std::nullopt;
+            c.point = pose && sum.pointWorld
+                ? std::optional<forcedisplay::Vec3>(forcedisplay::toWorldVector(inverse,
+                    forcedisplay::sub(*sum.pointWorld, pose->position))) : std::nullopt;
+        }
+        if ((c.total && !sum.forceWorld) || !c.vector)
+            c.state = QStringLiteral("unvollstaendig");
+        contributions.push_back(c);
+    }
+    const auto pointText = [](const forcedisplay::Vec3& point) {
+        return QStringLiteral("[%1; %2; %3] m")
+            .arg(forcedisplay::formatFixed(point[0], 2),
+                forcedisplay::formatFixed(point[1], 2),
+                forcedisplay::formatFixed(point[2], 2));
+    };
+    for (const auto& c : contributions) {
+        auto* row = rows.take(c.id);
+        if (!row) {
+            row = new StaticValueItem(staticValues_);
+            row->setData(0, Qt::UserRole, c.id);
+        }
+        row->setText(0, c.elementId.isEmpty() ? modelName_
+            : modelName_ + QStringLiteral("/") + c.elementId);
+        row->setText(1, c.kind == forcedisplay::Kind::Force
+            ? QStringLiteral("Kraft") : QStringLiteral("Moment"));
+        row->setText(2, forcedisplay::contributionLabel(c));
+        row->setToolTip(2, c.id);
+        row->setForeground(2, QColor(forcedisplay::colorForContribution(c)));
+        const bool knownFrame = c.frame == QStringLiteral("modell")
+            || (c.frame == QStringLiteral("welt") && pose.has_value());
+        const bool valid = forcedisplay::showsValues(c) && knownFrame;
+        if (valid) {
+            const auto vector = c.frame == QStringLiteral("welt")
+                ? forcedisplay::toWorldVector(inverse, *c.vector) : *c.vector;
+            const std::array<double, 4> numbers{
+                forcedisplay::norm(vector), vector[0], vector[1], vector[2]};
+            for (int i = 0; i < 4; ++i) {
+                row->setText(i + 3, forcedisplay::formatValue(numbers[i], c.unit));
+                row->setData(i + 3, staticRawValueRole, numbers[i]);
+                row->setTextAlignment(i + 3, Qt::AlignRight | Qt::AlignVCenter);
+            }
+        } else {
+            for (int i = 3; i <= 6; ++i) {
+                row->setText(i, QStringLiteral("—"));
+                row->setData(i, staticRawValueRole, QVariant());
+            }
+        }
+        row->setText(7, c.unit);
+        QString reference = QStringLiteral("nicht bestimmbar");
+        if (c.kind == forcedisplay::Kind::Moment || c.fromSums) {
+            if (currentForces_.reference)
+                reference = QStringLiteral("S ") + pointText(*currentForces_.reference);
+        } else if (c.point && knownFrame) {
+            const auto point = c.frame == QStringLiteral("welt")
+                ? forcedisplay::toWorldVector(inverse, forcedisplay::sub(*c.point, pose->position))
+                : *c.point;
+            reference = (c.total ? (c.category == forcedisplay::Category::Weight
+                ? QStringLiteral("S ") : QStringLiteral("A ")) : QString()) + pointText(point);
+        }
+        row->setText(8, reference);
+        row->setText(9, knownFrame ? forcedisplay::stateText(c.state)
+            : QStringLiteral("Koordinatenbezug nicht verfügbar"));
+        if (!c.errorId.isEmpty()) row->setToolTip(9, c.errorId);
+    }
+    for (auto* stale : rows) delete stale;
+    staticValues_->setSortingEnabled(true);
+    filterStaticValues();
+}
+
 void MainWindow::updateValues()
 {
     if (!hasForces_) {
         return;
     }
     const auto& forces = currentForces_;
+    updateStaticValues();
     const auto summary = forcedisplay::balanceSummary(forces);
     QString card = QStringLiteral("<b>%1</b>").arg(summary.title.toHtmlEscaped());
     if (!forces.flooded.isEmpty()) {
@@ -2434,6 +3000,23 @@ void MainWindow::selectContribution(const QString& id)
 
 void MainWindow::copyValues() const
 {
+    if (workspaceIndex_ > 0) {
+        QStringList lines;
+        QStringList header;
+        for (int c = 0; c < staticValues_->columnCount(); ++c)
+            header << staticValues_->headerItem()->text(c);
+        lines << header.join(QLatin1Char('\t'));
+        const bool selectedOnly = !staticValues_->selectedItems().isEmpty();
+        for (int i = 0; i < staticValues_->topLevelItemCount(); ++i) {
+            const auto* row = staticValues_->topLevelItem(i);
+            if (row->isHidden() || (selectedOnly && !row->isSelected())) continue;
+            QStringList cells;
+            for (int c = 0; c < staticValues_->columnCount(); ++c) cells << row->text(c);
+            lines << cells.join(QLatin1Char('\t'));
+        }
+        QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
+        return;
+    }
     if (!hasForces_ && !problems_.isEmpty()) {
         QStringList lines{QStringLiteral("Modell\t%1\t%2").arg(modelName_, modelId_),
             QStringLiteral("Fassung\t%1").arg(modelVersion_), QString(),

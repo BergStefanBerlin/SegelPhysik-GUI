@@ -290,6 +290,30 @@ void testV2()
     try { parseForceState(emptyContext); }
     catch (const std::runtime_error&) { emptyContextRejected = true; }
     require(emptyContextRejected, "V6 empty stationary context must not look like a dynamic result.");
+    auto dynamicVersion = turningVersion;
+    dynamicVersion.insert(QStringLiteral("vertragsversion"), QStringLiteral("7"));
+    dynamicVersion.insert(QStringLiteral("modell_fassung"), QStringLiteral("test"));
+    dynamicVersion.insert(QStringLiteral("schritt"), 2);
+    dynamicVersion.insert(QStringLiteral("zeit_s"), .02);
+    bool missingDynamicRejected = false;
+    try { parseForceState(dynamicVersion); }
+    catch (const std::runtime_error&) { missingDynamicRejected = true; }
+    require(missingDynamicRejected, "V7 without force context must be rejected.");
+    QJsonObject dynamicContext{
+        {QStringLiteral("aktiv"), true}, {QStringLiteral("modellfest"), true},
+        {QStringLiteral("modell_fassung"), QStringLiteral("test")},
+        {QStringLiteral("auswertung_schritt"), 2}, {QStringLiteral("auswertung_zeit_s"), .02},
+        {QStringLiteral("kraft_modellfest_n"), QJsonArray{150., 10., -2.}},
+        {QStringLiteral("angriffspunkt_modell_m"), QJsonArray{1., 0., 3.}}};
+    dynamicVersion.insert(QStringLiteral("dynamische_fremdkraft"), dynamicContext);
+    require(parseForceState(dynamicVersion).contract == QStringLiteral("7"),
+        "V7 must retain the existing force and heading-rate contract.");
+    dynamicContext.insert(QStringLiteral("auswertung_schritt"), 1);
+    dynamicVersion.insert(QStringLiteral("dynamische_fremdkraft"), dynamicContext);
+    bool staleDynamicRejected = false;
+    try { parseForceState(dynamicVersion); }
+    catch (const std::runtime_error&) { staleDynamicRejected = true; }
+    require(staleDynamicRejected, "V7 must reject stale force evaluation context.");
     turningVersion.insert(QStringLiteral("stationaer"), QJsonObject{
         {QStringLiteral("residuum_kraft_welt_n"), QJsonArray{.001, -.002, .003}},
         {QStringLiteral("residuum_moment_modell_nm"), QJsonArray{.004, .005, -.006}},
@@ -497,12 +521,91 @@ void testLateralCenter()
     }
 }
 
+void testStaticResultants()
+{
+    const auto defaults = staticForceDefaults();
+    require(defaults.size() == 12, "Static menu must contain exactly twelve entries.");
+    for (std::size_t i = 0; i < defaults.size(); ++i)
+        require(defaults[i].enabled == (i < 5), "Simple on, complete off by default.");
+    ForceState state;
+    state.reference = Vec3{1., 2., 3.};
+    state.balanceStatus = QStringLiteral("vollstaendig");
+    state.total = GroupSum{};
+    state.total->force = Vec3{9., 8., 7.};
+    auto addForce = [&state](const char* id, const char* element, const Vec3& force,
+                            const char* source, const Vec3& point = Vec3{}) {
+        Contribution c;
+        c.id = QString::fromLatin1(id);
+        c.elementId = QString::fromLatin1(element);
+        c.kind = Kind::Force;
+        c.source = QString::fromLatin1(source);
+        c.frame = QStringLiteral("modell");
+        c.state = QStringLiteral("gueltig");
+        c.vector = force;
+        c.point = point;
+        c.category = categorize(c);
+        state.contributions.push_back(c);
+    };
+    addForce("odd-id:hydrodynamik:reibung", "odd-id", {1., 0., 0.}, "hydrodynamik");
+    addForce("odd-id:hydrodynamik:seitenkraft", "odd-id", {0., 2., 0.}, "hydrodynamik");
+    addForce("not-a-rudder:hydrodynamik:reibung", "not-a-rudder", {3., 0., 0.}, "hydrodynamik");
+    addForce("not-a-rudder:hydrodynamik:seitenkraft", "not-a-rudder", {0., 4., 0.}, "hydrodynamik");
+    addForce("hull:hydrodynamik:druck", "hull", {-5., 0., 0.}, "hydrodynamik");
+    addForce("A:auftrieb", "A", {0., 0., 10.}, "hydrostatik", {0., 0., 0.});
+    addForce("B:auftrieb", "B", {0., 0., 30.}, "hydrostatik", {4., 0., 0.});
+    addForce("daempfung:tauchen", "", {0., 0., 0.}, "hydrodynamik");
+    const QHash<QString, QString> roles{{QStringLiteral("odd-id"), QStringLiteral("ruder")},
+        {QStringLiteral("not-a-rudder"), QStringLiteral("kiel")}};
+    Pose pose;
+    pose.position = {10., 20., 30.};
+    pose.quaternionXyzw = {0., 0., std::sqrt(.5), std::sqrt(.5)};
+    state.contributions[5].frame = QStringLiteral("welt");
+    state.contributions[5].point = Vec3{10., 20., 30.};
+    auto sums = staticResultants(state, pose, roles);
+    auto at = [&sums](StaticForce type) -> const StaticResultant& {
+        return sums[static_cast<std::size_t>(type)];
+    };
+    require(at(StaticForce::Rudder).forceWorld
+            && nearVec(*at(StaticForce::Rudder).forceWorld, {-2., 1., 0.}),
+        "Rudder must sum friction and side force using inspected role, not name.");
+    require(at(StaticForce::Centreboard).forceWorld
+            && nearVec(*at(StaticForce::Centreboard).forceWorld, {-4., 3., 0.}),
+        "Centreboard must have its own full hydrodynamic resultant.");
+    require(at(StaticForce::Friction).forceWorld
+            && nearVec(*at(StaticForce::Friction).forceWorld, {0., 4., 0.}),
+        "Friction must not include lateral or hull pressure force.");
+    require(at(StaticForce::Rudder).pointWorld
+            && nearVec(*at(StaticForce::Rudder).pointWorld, toWorldPoint(pose, *state.reference)),
+        "Nonparallel sums must use S rather than invent a pressure point.");
+    require(at(StaticForce::Buoyancy).pointWorld
+            && nearVec(*at(StaticForce::Buoyancy).pointWorld, {10., 23., 30.})
+            && nearVec(*at(StaticForce::Buoyancy).forceWorld, {0., 0., 40.}),
+        "Buoyancy must combine mixed frames under rotated translated pose.");
+    require(at(StaticForce::Total).forceWorld
+            && nearVec(*at(StaticForce::Total).forceWorld, {-8., 9., 7.}),
+        "Total must come exclusively from Core total, not overlapping menu rows.");
+    require(at(StaticForce::HeaveDamping).available && at(StaticForce::HeaveDamping).forceWorld
+            && near(norm(*at(StaticForce::HeaveDamping).forceWorld), 0.),
+        "A valid zero must remain available.");
+    require(!at(StaticForce::TestDrive).available, "Absent source must remain unavailable.");
+    state.contributions[1].vector.reset();
+    sums = staticResultants(state, pose, roles);
+    require(at(StaticForce::Rudder).available && !at(StaticForce::Rudder).forceWorld
+            && !at(StaticForce::Rudder).diagnostic.isEmpty(),
+        "Missing contribution must suppress partial resultant explicitly.");
+    state.missing = {QStringLiteral("absent:auftrieb")};
+    sums = staticResultants(state, pose, roles);
+    require(!at(StaticForce::Total).forceWorld && !at(StaticForce::Buoyancy).forceWorld,
+        "Incomplete Core inventory must not become a complete-looking sum.");
+}
+
 } // namespace
 
 int main()
 {
     try {
         testLateralCenter();
+        testStaticResultants();
         testScale();
         testPoseAndArrow();
         testArc();

@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QResizeEvent>
 #include <QSizeGrip>
 #include <QSvgRenderer>
@@ -229,12 +230,29 @@ void Instrument::setValues(const Values& values)
     update();
 }
 
+void Instrument::setCardLayout(bool enabled)
+{
+    cardLayout_ = enabled;
+    update();
+}
+
 void Instrument::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const double side = std::min(width(), height());
-    renderer_->render(&painter, QRectF((width() - side) / 2.0, (height() - side) / 2.0, side, side));
+    if (cardLayout_) {
+        const auto oldViewBox = renderer_->viewBoxF();
+        renderer_->setViewBox(QRectF(42., 132., 540., 540.));
+        QPainterPath outline;
+        outline.addRoundedRect(QRectF(rect()), 12., 12.);
+        painter.setClipPath(outline);
+        painter.fillRect(rect(), QColor(QStringLiteral("#173345")));
+        renderer_->render(&painter, QRectF(rect()));
+        renderer_->setViewBox(oldViewBox);
+    } else {
+        renderer_->render(&painter, QRectF((width() - side) / 2.0, (height() - side) / 2.0, side, side));
+    }
 }
 
 Overlay::Overlay(QWidget* viewport)
@@ -260,12 +278,13 @@ Overlay::Overlay(QWidget* viewport)
         layout->addWidget(instruments_[i], 1);
     }
     auto* speedPanel = new QWidget(this);
+    speedPanel_ = speedPanel;
     speedPanel->setObjectName(QStringLiteral("navigationSpeed"));
     speedPanel->setToolTip(QStringLiteral(
         "Lineare Geschwindigkeit des Massenschwerpunkts in Weltachsen."));
     speedPanel->setStyleSheet(QStringLiteral(
         "QWidget#navigationSpeed { background:#11283a; border:1px solid #294459; "
-        "border-radius:4px; }"
+        "border-radius:12px; }"
         "QLabel { background:transparent; color:#dce7ef; }"
         "QLabel#navigationSpeedTitle { color:#8caabd; font-size:8pt; "
         "font-weight:700; letter-spacing:1px; }"
@@ -310,6 +329,35 @@ Overlay::Overlay(QWidget* viewport)
     raise();
 }
 
+void Overlay::setDocked(bool docked)
+{
+    docked_ = docked;
+    dragging_ = false;
+    resizing_ = false;
+    handle_->setText(docked ? QStringLiteral("Navigation") : QStringLiteral("Navigation  ·  ziehen"));
+    handle_->setCursor(docked ? Qt::ArrowCursor : Qt::SizeAllCursor);
+    handle_->setVisible(!docked);
+    sizeGrip_->setVisible(!docked);
+    for (auto* instrument : instruments_) instrument->setCardLayout(docked);
+    layout()->setEnabled(!docked);
+    layout()->setSpacing(docked ? 6 : 0);
+    if (docked) {
+        speedPanel_->setFixedHeight(speedPanel_->sizeHint().height());
+        speedPanel_->layout()->setSizeConstraint(QLayout::SetNoConstraint);
+        setMinimumSize(100, speedPanel_->height() + 3 * 100 + 18);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        resize(180, 670);
+        layoutDocked();
+    } else {
+        setMaximumWidth(QWIDGETSIZE_MAX);
+        speedPanel_->layout()->setSizeConstraint(QLayout::SetDefaultConstraint);
+        speedPanel_->setMinimumHeight(0);
+        speedPanel_->setMaximumHeight(QWIDGETSIZE_MAX);
+        setMinimumSize(0, 0);
+        fitToViewport();
+    }
+}
+
 void Overlay::setValues(const Values& values)
 {
     for (auto* instrument : instruments_) instrument->setValues(values);
@@ -346,12 +394,14 @@ void Overlay::setValues(const Values& values)
 
 void Overlay::clampPosition()
 {
+    if (docked_) return;
     move(std::clamp(x(), 0, std::max(0, parentWidget()->width() - width())),
         std::clamp(y(), 0, std::max(0, parentWidget()->height() - height())));
 }
 
 void Overlay::fitToViewport()
 {
+    if (docked_) return;
     const auto available = parentWidget()->size().expandedTo(QSize(1, 1));
     setMaximumSize(available);
     resize(preferredSize_.boundedTo(available));
@@ -361,6 +411,10 @@ void Overlay::fitToViewport()
 void Overlay::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (docked_) {
+        layoutDocked();
+        return;
+    }
     const auto gripSize = sizeGrip_->sizeHint();
     sizeGrip_->resize(gripSize);
     sizeGrip_->move(width() - gripSize.width(), height() - gripSize.height());
@@ -368,8 +422,24 @@ void Overlay::resizeEvent(QResizeEvent* event)
     clampPosition();
 }
 
+void Overlay::layoutDocked()
+{
+    constexpr int gap = 6;
+    const int speedHeight = speedPanel_->height();
+    const int available = std::max(3, height() - speedHeight - 3 * gap);
+    int y = 0;
+    for (int i = 0; i < 3; ++i) {
+        const int next = (i + 1) * available / 3;
+        const int previous = i * available / 3;
+        instruments_[static_cast<std::size_t>(i)]->setGeometry(0, y, width(), next - previous);
+        y += next - previous + gap;
+    }
+    speedPanel_->setGeometry(0, y, width(), speedHeight);
+}
+
 bool Overlay::eventFilter(QObject* watched, QEvent* event)
 {
+    if (docked_) return QWidget::eventFilter(watched, event);
     if (watched == parentWidget() && event->type() == QEvent::Resize) fitToViewport();
     if (watched == sizeGrip_) {
         if (event->type() == QEvent::MouseButtonPress) {

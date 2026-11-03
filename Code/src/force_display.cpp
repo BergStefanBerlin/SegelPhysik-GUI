@@ -225,7 +225,7 @@ ForceState parseForceState(const QJsonObject& object)
         QStringLiteral("moment_bezug_modell_m"));
     const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3")
         || state.contract == QStringLiteral("4") || state.contract == QStringLiteral("5")
-        || state.contract == QStringLiteral("6");
+        || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7");
     if (state.contract != QStringLiteral("1") && !v2) {
         throw std::runtime_error("Nicht unterstuetzte CORE-Ergebnisversion.");
     }
@@ -233,7 +233,27 @@ ForceState parseForceState(const QJsonObject& object)
         && !object.value(QStringLiteral("stationaer")).isObject())
         throw std::runtime_error("CORE-Ergebnisversion 5 ohne stationaeren Ergebnisvertrag.");
     state.stationary = object.value(QStringLiteral("stationaer")).toObject();
-    if (state.contract == QStringLiteral("6")) {
+    if (state.contract == QStringLiteral("7")) {
+        const auto value = object.value(QStringLiteral("dynamische_fremdkraft"));
+        if (!value.isObject())
+            throw std::runtime_error("CORE-Ergebnisversion 7 ohne dynamischen Fremdkraftvertrag.");
+        const auto force = value.toObject();
+        const auto evaluatedStep = force.value(QStringLiteral("auswertung_schritt"));
+        const auto evaluatedTime = force.value(QStringLiteral("auswertung_zeit_s"));
+        if (!force.value(QStringLiteral("aktiv")).isBool()
+            || force.value(QStringLiteral("modellfest")) != QJsonValue(true)
+            || force.value(QStringLiteral("modell_fassung")).toString().isEmpty()
+            || !evaluatedStep.isDouble() || !std::isfinite(evaluatedStep.toDouble())
+            || evaluatedStep.toDouble() < 0. || std::floor(evaluatedStep.toDouble()) != evaluatedStep.toDouble()
+            || !evaluatedTime.isDouble() || !std::isfinite(evaluatedTime.toDouble())
+            || force.value(QStringLiteral("modell_fassung")) != object.value(QStringLiteral("modell_fassung"))
+            || force.value(QStringLiteral("auswertung_schritt")) != object.value(QStringLiteral("schritt"))
+            || force.value(QStringLiteral("auswertung_zeit_s")) != object.value(QStringLiteral("zeit_s")))
+            throw std::runtime_error("CORE-Ergebnisversion 7 mit inkonsistentem dynamischem Fremdkraftvertrag.");
+        readVector(force.value(QStringLiteral("kraft_modellfest_n")), QStringLiteral("Dynamische Fremdkraft"));
+        readVector(force.value(QStringLiteral("angriffspunkt_modell_m")), QStringLiteral("Dynamischer Ansatzpunkt"));
+    }
+    if (state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7")) {
         const auto rate = object.value(QStringLiteral("kursdrehrate_rad_s"));
         state.courseRateStatus = object.value(QStringLiteral("kursdrehrate_status")).toString();
         if (state.courseRateStatus == QStringLiteral("gueltig")
@@ -268,7 +288,7 @@ ForceState parseForceState(const QJsonObject& object)
         throw std::runtime_error("CORE-Ergebnisversion 3 ohne verpflichtenden Testantriebskontext.");
     }
     if ((state.contract == QStringLiteral("3") || state.contract == QStringLiteral("4")
-            || state.contract == QStringLiteral("6"))
+            || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7"))
         && testValue.isObject()) {
         const auto test = testValue.toObject();
         const auto transition = test.value(QStringLiteral("uebergang"));
@@ -292,6 +312,12 @@ ForceState parseForceState(const QJsonObject& object)
     if (lateral.isObject()) {
         LateralCenter center;
         center.status = lateral.toObject().value(QStringLiteral("status")).toString();
+        const auto transverse = lateral.toObject().value(QStringLiteral("querkraft_modell_n"));
+        if (!transverse.isUndefined()) {
+            if (!transverse.isDouble() || !std::isfinite(transverse.toDouble()))
+                throw std::runtime_error("CORE-LDP: Ungueltige Querkraft.");
+            center.transverseForce = transverse.toDouble();
+        }
         const auto version = lateral.toObject().value(QStringLiteral("auswertung_version"));
         if (!version.isUndefined()) {
             if (!version.isDouble() || version.toDouble() != 2.)
@@ -494,6 +520,117 @@ QVector<Contribution> derivedContributions(const ForceState& state)
             totalMoment.momentS = moment;
             result.push_back(totalMoment);
         }
+    }
+    return result;
+}
+
+std::array<StaticForceStyle, staticForceCount> staticForceDefaults()
+{
+    return {{
+        {QStringLiteral("buoyancy"), QStringLiteral("Auftrieb"), QStringLiteral("Summe aller Auftriebskräfte am Auftriebspunkt A"), QStringLiteral("#55B6F0"), true},
+        {QStringLiteral("weight"), QStringLiteral("Gewichtskraft"), QStringLiteral("Summe aller Gewichtskräfte im Schwerpunkt S"), QStringLiteral("#1A4DCC"), true},
+        {QStringLiteral("sail"), QStringLiteral("Segeldruckpunkt"), QStringLiteral("Summe der Fremdkräfte am Ersatz-Segeldruckpunkt SDP"), QStringLiteral("#176B38"), true},
+        {QStringLiteral("lateral"), QStringLiteral("Lateraldruckpunkt"), QStringLiteral("Resultierende Modell-Querkraft am Lateraldruckpunkt LDP"), QStringLiteral("#63CF79"), true},
+        {QStringLiteral("direction"), QStringLiteral("Richtungspfeil"), QStringLiteral("Kursdrehrichtung in Frei und Draufsicht; kein Kraftpfeil"), QStringLiteral("#E88924"), true},
+        {QStringLiteral("friction"), QStringLiteral("Reibungskraft"), QStringLiteral("Summe aller hydrodynamischen Reibungskräfte; Darstellung an S, kein Druckpunkt"), QStringLiteral("#D1495B"), false},
+        {QStringLiteral("hull"), QStringLiteral("Rumpfdruckkraft"), QStringLiteral("Summe der hydrodynamischen Rumpfdruckkräfte; Darstellung an S"), QStringLiteral("#9467BD"), false},
+        {QStringLiteral("rudder"), QStringLiteral("Ruderkraft"), QStringLiteral("Summe aller hydrodynamischen Kräfte an Rudern, einschließlich Reibung; Darstellung an S"), QStringLiteral("#9467BD"), false},
+        {QStringLiteral("centreboard"), QStringLiteral("Schwertkraft"), QStringLiteral("Summe aller hydrodynamischen Kräfte an Schwert/Kiel, einschließlich Reibung; Darstellung an S"), QStringLiteral("#159EAD"), false},
+        {QStringLiteral("heave"), QStringLiteral("Tauchdämpfungskraft"), QStringLiteral("Resultierende Tauchdämpfungskraft; Darstellung an S"), QStringLiteral("#A66A3F"), false},
+        {QStringLiteral("test"), QStringLiteral("Testantrieb"), QStringLiteral("Summe der Testantriebskräfte; Darstellung an S"), QStringLiteral("#D6A800"), false},
+        {QStringLiteral("total"), QStringLiteral("Gesamtkraft ΣF"), QStringLiteral("Gesamtkraft aus der vollständigen Core-Bilanz an S. Die übrigen Anzeigen überlappen und dürfen nicht addiert werden."), QStringLiteral("#45515E"), false}
+    }};
+}
+
+std::array<StaticResultant, staticForceCount> staticResultants(
+    const ForceState& state, const Pose& pose, const QHash<QString, QString>& roles)
+{
+    std::array<StaticResultant, staticForceCount> result;
+    auto& direction = result[static_cast<std::size_t>(StaticForce::Direction)];
+    direction.available = state.courseRateRadS.has_value();
+    direction.diagnostic = state.courseRateStatus;
+    const auto reference = state.reference
+        ? std::optional<Vec3>(toWorldPoint(pose, *state.reference)) : std::nullopt;
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        const auto type = static_cast<StaticForce>(i);
+        auto& sum = result[i];
+        if (type == StaticForce::Direction) continue;
+        if (type == StaticForce::Lateral) {
+            sum.available = state.lateral.has_value();
+            if (state.lateral && state.lateral->status == QStringLiteral("gueltig")
+                && state.lateral->evaluationVersion == 2 && state.lateral->position
+                && state.lateral->transverseForce) {
+                sum.pointWorld = toWorldPoint(pose, *state.lateral->position);
+                sum.forceWorld = toWorldVector(pose, {0., *state.lateral->transverseForce, 0.});
+            } else {
+                sum.diagnostic = QStringLiteral("LDP oder resultierende Querkraft nicht bestimmbar");
+            }
+            continue;
+        }
+        if (type == StaticForce::Total) {
+            sum.available = state.total.has_value();
+            if (state.total && state.total->force && state.missing.isEmpty()
+                && state.balanceStatus == QStringLiteral("vollstaendig")) {
+                // Der V2-Vertrag liefert summen.gesamt im Modellframe.
+                sum.forceWorld = toWorldVector(pose, *state.total->force);
+                sum.pointWorld = reference;
+            } else {
+                sum.diagnostic = QStringLiteral("Keine vollständige Core-Gesamtbilanz");
+            }
+            continue;
+        }
+        Vec3 force{}, weighted{};
+        double weights = 0.;
+        bool incomplete = !state.missing.isEmpty();
+        for (const auto& c : state.contributions) {
+            if (c.total || c.fromSums || c.kind != Kind::Force) continue;
+            const bool hydro = c.source == QStringLiteral("hydrodynamik");
+            const auto role = roles.value(c.elementId);
+            const bool matches =
+                (type == StaticForce::Weight && c.category == Category::Weight)
+                || (type == StaticForce::Buoyancy && c.category == Category::Buoyancy)
+                || (type == StaticForce::Sail && (c.source == QStringLiteral("externe_kraft") || c.source == QStringLiteral("fremdkraft")))
+                || (type == StaticForce::Friction && hydro && c.id.endsWith(QStringLiteral(":reibung")))
+                || (type == StaticForce::HullPressure && hydro && c.id.endsWith(QStringLiteral(":druck")))
+                || (type == StaticForce::Rudder && hydro && role == QStringLiteral("ruder"))
+                || (type == StaticForce::Centreboard && hydro && role == QStringLiteral("kiel"))
+                || (type == StaticForce::HeaveDamping && hydro && c.id == QStringLiteral("daempfung:tauchen"))
+                || (type == StaticForce::TestDrive && c.source == QStringLiteral("testantrieb"));
+            if (!matches || c.state == QStringLiteral("deaktiviert")) continue;
+            sum.available = true;
+            if (!c.vector || (c.state != QStringLiteral("gueltig") && c.state != QStringLiteral("null"))
+                || (c.frame != QStringLiteral("modell") && c.frame != QStringLiteral("welt"))) {
+                incomplete = true;
+                continue;
+            }
+            const auto world = c.frame == QStringLiteral("welt") ? *c.vector : toWorldVector(pose, *c.vector);
+            force = add(force, world);
+            if (type == StaticForce::Buoyancy) {
+                if (!c.point && norm(world) > 0.) incomplete = true;
+                if (c.point) {
+                    weighted = add(weighted, scale(c.frame == QStringLiteral("welt")
+                        ? *c.point : toWorldPoint(pose, *c.point), norm(world)));
+                    weights += norm(world);
+                }
+            }
+        }
+        if (!sum.available) {
+            sum.diagnostic = QStringLiteral("Für dieses Objekt nicht vorhanden");
+            continue;
+        }
+        if (incomplete) {
+            sum.diagnostic = QStringLiteral("Unvollständige Core-Beiträge; keine Teilsumme angezeigt");
+            continue;
+        }
+        sum.forceWorld = force;
+        sum.pointWorld = reference;
+        if (type == StaticForce::Buoyancy) {
+            sum.pointWorld = weights > 0. ? std::optional<Vec3>(scale(weighted, 1. / weights)) : std::nullopt;
+        } else if (type == StaticForce::Sail) {
+            sum.pointWorld = state.sailCenter && state.sailCenter->position
+                ? std::optional<Vec3>(toWorldPoint(pose, *state.sailCenter->position)) : std::nullopt;
+        }
+        if (!sum.pointWorld) sum.diagnostic = QStringLiteral("Kraftansatzpunkt nicht bestimmbar");
     }
     return result;
 }

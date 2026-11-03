@@ -56,8 +56,9 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
     page->setObjectName(QStringLiteral("graphicsSettingsPage"));
     auto* layout = new QVBoxLayout(page);
     auto* heading = new QLabel(QStringLiteral(
-        "<b>Darstellung – Statisches Modell (Technik)</b><br>"
-        "Jede Änderung wird sofort angewendet und dauerhaft gespeichert. "
+        "<b>Darstellung – Frei im Statischen Modell (Technik)</b><br>"
+        "Jede Änderung wird sofort auf Frei angewendet und dauerhaft gespeichert. "
+        "Seite, Heck und Draufsicht bleiben fest schematisch und sind nicht konfigurierbar. "
         "Dynamisches Modell und bisherige Optikwerte bleiben unverändert. "
         "CPU-/GPU-Last sind qualitative Einschätzungen, keine Messwerte; "
         "sie betreffen die Darstellung, nicht die Solvergenauigkeit.<br>"
@@ -277,21 +278,6 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
                 quality->setCurrentIndex(previous);
             }
         });
-    const auto flag = [&](const char* key, const QString& text, bool graphics::Profile::* member) {
-        auto* check = new QCheckBox;
-        check->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(key)));
-        check->setAccessibleName(text);
-        check->setChecked(initial.profiles[0].*member);
-        addRow(check, text, QStringLiteral("niedrig"), QStringLiteral("niedrig"));
-        QObject::connect(check, &QCheckBox::toggled, page, [change, check, member](bool value) {
-            if (!change([member, value](graphics::Profile& p) { p.*member = value; })) {
-                const QSignalBlocker blocker(check);
-                check->setChecked(!value);
-            }
-        });
-    };
-    flag("throughBody", QStringLiteral("Vektoren durch Körper sichtbar: verbessert die Analyse verdeckter Kräfte."),
-        &graphics::Profile::throughBody);
     auto* environment = new QLineEdit(initial.profiles[0].environmentPath);
     environment->setObjectName(QStringLiteral("profile0_environment"));
     environment->setPlaceholderText(QStringLiteral("Leer = prozeduraler Himmel"));

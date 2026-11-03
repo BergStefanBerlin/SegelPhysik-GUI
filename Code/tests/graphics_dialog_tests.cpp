@@ -64,6 +64,8 @@ int main(int argc, char** argv)
         require(!page->findChild<QPushButton*>(QStringLiteral("applyGraphics"))
             && !page->findChild<QPushButton*>(QStringLiteral("cancelGraphics")),
             "Immediate settings must not have Apply/Cancel.");
+        require(!page->findChild<QCheckBox*>(QStringLiteral("profile0_throughBody")),
+            "Static technique must not offer force/vector settings.");
         auto* table = page->findChild<QTableWidget*>(QStringLiteral("staticGraphicsTable"));
         require(table && table->columnCount() == 4 && table->rowCount() > 31
             && table->horizontalHeaderItem(0)->text().isEmpty()

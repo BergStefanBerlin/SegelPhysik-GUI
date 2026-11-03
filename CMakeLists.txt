@@ -192,6 +192,9 @@ if(BUILD_TESTING)
             add_test(NAME gui_workspace_tabs_${scale} COMMAND segelphysik_gui_graphics_render_tests
                 --main-window-only "${SEGELPHYSIK_MODELLE_DIR}"
                 "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/workspace-tabs-${scale}")
+            add_test(NAME gui_dynamic_layout_${scale} COMMAND segelphysik_gui_graphics_render_tests
+                --dynamic-layout-only "${SEGELPHYSIK_MODELLE_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/dynamic-layout-${scale}")
             add_test(NAME gui_boat_inspection_${scale} COMMAND segelphysik_gui_graphics_render_tests
                 --inspection-only "${SEGELPHYSIK_MODELLE_DIR}"
                 "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/boat-inspection-${scale}")
@@ -201,12 +204,15 @@ if(BUILD_TESTING)
             set_tests_properties(gui_workspace_tabs_${scale} PROPERTIES
                 TIMEOUT 90 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
+            set_tests_properties(gui_dynamic_layout_${scale} PROPERTIES
+                TIMEOUT 90 RUN_SERIAL TRUE
+                ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             set_tests_properties(gui_boat_inspection_${scale} PROPERTIES
                 TIMEOUT 120 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
                 set_property(TEST gui_graphics_render_${scale} gui_workspace_tabs_${scale}
-                    gui_boat_inspection_${scale}
+                    gui_boat_inspection_${scale} gui_dynamic_layout_${scale}
                     APPEND PROPERTY ENVIRONMENT
                     "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
             endif()

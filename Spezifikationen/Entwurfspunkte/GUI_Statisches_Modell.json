@@ -1,10 +1,270 @@
 {
   "status": "finalisiert",
-  "stand": "2026-11-02",
+  "stand": "2026-11-03",
   "spezifikation": "../Spezifikation_GUI_Statisches_Modell.md",
-  "zielversion": "G-0.9",
-  "hinweis": "Abschnitte 1-5 implementiert; Abschnitt 6 am 02.11.2026 ausdruecklich finalisiert und zur Umsetzung freigegeben. Ziel G-0.9, Core C-0.8, V6 mit unveraenderten Altvertraegen. Nachweise im bestehenden G-0.9-Plan. G-0.8 bleibt unveraendert.",
+  "zielversion": "G-0.10",
+  "nachtrag_instrumentlayout_2026_11_03": {
+    "status": "implementiert_getestet_nutzerabnahme_offen",
+    "abschnitt": "11.1",
+    "anforderungen": ["A-G-00118", "A-G-00119", "A-G-00120"],
+    "umsetzungsschritte": ["U-G-000123", "U-G-000124", "U-G-000125"],
+    "hinweis": "Direkter Auftrag 17:33 Uhr und Folgeauftrag Wiedergabe entfernen. Navigationstitel statisch verborgen; feste Geschwindigkeitshoehe, Instrumente im Restplatz; Lageansichten schaltbar. Workspace 100/200 bestanden, 49,23/43,49 s; Standard-EXE erfolgreich neu gebaut. Nutzerabnahme offen, uncommittet."
+  },
+  "nachtrag_navigation_2026_11_03": {
+    "status": "implementiert_getestet_nutzerabnahme_offen",
+    "abschnitt": "11",
+    "anforderungen": ["A-G-00117"],
+    "umsetzungsschritte": ["U-G-000121", "U-G-000122"],
+    "hinweis": "Direkter Umsetzungsauftrag am 03.11.2026, 17:23 Uhr: Navigation statisch zwischen Auswahl und Hauptfenster. Workspace 100/200 bestanden, 50,00/47,93 s. Separater Release-Neubau segelphysik_gui_updated.exe; Standard-GUI unveraendert. Nutzerabnahme offen, uncommittet."
+  },
+  "nachtrag_wertetabelle_2026_11_03": {
+    "status": "implementiert_getestet_nutzerabnahme_offen",
+    "abschnitt": "10",
+    "anforderungen": ["A-G-00115", "A-G-00116"],
+    "umsetzungsschritte": ["U-G-000118", "U-G-000119", "U-G-000120"],
+    "hinweis": "Direkter Fortsetzungsauftrag am 03.11.2026, 17:13 Uhr und anschliessende Praezisierung Gewichtskraft vor Auftrieb. Kein vorausgehender Entwurfspunkt; Umsetzung und Nachweise im einzigen G-0.10-Plan. Workspace-Tests 100/200 bestanden, 50,55/45,47 s. Separater Release-Neubau segelphysik_gui_updated.exe erfolgreich; laufende Standard-GUI nicht geschlossen, Standard-EXE noch gesperrt/alt. Persoenliche Abnahme offen; uncommittet."
+  },
+  "nachtrag_kraftmenue_2026_11_03": {
+    "status": "technisch_abgeschlossen_nutzerabnahme_offen",
+    "abschnitt": "9",
+    "hinweis": "Entwurf aus Dokumentationsauftrag vom 03.11.2026, 16:12 Uhr; durch ausdrueckliches 'bitte umsetzen' um 16:15 Uhr finalisiert und zur Implementierung freigegeben. IDEE-G-00074 bis IDEE-G-00079 angenommen und A-G-00109 bis A-G-00114 zugeordnet; U-G-000112 bis U-G-000117 implementiert/getestet. Fruehere Nachweise vom 16:28 Uhr im einzigen G-0.10-Plan erhalten. Finaler Abschlussbericht vom 16:31 Uhr: Standard-EXE erneut fehlerfrei als Release gebaut; ein CTest-Lauf nach Render-/Tooltipbereinigung mit gui_workspace_tabs_100 PASS 40,06 s, gui_workspace_tabs_200 PASS 42,37 s, gui_force_display PASS 0,14 s; 3/3 bestanden, insgesamt 82,59 s. Alle technischen Gates abgeschlossen; persoenliche Nutzerabnahme offen, GUI uncommittet. Keine Core-Aenderung oder Git-Aktion.",
+    "finaler_testumfang": "Echte VTK-Punkt- UND Pfeilakteure mit gewaehlter Farbe in allen vier Ansichten, echter Farbpicker, Persistenz nach erneutem Oeffnen, Farbreset ohne Auswahlreset, Richtungspfeil Frei/Draufsicht unabhaengig vom Kompass, alle vorzeichenbehafteten Kurvenfahrtfaelle. Reiner Test zusaetzlich mit gemischten Welt-/Modellframes der Auftriebskraefte und Unterdrueckung unvollstaendiger Summen.",
+    "darstellungsentscheidung": "Bestehender Kennzeichnungsvertrag durch expliziten Zeilentooltip erfuellt: 'Resultierende, Bezug S: kein nachgewiesener Angriffspunkt und keine vollständige Momentenäquivalenz.' Keine zusaetzlichen vollstaendigen Kraftnamen im Bild wegen Ueberlagerung in kleinen Ansichten; vorhandene A/S/SDP/LDP-Texte bleiben an einfache Auswahlen gebunden. Keine neue Anforderung.",
+    "praezisierung_richtungspfeil": "Nutzerpraezisierung vom 03.11.2026, 16:28 Uhr: gemeinsam in Frei/Draufsicht, unabhaengig vom Kompass; bei Nullrate gerade wie bisher in Frei statt der zuvor dokumentierten Unterdrueckung. Fehlender/ungueltiger Zustand und Reset ohne Ersatzpfeil."
+  },
+  "ausgangsstand": "G-0.9",
+  "nachtrag_fenster_2026_11_03": {
+    "status": "finalisiert",
+    "abschnitt": "6",
+    "hinweis": "Durch Umsetzungsauftrag vom 03.11.2026, 13:42 Uhr finalisiert und freigegeben; A-G-00098 bis A-G-00103. Technische Nachweise im G-0.10-Plan, persoenliche Nutzerabnahme getrennt."
+  },
+  "hinweis": "Aktueller Umfang fuer G-0.10: reduzierte statische Anzeige und orthogonale Dreifachansicht. Durch Umsetzungsauftrag vom 03.11.2026 finalisiert; A-G-00093 bis A-G-00097. Historische Eintraege bleiben getrennt mit ihren bisherigen Kennungen erhalten.",
   "punkte": [
+    {
+      "id": "IDEE-G-00074",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00109"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000113", "U-G-000117"],
+      "thema": "Feste stationaere Vorgaben und bereinigte Bedienung",
+      "abschnitt": "9.1",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#91-geltungsbereich-und-feste-stationaere-eingaben",
+      "beschreibung": "Kurvenfahrt immer zugelassen und Fremdkraft immer modellfest; beide Auswahlen entfernen. Langtext unter rechtem Darstellung-Button und bisherige Druckpunkt-Statusangaben entfernen.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00075",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00110"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000115", "U-G-000116", "U-G-000117"],
+      "thema": "Einfaches und vollstaendiges Kraftmenue fuer alle statischen Ansichten",
+      "abschnitt": "9.2-9.3",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#92-auswahl-farben-und-tooltips",
+      "beschreibung": "Zwei Gruppen unter Darstellung, Kurznamen als Checkboxtext und Erklaerungen per Mouseover; Punkte/Pfeile/Texte gemeinsam schalten. Fuer Frei, Seite, Heck und Draufsicht, unabhaengig vom Fensterplatz.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00076",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00111"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000114", "U-G-000116", "U-G-000117"],
+      "thema": "Nur entsprechende Summenkraefte, Ruder und Schwert getrennt",
+      "abschnitt": "9.2, 9.4",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#94-summenbildung-und-physikalische-grenzen",
+      "beschreibung": "Vollstaendig: Reibungskraft, Rumpfdruckkraft, Ruderkraft, Schwertkraft, Tauchdaempfungskraft, Testantrieb, Gesamtkraft. Keine gemeinsame Seitenkraftcheckbox oder Einzelbeitragsauswahl. Vorhandene Rollen/Quellen und belegte Angriffspunkte nutzen, sonst Resultierende am Bezug S kennzeichnen.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00077",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00112"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000115", "U-G-000116", "U-G-000117"],
+      "thema": "Persistente Farbfelder und Default Farben",
+      "abschnitt": "9.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#92-auswahl-farben-und-tooltips",
+      "beschreibung": "Rechtsbuendiges Farbfeld je Auswahl oeffnet Farbpicker. Bestaetigte Farbe sofort auf Punkt/Pfeil/Text anwenden und statisch persistent speichern. Default Farben unter allen Auswahlzeilen setzt nur Farben auf dokumentierte Palette zurueck.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00078",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00113"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000116", "U-G-000117"],
+      "thema": "Gemeinsamer Richtungspfeil in Frei und Draufsicht",
+      "abschnitt": "9.3",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#93-gemeinsame-wirkung-in-allen-vier-ansichten",
+      "beschreibung": "Richtungspfeil unter einfach mit gemeinsamer Checkbox/Farbe; vorhandener gebogener Core-Kursdrehrichtungspfeil in Frei und Draufsicht, nicht Seite/Heck. Keine Momentendarstellung.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00079",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00114"],
+      "umsetzungsschritte": ["U-G-000112", "U-G-000115", "U-G-000116", "U-G-000117"],
+      "thema": "Initial einfach ein und vollstaendig aus",
+      "abschnitt": "9.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#92-auswahl-farben-und-tooltips",
+      "beschreibung": "Alle fuenf einfachen Eintraege initial ein, alle sieben vollstaendigen aus. Keine konkurrierenden alten statischen Vektorcheckboxen; Farbreset veraendert keine Auswahl.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00073",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00108", "A-G-00107", "A-G-00106"],
+      "thema": "Auftrieb A und Summenkraefte, feste Blau-Gruen-Farben",
+      "abschnitt": "8.1",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#81-auftriebspunkt-und-vertikale-summenkraefte",
+      "beschreibung": "Umsetzungsauftrag 03.11.2026, 15:42 Uhr: A mit Auftriebssumme hellblau, S mit Gewichtssumme dunkelblau, SDP dunkelgruen, LDP hellgruen. Nur gebundene Ansichten, unverdeckt, nur Bildebenenkomponenten.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00072",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00107", "A-G-00106"],
+      "thema": "Schwerpunkt S statt Momentendarstellung",
+      "abschnitt": "8",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#8-gesamtmoment-und-druckpunktkraefte-in-den-gebundenen-ansichten",
+      "beschreibung": "Auftrag 03.11.2026, 15:23 bis 15:29 Uhr: Momente entfernen, Massenschwerpunkt als S markieren, Pfeile exakt in SDP/LDP-Punktfarben. Nur Bildebenenkomponenten, unverdeckt, alle drei gebundenen Ansichten. A-G-00105 ausdruecklich zurueckgezogen.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00071",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00105", "A-G-00106"],
+      "thema": "Gesamtmoment und zugeordnete Druckpunktkraefte",
+      "abschnitt": "8",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#8-gesamtmoment-und-druckpunktkraefte-in-den-gebundenen-ansichten",
+      "beschreibung": "Auftrag 03.11.2026, 15:12 Uhr: statt Antriebsmoment die vollstaendige Core-Momentensumme; zugeordnete Kraftpfeile am Ersatz-SDP und LDP, auf die Bildebene projiziert. Frei unveraendert.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00070",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00105"],
+      "thema": "Antreibende Momentenanteile",
+      "abschnitt": "8",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#8-gesamtmoment-und-druckpunktkraefte-in-den-gebundenen-ansichten",
+      "beschreibung": "Nur Seite, Heck und Draufsicht: gerichteter Momentenbogen, Bezug S und signierter Wert fuer Fremd-/Antriebskraefte; keine Gegenmomente oder Gesamtsumme. Frei unveraendert. Umsetzungsauftrag vom 03.11.2026, 14:54 Uhr.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00068",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00099", "A-G-00100", "A-G-00101"],
+      "thema": "Linke Maustaste verschiebt gebundene Ansichten",
+      "abschnitt": "6.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#62-zoomen-verschieben-und-defaultansicht",
+      "beschreibung": "Linkes Ziehen ohne Zusatztaste verschiebt Auge und Ziel in der Bildebene, ohne wasserparallele beziehungsweise senkrechte Blickrichtung zu veraendern. Freie Ansicht unveraendert. Praezisierung durch direkten Umsetzungsauftrag vom 03.11.2026, 14:10 Uhr.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00069",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00104"],
+      "thema": "Feste schematische Darstellung der gebundenen Ansichten",
+      "abschnitt": "7",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#7-feste-schematische-darstellung-der-gebundenen-ansichten",
+      "beschreibung": "Seite, Heck und Draufsicht fest schematisch: Yacht deckend und gut sichtbar, Wasserlinie und dezente Wasserebene, keine Reflexionen, Wellen oder dekorativen Effekte. Gueltige LDP/SDP samt Text immer unverdeckt. Nicht konfigurierbar, unabhaengig vom Fensterplatz. Durch direkten Umsetzungsauftrag vom 03.11.2026, 14:10 Uhr finalisiert, um 14:24 Uhr praezisiert.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00062",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00098"],
+      "thema": "Ansicht Frei",
+      "abschnitt": "6.1",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#61-ansichten-und-ausgangsanordnung",
+      "beschreibung": "Grosses Fenster heisst Frei und behaelt seine bisherige Funktionalitaet.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00063",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00099"],
+      "thema": "Ansicht Seite",
+      "abschnitt": "6.1-6.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#62-zoomen-verschieben-und-defaultansicht",
+      "beschreibung": "Oben zunaechst Seite von Backbord: Zoom und Verschieben, Blick immer parallel zum Wasser; eigener Button Defaultansicht.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00064",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00100"],
+      "thema": "Ansicht Heck",
+      "abschnitt": "6.1-6.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#62-zoomen-verschieben-und-defaultansicht",
+      "beschreibung": "Mitte zunaechst Heck: Zoom und Verschieben, Blick immer parallel zum Wasser; eigener Button Defaultansicht.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00065",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00101"],
+      "thema": "Ansicht Draufsicht",
+      "abschnitt": "6.1-6.2",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#62-zoomen-verschieben-und-defaultansicht",
+      "beschreibung": "Unten zunaechst Draufsicht: Zoom und Verschieben, Blick immer orthogonal von oben zum Wasser; eigener Button Defaultansicht.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00066",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00102"],
+      "thema": "Tausch kleiner und grosser Ansicht",
+      "abschnitt": "6.3",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#63-doppelklick-und-ansichtstausch",
+      "beschreibung": "Doppelklick auf kleinen Bildbereich tauscht dessen Ansicht samt Name, Kamera und Funktion mit der grossen Ansicht. Doppelklick im grossen Bildbereich ohne Wirkung.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00067",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00103"],
+      "thema": "Ansichtsname unten rechts",
+      "abschnitt": "6.4",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md#64-beschriftung-und-gemeinsame-daten",
+      "beschreibung": "In jedem Fenster steht unten rechts der Name der dort angezeigten Ansicht; Beschriftung wandert beim Tauschen mit.",
+      "gui": true,
+      "core": false
+    },
+    {
+      "id": "IDEE-G-00061",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00093", "A-G-00094", "A-G-00095", "A-G-00096", "A-G-00097"],
+      "thema": "Reduzierte statische Anzeige und orthogonale Dreifachansicht",
+      "abschnitt": "1-5",
+      "bezug": "../Spezifikation_GUI_Statisches_Modell.md",
+      "beschreibung": "Nur Statisches Modell: Momente und grafische Kraft-/Momentenbedienung entfernen, nur LDP und Ersatz-SDP anzeigen. Eigene Spalte zwischen Bootsansicht und Rechenbedienung mit drei gleich hohen Bildbereichen im Hochformat Hoehe/Breite 4/3: Backbordseite und Heck auf Wasserlinien-Augenhoehe, darunter senkrechte Draufsicht. Orthographische Weltansichten, vollstaendige gekraengte Core-Pose.",
+      "gui": true,
+      "core": false,
+      "entscheidung": "03.11.2026: Hochformat Hoehe/Breite 4/3 bestaetigt. Eigene Spalte zwischen grosser Bootsansicht und rechter Rechenbedienung; Seitenansicht von Backbord; nur grafische Einstellungen und Pfeile entfallen, Fremdkraft/Angriffspunkt und Ruder-/Schwertstellungen bleiben einstellbar. Umsetzungsauftrag um 12:52 Uhr finalisiert den Umfang einschliesslich dokumentierter Draufsicht Bug oben; Umsetzung freigegeben, Abnahme nicht vorweggenommen.",
+      "offene_auslegung": []
+    }
+  ],
+  "historie_G_0_9": {
+    "status": "finalisiert",
+    "stand": "2026-11-02",
+    "zielversion": "G-0.9",
+    "spezifikation": "https://github.com/BergStefanBerlin/SegelPhysik-GUI/blob/G-0.9/Spezifikationen/Spezifikation_GUI_Statisches_Modell.md",
+    "hinweis": "Historische Zuordnung und Abschnittsnummern des veroeffentlichten G-0.9-Stands; kein offener Umfang fuer G-0.10. Nachweise im bestehenden G-0.9-Plan.",
+    "punkte": [
     {"id": "IDEE-G-00048", "status": "angenommen", "anforderungen": ["A-G-00079"], "thema": "Reitergebundene statische Berechnung", "abschnitt": "2", "beschreibung": "Statisch/dynamisch-Dropdown im statischen Reiter entfernen und den passenden Core-Laufvertrag garantieren."},
     {"id": "IDEE-G-00049", "status": "angenommen", "anforderungen": ["A-G-00080"], "thema": "Konstante Fremdkraft und Elementstellungen", "abschnitt": "3", "beschreibung": "Lastdefinition unter Lauf stoppen, direkt darunter getrennte Einstellungen je Ruder und Schwert; feste Stellungen und unveraenderlichen Rechenfall anbieten."},
     {"id": "IDEE-G-00050", "status": "angenommen", "anforderungen": ["A-G-00081"], "thema": "Stationaere Ergebnisse und Diagnose", "abschnitt": "4", "beschreibung": "Orientierung, Tiefenlage, Fahrt, Abdrift, sechs Bilanzresiduen und fehlende Eindeutigkeit transparent aus Core darstellen."},
@@ -13,5 +273,6 @@
     {"id": "IDEE-G-00053", "status": "angenommen", "anforderungen": ["A-G-00084"], "thema": "Kursdrehrate zwischen Fahrtbetrag und Achsenwerten", "abschnitt": "6.2", "beschreibung": "Signierte Kursdrehrate Grad/s unmittelbar unter m/s und ueber Welt-X/Y/Z. Core liefert rad/s und Status; keine Differentiation gerundeter Winkel oder Verwechslung mit omega-Betrag/Modell-Z."},
     {"id": "IDEE-G-00054", "status": "angenommen", "anforderungen": ["A-G-00085"], "thema": "Bewegungsresiduen und kompatible Ergebnisse", "abschnitt": "6.3", "beschreibung": "Aeussere Summen von Core-Bewegungsresiduen trennen; Referenzen, Kreisradius, Nichtkonvergenz und inkompatible Last sichtbar. V5 nicht still umdeuten, keine GUI-Parallelphysik."},
     {"id": "IDEE-G-00055", "status": "angenommen", "anforderungen": ["A-G-00086"], "thema": "Abnahme und Integration", "abschnitt": "6.4", "beschreibung": "Reihenfolge und rad/s-Grad/s-Umrechnung mit echten Core-Werten, Vorzeichen und Schraeglage pruefen; Altvertraege erhalten. Freigegebene numerische Abnahmekriterien, V6 und Ziel G-0.9."}
-  ]
+    ]
+  }
 }

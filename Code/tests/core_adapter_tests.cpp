@@ -655,6 +655,109 @@ void testMovementInput(const QString& referenceModelPath)
         "Core omitted movement poses needed for rendering.");
 }
 
+void testDynamicForce(const QString& referenceModelPath)
+{
+    const auto modelPath = QDir(QFileInfo(referenceModelPath).absolutePath())
+        .filePath(QStringLiteral("../420/modell.json"));
+    const auto validation = validateModel(modelPath);
+    require(validation.valid, "Dynamic force movement model rejected.");
+    QJsonObject configuration{
+        {QStringLiteral("aktiv"), true},
+        {QStringLiteral("modellfest"), true},
+        {QStringLiteral("kraft_n"), QJsonArray{150., 10., -2.}},
+        {QStringLiteral("angriffspunkt_modell_m"), QJsonArray{1., 0., 3.}},
+        {QStringLiteral("stellungen"), QJsonArray{
+            QJsonObject{{QStringLiteral("element_id"), QStringLiteral("Ruder")},
+                {QStringLiteral("wert"), 5.}},
+            QJsonObject{{QStringLiteral("element_id"), QStringLiteral("Schwert")},
+                {QStringLiteral("wert"), 50.}}}}};
+    const auto start = QJsonObject{{QStringLiteral("dynamische_fremdkraft"), configuration}};
+    QString error;
+    auto live = LiveSimulation::create(modelPath, validation, .03, .01, false, &error, start);
+    if (!live) std::cerr << error.toStdString() << '\n';
+    require(live != nullptr, "Dynamic force start rejected.");
+    std::atomic_bool cancellation{false};
+    live->run(cancellation);
+    require(live->progress().status == QStringLiteral("abgeschlossen"),
+        "Dynamic force live run failed.");
+    const auto frozen = live->stateJson(0, &error);
+    bool foundForce = false;
+    for (const auto& value : frozen.value(QStringLiteral("vektoren")).toArray()) {
+        const auto vector = value.toObject();
+        if (vector.value(QStringLiteral("id")).toString().contains(QStringLiteral("fremdkraft"))
+            && vector.value(QStringLiteral("art")) == QJsonValue(QStringLiteral("kraft"))) {
+            require(vector.value(QStringLiteral("vektor")) == configuration.value(QStringLiteral("kraft_n"))
+                    && vector.value(QStringLiteral("punkt_m"))
+                        == configuration.value(QStringLiteral("angriffspunkt_modell_m")),
+                "Dynamic initial XYZ force/application point differs from GUI inputs.");
+            const auto reference = frozen.value(QStringLiteral("moment_bezug_modell_m")).toArray();
+            const auto moment = vector.value(QStringLiteral("moment_s_nm")).toArray();
+            require(reference.size() == 3 && moment.size() == 3,
+                "Dynamic force must expose its physical moment about the moved CG.");
+            const auto point = configuration.value(QStringLiteral("angriffspunkt_modell_m")).toArray();
+            const auto force = configuration.value(QStringLiteral("kraft_n")).toArray();
+            for (int axis = 0; axis < 3; ++axis) {
+                const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+                const double expected = (point[a].toDouble() - reference[a].toDouble()) * force[b].toDouble()
+                    - (point[b].toDouble() - reference[b].toDouble()) * force[a].toDouble();
+                require(std::abs(moment[axis].toDouble() - expected) < 1e-10,
+                    "Dynamic force moment differs from model-point lever cross force.");
+            }
+            foundForce = true;
+        }
+    }
+    require(foundForce, "Dynamic initial state omitted actual external force.");
+    for (qsizetype i = 0; i < live->progress().states; ++i) {
+        const auto state = live->stateJson(i, &error);
+        const auto movements = state.value(QStringLiteral("bewegungen")).toArray();
+        for (const auto& entry : configuration.value(QStringLiteral("stellungen")).toArray()) {
+            bool found = false;
+            for (const auto& movement : movements)
+                found = found || (movement.toObject().value(QStringLiteral("element_id"))
+                        == entry.toObject().value(QStringLiteral("element_id"))
+                    && movement.toObject().value(QStringLiteral("wert"))
+                        == entry.toObject().value(QStringLiteral("wert")));
+            require(found, "Fixed Core movement missing or changed during dynamic run.");
+        }
+    }
+    const auto batch = runSimulation(modelPath, validation, true, .03, .01, &cancellation, start);
+    if (!batch.completed || !batch.error.isEmpty() || batch.states.size() != live->progress().states)
+        std::cerr << "Dynamic batch: " << batch.status.toStdString()
+                  << " error=" << batch.error.toStdString() << " states=" << batch.states.size()
+                  << " live=" << live->progress().states << '\n';
+    require(batch.completed && batch.error.isEmpty()
+            && batch.states.size() == live->progress().states,
+        "Dynamic force batch/live contract differs.");
+    const auto last = live->stateJson(live->progress().states - 1, &error);
+    for (const auto& key : {QStringLiteral("position_m"), QStringLiteral("omega_modell_rad_s")}) {
+        const auto actual = last.value(key).toArray();
+        const auto expected = batch.states.constLast().value(key).toArray();
+        require(actual.size() == 3 && expected.size() == 3, "Dynamic output shape invalid.");
+        for (int axis = 0; axis < 3; ++axis)
+            require(std::abs(actual[axis].toDouble() - expected[axis].toDouble()) < 1e-12,
+                "Dynamic force batch/live physics diverges.");
+    }
+    auto invalid = configuration;
+    invalid.insert(QStringLiteral("modellfest"), false);
+    require(!LiveSimulation::create(modelPath, validation, .03, .01, false, &error,
+                {{QStringLiteral("dynamische_fremdkraft"), invalid}}) && !error.isEmpty(),
+        "Unsupported dynamic world-fixed force was silently accepted.");
+    invalid = configuration;
+    invalid.insert(QStringLiteral("stellungen"), QJsonArray{
+        QJsonObject{{QStringLiteral("element_id"), QStringLiteral("Ruder")},
+            {QStringLiteral("wert"), 91.}}});
+    require(!LiveSimulation::create(modelPath, validation, .03, .01, false, &error,
+                {{QStringLiteral("dynamische_fremdkraft"), invalid}}) && !error.isEmpty(),
+        "Invalid dynamic movement setting was silently accepted.");
+    invalid = configuration;
+    invalid.insert(QStringLiteral("aktiv"), QStringLiteral("true"));
+    require(!LiveSimulation::create(modelPath, validation, .03, .01, false, &error,
+                {{QStringLiteral("dynamische_fremdkraft"), invalid}}) && !error.isEmpty(),
+        "Malformed dynamic activation was silently accepted.");
+    require(live->stateJson(0, &error) == frozen,
+        "Later runs or invalid requests changed a historical force snapshot.");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -666,6 +769,11 @@ int main(int argc, char* argv[])
     }
     try {
         const auto modelPath = QString::fromLocal8Bit(argv[1]);
+        if (QString::fromLocal8Bit(argv[2]) == QStringLiteral("--dynamic-force-only")) {
+            testDynamicForce(modelPath);
+            std::cout << "Dynamic force adapter contract passed.\n";
+            return 0;
+        }
         ModelValidation validation;
         testValidation(modelPath, validation);
         testStaticRun(modelPath, validation);
@@ -677,6 +785,7 @@ int main(int argc, char* argv[])
         testStartState(modelPath, validation);
         testDrive(modelPath, validation);
         testMovementInput(modelPath);
+        testDynamicForce(modelPath);
         std::cout << "Core adapter validation, static hydrostatics and "
                      "dynamic run passed.\n";
         return 0;

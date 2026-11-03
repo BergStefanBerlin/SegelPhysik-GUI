@@ -16,6 +16,7 @@
 #include <QStyle>
 #include <QStyleOptionButton>
 #include <QComboBox>
+#include <QColorDialog>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -41,6 +42,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -128,6 +130,18 @@ void waitUntil(const std::function<bool()>& ready, const char* message)
         QApplication::processEvents();
     }
     require(ready(), message);
+}
+
+void confirmDynamicRun(MainWindow& window, double seconds, bool realtime = true)
+{
+    QTimer::singleShot(0, &window, [&window, seconds, realtime] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("dynamicRunDialog"));
+        require(dialog, "Start must open the dynamic run dialog.");
+        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runDuration"))->setValue(seconds);
+        dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runStep"))->setValue(.01);
+        dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(realtime);
+        dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
 }
 
 void testPicking(VtkSceneWidget& scene, const QJsonObject& state,
@@ -529,6 +543,536 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
     report.insert(QStringLiteral("420NavigationSelectedSnapshotBothProfiles"), true);
 }
 
+void testStaticViews(MainWindow& window, VtkSceneWidget& scene)
+{
+    using namespace forcedisplay;
+    auto* column = window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"));
+    require(column && column->isVisible(), "static auxiliary column must be visible");
+    const auto mainPosition = scene.mapToGlobal(QPoint());
+    const auto columnPosition = column->mapToGlobal(QPoint());
+    const auto controlPosition = window.findChild<QGroupBox*>(
+        QStringLiteral("stationaryForcePanel"))->mapToGlobal(QPoint());
+    require(mainPosition.x() + scene.width() <= columnPosition.x()
+            && columnPosition.x() + column->width() <= controlPosition.x(),
+        "auxiliary column must sit between main viewport and calculation controls");
+    int previousBottom = -1;
+    int firstHeight = 0;
+    for (int i = 0; i < 3; ++i) {
+        auto* view = dynamic_cast<VtkSceneWidget*>(
+            window.findChild<QWidget*>(QStringLiteral("staticScene%1").arg(i)));
+        require(view && view->isVisible(), "all three static views must exist");
+        view->renderNow();
+        auto* viewport = view->findChild<QVTKOpenGLNativeWidget*>();
+        const double ratio = viewport->devicePixelRatioF();
+        const auto image = view->captureImage();
+        require(std::abs(image.width() - 0.75 * image.height()) <= 1.0,
+            "actual auxiliary image must be portrait 4:3 within one device pixel");
+        auto* slot = window.findChild<QWidget*>(QStringLiteral("staticViewSlot%1").arg(i));
+        require(viewport->height() > 0 && viewport->width() > 0
+                && slot->y() > previousBottom,
+            "auxiliary views must not overlap");
+        if (i == 0) firstHeight = viewport->height();
+        require(viewport->height() == firstHeight && ratio > 0.,
+            "auxiliary image heights must match");
+        previousBottom = slot->y() + slot->height() - 1;
+        require(view->parallelProjection() && !view->options().forces
+                && !view->options().leverArm && view->options().staticForces
+                && (i == 2 || !view->courseArrowGeometry()),
+            "Auxiliary views must use shared resultants; only top may have a direction arrow.");
+        const auto camera = view->cameraView();
+        const auto direction = sub(camera.position, camera.focalPoint);
+        if (i < 2) {
+            require(camera.position[2] == 0. && camera.focalPoint[2] == 0.
+                    && camera.viewUp == Vec3{0., 0., 1.},
+                "side and stern cameras must remain exactly at water level with world up");
+        } else {
+            require(direction[0] == 0. && direction[1] == 0. && direction[2] > 0.
+                    && camera.viewUp[2] == 0.,
+                "top view must look vertically down with horizontal bow-up");
+        }
+        require(view->statePose().has_value() == scene.statePose().has_value(),
+            "all four scenes must share state availability");
+        if (const auto pose = scene.statePose()) {
+            require(view->statePose()->position == pose->position
+                    && view->statePose()->quaternionXyzw == pose->quaternionXyzw,
+                "full Core pose must match without levelling heel, pitch or immersion");
+            auto forward = toWorldVector(*pose, {1., 0., 0.});
+            forward[2] = 0.;
+            forward = scale(forward, 1. / norm(forward));
+            const Vec3 expected = i == 0 ? Vec3{-forward[1], forward[0], 0.}
+                : i == 1 ? scale(forward, -1.) : Vec3{0., 0., 1.};
+            require(norm(cross(direction, expected)) < 1e-8 * norm(direction)
+                    && dot(direction, expected) > 0.,
+                "cameras must use actual horizontal Backbord/stern directions");
+            if (i == 2)
+                require(norm(sub(camera.viewUp, forward)) < 1e-10,
+                    "top camera must keep the actual bow up");
+        }
+        for (bool sail : {false, true}) {
+            require(view->pressurePoint(sail) == scene.pressurePoint(sail),
+                "all views must share exact Core pressure points or their absence");
+        }
+        auto hostileProfile = graphics::defaults(1);
+        hostileProfile.bodyOpacity = 0.05;
+        hostileProfile.throughBody = true;
+        hostileProfile.environmentPath = QStringLiteral("must-not-load-for-bound-view.hdr");
+        view->setGraphicsProfile(hostileProfile);
+        for (std::size_t feature = 0; feature < graphics::featureCount; ++feature) {
+            const auto id = static_cast<graphics::Feature>(feature);
+            require(view->graphicsProfile().enabled[feature]
+                    == (id == graphics::Feature::Water || id == graphics::Feature::Waterline || id == graphics::Feature::Smooth
+                        || id == graphics::Feature::FXAA),
+                "bound views must enforce fixed schematic features independently of user settings");
+        }
+        require(view->graphicsProfile().bodyOpacity == 1.
+                && view->graphicsProfile().environmentPath.isEmpty()
+                && view->graphicsProfile().waterOpacity == 0.14
+                && view->options().visibility == VtkSceneWidget::Visibility::ThroughBody
+                && view->motionStateCount() == 0,
+            "bound views must keep solid bodies, light water and unoccluded markers without environment or motion history");
+        auto* renderers = viewport->renderWindow()->GetRenderers();
+        renderers->InitTraversal();
+        while (auto* layer = renderers->GetNextItem())
+            if (layer->GetLayer() == 1)
+                require(!layer->GetPreserveDepthBuffer(),
+                    "bound pressure markers and labels must ignore scene occlusion");
+        auto* renderer = viewport->renderWindow()->GetRenderers()->GetFirstRenderer();
+        require(!renderer->GetUseImageBasedLighting() && !renderer->GetUseSSAO()
+                && renderer->GetUseFXAA() && !renderer->GetGradientBackground(),
+            "schematic renderer must have no environment lighting or decorative passes");
+        auto* actors = renderer->GetActors();
+        actors->InitTraversal();
+        int solidParts = 0;
+        while (auto* actor = actors->GetNextActor()) {
+            auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+            if (!actor->GetVisibility() || !actor->GetUseBounds() || !mapper) continue;
+            auto* mesh = mapper->GetInput();
+            if (!mesh || mesh->GetNumberOfPolys() == 0) continue;
+            ++solidParts;
+            auto* property = actor->GetProperty();
+            require(property->GetOpacity() == 1. && property->GetInterpolation() != VTK_PBR
+                    && property->GetSpecular() == 0.,
+                "every visible yacht surface must be solid and matte, including glass and cloth");
+        }
+        require(solidParts > 0, "schematic view must contain actual visible yacht geometry");
+    }
+}
+
+void testStaticForceMenu(MainWindow& window, VtkSceneWidget& freeScene, const QDir& evidence)
+{
+    using namespace forcedisplay;
+    auto* table = window.findChild<QTreeWidget*>(QStringLiteral("staticForceValues"));
+    auto* navigationColumn = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
+    auto* navigation = navigationColumn->widget();
+    require(!navigation->findChild<QLabel*>(QStringLiteral("navigationDragHandle"))->isVisible(),
+        "Docked navigation must not show a Navigation heading.");
+    auto* speedPanel = navigation->findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+    const int speedHeight = speedPanel->height();
+    const auto previousSize = window.size();
+    window.resize(window.width(), window.height() + 120);
+    QApplication::processEvents();
+    require(speedPanel->height() == speedHeight,
+        "Resizing the static column must preserve speed-panel height.");
+    auto* compass = navigation->findChild<QWidget*>(QStringLiteral("navigation_compass"));
+    auto* roll = navigation->findChild<QWidget*>(QStringLiteral("navigation_roll"));
+    auto* pitch = navigation->findChild<QWidget*>(QStringLiteral("navigation_pitch"));
+    require(compass->y() == 0
+            && compass->mapToGlobal(QPoint()).y() == freeScene.mapToGlobal(QPoint()).y(),
+        "Visible compass card must start flush with the neighbouring main scene.");
+    require(speedPanel->styleSheet().contains(QStringLiteral("border-radius:12px")),
+        "Speed card must share the twelve-pixel panel rounding.");
+    require(roll->y() - (compass->y() + compass->height()) == 6
+            && pitch->y() - (roll->y() + roll->height()) == 6
+            && speedPanel->y() - (pitch->y() + pitch->height()) == 6
+            && speedPanel->y() + speedPanel->height() == navigation->height(),
+        "Instruments must fill remaining height with six-pixel gaps and speed panel at bottom.");
+    window.resize(previousSize);
+    QApplication::processEvents();
+    auto* attitudeViews = window.findChild<QCheckBox*>(QStringLiteral("displayAttitudeViews"));
+    auto* boundViews = window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"));
+    require(attitudeViews->isVisible() && attitudeViews->text() == QStringLiteral("Lageansichten"),
+        "Static view-column checkbox must be available under navigation.");
+    attitudeViews->setChecked(false);
+    require(!boundViews->isVisible(), "Lageansichten must hide the complete right-hand view column.");
+    attitudeViews->setChecked(true);
+    require(boundViews->isVisible(), "Lageansichten must restore the right-hand view column.");
+    for (auto* label : window.findChildren<QLabel*>())
+        if (label->text() == QStringLiteral("WIEDERGABE"))
+            require(!label->isVisible(), "Static model must not show the playback row.");
+    require(window.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"))->y()
+            < window.findChild<QCheckBox*>(QStringLiteral("staticForce_buoyancy"))->y(),
+        "Simple selection must list weight before buoyancy.");
+    require(table && table->isVisible() && table->columnCount() == 10
+            && table->topLevelItemCount() > 0
+            && table->selectionMode() == QAbstractItemView::ExtendedSelection,
+        "Static values must use a full-width ten-column multiselect table.");
+    require(!window.findChild<QWidget*>(QStringLiteral("balanceScroll"))->isVisible()
+            && !window.findChild<QLabel*>(QStringLiteral("time"))->isVisible(),
+        "Static values must remove the old left summary and time block.");
+    for (auto* button : window.findChildren<QPushButton*>())
+        if (button->text() == QStringLiteral("Werte kopieren"))
+            require(!button->isVisible(), "Static values must remove the copy button.");
+    bool hasForce = false, hasMoment = false;
+    const int forceRowCount = table->topLevelItemCount();
+    for (int i = 0; i < table->topLevelItemCount(); ++i) {
+        const auto* row = table->topLevelItem(i);
+        hasForce = hasForce || row->text(1) == QStringLiteral("Kraft");
+        hasMoment = hasMoment || row->text(1) == QStringLiteral("Moment");
+        if (row->text(1) == QStringLiteral("Moment"))
+            require(row->text(8).startsWith(QStringLiteral("S ")),
+                "Moment rows must explicitly name Core reference S.");
+        const auto magnitude = row->data(3, Qt::UserRole + 10);
+        if (magnitude.isValid()) {
+            double squared = 0.;
+            for (int axis = 4; axis <= 6; ++axis) {
+                const double value = row->data(axis, Qt::UserRole + 10).toDouble();
+                squared += value * value;
+            }
+            require(std::abs(magnitude.toDouble() - std::sqrt(squared)) < 1e-8,
+                "Numeric table magnitude must match its displayed-frame vector components.");
+        }
+    }
+    require(hasForce && hasMoment, "Table must include forces and moments regardless of arrow choices.");
+    auto* kindFilter = window.findChild<QLineEdit*>(QStringLiteral("staticValueFilter1"));
+    kindFilter->setText(QStringLiteral("Moment"));
+    int visibleMoments = 0;
+    for (int i = 0; i < table->topLevelItemCount(); ++i) {
+        const auto* row = table->topLevelItem(i);
+        if (row->isHidden()) continue;
+        ++visibleMoments;
+        require(row->text(1) == QStringLiteral("Moment"), "Kind filter must hide force rows.");
+    }
+    require(visibleMoments > 0, "Moment filter must retain matching rows.");
+    auto* nameFilter = window.findChild<QLineEdit*>(QStringLiteral("staticValueFilter2"));
+    nameFilter->setText(QStringLiteral("no-such-force"));
+    for (int i = 0; i < table->topLevelItemCount(); ++i)
+        require(table->topLevelItem(i)->isHidden(), "Column filters must combine with AND.");
+    nameFilter->clear();
+    kindFilter->clear();
+    table->sortItems(3, Qt::AscendingOrder);
+    std::optional<double> last;
+    for (int i = 0; i < table->topLevelItemCount(); ++i) {
+        const auto value = table->topLevelItem(i)->data(3, Qt::UserRole + 10);
+        if (!value.isValid()) continue;
+        require(!last || *last <= value.toDouble(), "Magnitude sort must be numeric, not lexicographic.");
+        last = value.toDouble();
+    }
+    const int priorWidth = table->columnWidth(2);
+    table->setColumnWidth(2, priorWidth + 40);
+    require(table->columnWidth(2) == priorWidth + 40, "Static columns must be resizable.");
+    table->topLevelItem(0)->setSelected(true);
+    table->topLevelItem(1)->setSelected(true);
+    require(table->selectedItems().size() == 2, "Multiple table rows must be selectable.");
+    table->clearSelection();
+    table->sortItems(0, Qt::AscendingOrder);
+    std::array<VtkSceneWidget*, 4> views{&freeScene};
+    for (int i = 0; i < 3; ++i)
+        views[i + 1] = dynamic_cast<VtkSceneWidget*>(
+            window.findChild<QWidget*>(QStringLiteral("staticScene%1").arg(i)));
+    auto* sail = window.findChild<QCheckBox*>(QStringLiteral("staticForce_sail"));
+    sail->setChecked(false);
+    require(table->topLevelItemCount() == forceRowCount,
+        "Graphical force selection must not remove numerical force or moment rows.");
+    for (auto* view : views) {
+        view->renderNow();
+        require(!view->pressurePoint(true) && view->pressurePoint(false),
+            "One shared checkbox must remove both SDP point and arrow in all four views.");
+    }
+    sail->setChecked(true);
+    for (auto* view : views) {
+        view->renderNow();
+        require(view->pressurePoint(true).has_value(), "SDP must return in all four views.");
+    }
+    auto* direction = window.findChild<QCheckBox*>(QStringLiteral("staticForce_direction"));
+    direction->setChecked(false);
+    for (auto* view : views) {
+        view->renderNow();
+        require(!view->courseArrowGeometry(), "Shared direction toggle must affect every view.");
+    }
+    direction->setChecked(true);
+    for (std::size_t i = 0; i < views.size(); ++i) {
+        views[i]->renderNow();
+        require(views[i]->courseArrowGeometry().has_value() == (i == 0 || i == 3),
+            "Direction arrow must occur in Frei and top, never side or stern.");
+    }
+    for (const auto* key : {"friction", "hull", "rudder", "centreboard", "heave", "total"}) {
+        auto* check = window.findChild<QCheckBox*>(
+            QStringLiteral("staticForce_") + QString::fromLatin1(key));
+        require(check && check->isEnabled() && !check->isChecked(),
+            "Real 420 must offer separate complete resultants, all initially off.");
+        check->setChecked(true);
+    }
+    const QColor chosen(QStringLiteral("#c842e1"));
+    bool pickerSeen = false;
+    QTimer::singleShot(0, [&] {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* picker = qobject_cast<QColorDialog*>(widget)) {
+                pickerSeen = true;
+                picker->setCurrentColor(chosen);
+                picker->accept();
+            }
+        }
+    });
+    window.findChild<QPushButton*>(QStringLiteral("staticColor_sail"))->click();
+    require(pickerSeen, "Color box must open an actual color picker.");
+    for (auto* view : views) {
+        require(QColor(view->options().staticStyles[static_cast<std::size_t>(StaticForce::Sail)].color) == chosen,
+            "Chosen color must immediately reach all four views.");
+        view->renderNow();
+        bool coloredPoint = false, coloredArrow = false;
+        auto* renderers = view->findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetRenderers();
+        renderers->InitTraversal();
+        while (auto* layer = renderers->GetNextItem()) {
+            if (layer->GetLayer() != 1) continue;
+            auto* actors = layer->GetActors();
+            actors->InitTraversal();
+            while (auto* actor = actors->GetNextActor()) {
+                if (!actor->GetVisibility()) continue;
+                const auto* rgb = actor->GetProperty()->GetColor();
+                if (std::abs(rgb[0] - chosen.redF()) > .001
+                    || std::abs(rgb[1] - chosen.greenF()) > .001
+                    || std::abs(rgb[2] - chosen.blueF()) > .001) continue;
+                auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+                if (!mapper || !mapper->GetInput()) continue;
+                coloredPoint = coloredPoint || mapper->GetInput()->GetNumberOfVerts() > 0;
+                coloredArrow = coloredArrow || mapper->GetInput()->GetNumberOfLines() > 0;
+            }
+        }
+        require(coloredPoint && coloredArrow,
+            "Actual SDP point and resultant arrow actors must both use the picked color in every view.");
+    }
+    MainWindow reopened;
+    require(QColor(reopened.findChild<QPushButton*>(QStringLiteral("staticColor_sail"))->toolTip()
+                .section(QStringLiteral(": "), -1)) == chosen
+            && reopened.findChild<QCheckBox*>(QStringLiteral("staticForce_rudder"))->isChecked(),
+        "Static colors and selections must survive a new window.");
+    reopened.close();
+    window.findChild<QPushButton*>(QStringLiteral("staticDefaultColors"))->click();
+    const auto defaults = staticForceDefaults();
+    for (auto* view : views) {
+        for (std::size_t i = 0; i < defaults.size(); ++i)
+            require(QColor(view->options().staticStyles[i].color) == QColor(defaults[i].color),
+                "Default Farben must reset all shared colors.");
+        require(view->options().staticStyles[static_cast<std::size_t>(StaticForce::Rudder)].enabled,
+            "Reset colors must not change force selections.");
+        view->renderNow();
+    }
+    require(window.grab().save(evidence.filePath(QStringLiteral("static-force-menu.bmp")), "BMP"),
+        "Shared force-menu screenshot must be written.");
+    for (std::size_t i = 5; i < defaults.size(); ++i)
+        window.findChild<QCheckBox*>(QStringLiteral("staticForce_") + defaults[i].key)->setChecked(false);
+}
+
+void testViewInteraction(MainWindow& window, VtkSceneWidget& freeScene, const QDir& evidence)
+{
+    using namespace forcedisplay;
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+    std::array<VtkSceneWidget*, 4> views{&freeScene};
+    for (int i = 0; i < 3; ++i)
+        views[i+1] = dynamic_cast<VtkSceneWidget*>(
+            window.findChild<QWidget*>(QStringLiteral("staticScene%1").arg(i)));
+    const auto viewport = [](VtkSceneWidget* view) {
+        return view->findChild<QVTKOpenGLNativeWidget*>();
+    };
+    const auto drag = [&](VtkSceneWidget* view, Qt::MouseButton button,
+                          Qt::KeyboardModifiers modifiers, const QPointF& delta) {
+        auto* target = viewport(view);
+        const QPointF start(target->width() * .45, target->height() * .55);
+        const QPointF global = target->mapToGlobal(start.toPoint());
+        QMouseEvent press(QEvent::MouseButtonPress, start, global, button, button, modifiers);
+        QMouseEvent move(QEvent::MouseMove, start + delta, global + delta,
+            Qt::NoButton, button, modifiers);
+        QMouseEvent release(QEvent::MouseButtonRelease, start + delta, global + delta,
+            button, Qt::NoButton, modifiers);
+        QApplication::sendEvent(target, &press);
+        QApplication::sendEvent(target, &move);
+        QApplication::sendEvent(target, &release);
+        QApplication::processEvents();
+        view->renderNow();
+    };
+    const auto wheel = [&](VtkSceneWidget* view) {
+        auto* target = viewport(view);
+        const QPointF point(target->width() * .5, target->height() * .5);
+        QWheelEvent event(point, target->mapToGlobal(point.toPoint()), QPoint(), QPoint(0,120),
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(target, &event);
+        view->renderNow();
+    };
+    const auto doubleClick = [&](VtkSceneWidget* view) {
+        auto* target = viewport(view);
+        const QPointF point(target->width() * .5, target->height() * .5);
+        const QPointF global = target->mapToGlobal(point.toPoint());
+        // Dispatch to the real child under the pointer, including navigation instruments.
+        auto* receiver = target->childAt(point.toPoint());
+        if (!receiver) receiver = target;
+        const QPointF local = receiver->mapFromGlobal(global.toPoint());
+        QMouseEvent event(QEvent::MouseButtonDblClick, local, global,
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, local, global,
+            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(receiver, &event);
+        QApplication::sendEvent(receiver, &release);
+        QApplication::processEvents();
+    };
+    const auto sameCamera = [](const VtkSceneWidget::CameraView& a,
+                               const VtkSceneWidget::CameraView& b) {
+        return norm(sub(a.position,b.position)) < 1e-8
+            && norm(sub(a.focalPoint,b.focalPoint)) < 1e-8
+            && norm(sub(a.viewUp,b.viewUp)) < 1e-10;
+    };
+    const std::array<QString, 4> names{QStringLiteral("Frei"), QStringLiteral("Seite"),
+        QStringLiteral("Heck"), QStringLiteral("Draufsicht")};
+    const auto labels = [&] {
+        for (std::size_t i = 0; i < views.size(); ++i) {
+            auto* target = viewport(views[i]);
+            auto* name = views[i]->findChild<QLabel*>(QStringLiteral("viewName"));
+            auto* button = views[i]->findChild<QPushButton*>(QStringLiteral("defaultView"));
+            require(name && name->isVisible() && name->text() == names[i]
+                    && target->rect().contains(name->geometry())
+                    && std::abs(target->width() - name->geometry().right() - 1 - 4) <= 1
+                    && std::abs(target->height() - name->geometry().bottom() - 1 - 4) <= 1,
+                "every view must keep its exact name inside its bottom-right corner");
+            require(button && button->isVisible() == (i != 0),
+                "default button must belong only to each bound view, regardless of slot");
+            if (i != 0) {
+                require(!button->geometry().intersects(name->geometry()),
+                    "default button must not overlap view name");
+                require(button->width() >= button->fontMetrics().horizontalAdvance(button->text()) + 6,
+                    "default button must leave enough room for its full text");
+            }
+            if (stack->currentWidget() != views[i]) {
+                const auto size = target->size() * target->devicePixelRatioF();
+                require(std::abs(size.width() - .75 * size.height()) <= 1.,
+                    "small slot keeps portrait image aspect even when showing Frei");
+            }
+            require(views[i]->statePose().has_value() == freeScene.statePose().has_value()
+                    && views[i]->pressurePoint(false) == freeScene.pressurePoint(false)
+                    && views[i]->pressurePoint(true) == freeScene.pressurePoint(true),
+                "swapped views must preserve shared data");
+        }
+    };
+    labels();
+    require(!freeScene.findChild<QLabel*>(QStringLiteral("drivingMomentLegend")),
+        "removed moment legend must not remain");
+    for (int i = 1; i < 4; ++i) {
+        views[i]->renderNow();
+        require(!views[i]->findChild<QLabel*>(QStringLiteral("drivingMomentLegend")),
+            "bound views must not retain moment legends");
+    }
+    doubleClick(&freeScene);
+    require(stack->currentWidget() == &freeScene, "double click large Frei must do nothing");
+    const auto freeCamera = freeScene.cameraView();
+    for (int i = 1; i < 4; ++i) {
+        auto* view = views[i];
+        auto* button = view->findChild<QPushButton*>(QStringLiteral("defaultView"));
+        button->click();
+        const auto initial = view->cameraView();
+        const double initialScale = view->parallelScale();
+        wheel(view);
+        require(view->parallelScale() < initialScale, "wheel must actually zoom a bound camera");
+        const double wheelScale = view->parallelScale();
+        drag(view, Qt::RightButton, Qt::NoModifier, {0., 8.});
+        require(view->parallelScale() < wheelScale, "right drag must zoom bound camera");
+        drag(view, Qt::LeftButton, Qt::ShiftModifier, {4., 3.});
+        drag(view, Qt::MiddleButton, Qt::NoModifier, {7., 9.});
+        require(norm(sub(view->cameraView().focalPoint, initial.focalPoint)) > 1e-6,
+            "middle drag must actually pan bound camera");
+        const auto beforeLeftPan = view->cameraView();
+        const double beforeLeftScale = view->parallelScale();
+        if (i < 3)
+            require(std::abs(beforeLeftPan.position[2] - beforeLeftPan.focalPoint[2]) < 1e-12
+                    && beforeLeftPan.position[2] != 0.,
+                "vertical side/stern pan must move both heights, not tilt the camera");
+        else
+            require(std::abs(beforeLeftPan.position[0] - beforeLeftPan.focalPoint[0]) < 1e-12
+                    && std::abs(beforeLeftPan.position[1] - beforeLeftPan.focalPoint[1]) < 1e-12,
+                "top pan must preserve vertical projection");
+        drag(view, Qt::LeftButton, Qt::NoModifier, {10., 8.});
+        const auto panned = view->cameraView();
+        require(norm(sub(panned.focalPoint, beforeLeftPan.focalPoint)) > 1e-6
+                && norm(sub(sub(panned.position, panned.focalPoint),
+                    sub(beforeLeftPan.position, beforeLeftPan.focalPoint))) < 1e-8
+                && norm(sub(panned.viewUp, beforeLeftPan.viewUp)) < 1e-10
+                && view->parallelScale() == beforeLeftScale,
+            "plain left drag must pan while preserving exact view direction, up and zoom");
+        const double zoom = view->parallelScale();
+        const auto beforeFree = freeScene.cameraView();
+        doubleClick(view);
+        require(stack->currentWidget() == view, "small view double click must enlarge that view");
+        require(sameCamera(panned, view->cameraView()) && view->parallelScale() == zoom
+                && sameCamera(beforeFree, freeScene.cameraView()),
+            "swap and resize must preserve both camera states");
+        labels();
+        doubleClick(view);
+        require(stack->currentWidget() == view, "double click large view must do nothing");
+        const auto originalSize = window.size();
+        window.resize(originalSize + QSize(40, 30));
+        QApplication::processEvents();
+        view->renderNow();
+        require(sameCamera(panned, view->cameraView()) && view->parallelScale() == zoom,
+            "resize must not silently overwrite bound user camera");
+        window.resize(originalSize);
+        QApplication::processEvents();
+        button->click();
+        require(stack->currentWidget() == view && view->parallelScale() > 0.
+                && !sameCamera(panned, view->cameraView()),
+            "default must reset only camera, not window arrangement");
+        const auto reset = view->cameraView();
+        if (i < 3) require(reset.position[2] == 0. && reset.focalPoint[2] == 0.,
+            "default must restore exact side/stern waterline eye height");
+        drag(view, Qt::LeftButton, Qt::NoModifier, {-11., -7.});
+        const auto largePan = view->cameraView();
+        require(norm(sub(largePan.focalPoint, reset.focalPoint)) > 1e-6
+                && norm(sub(sub(largePan.position, largePan.focalPoint),
+                    sub(reset.position, reset.focalPoint))) < 1e-8
+                && largePan.viewUp == reset.viewUp,
+            "plain left pan must also preserve the bound direction in the large slot");
+        wheel(view);
+        const double afterDefaultZoom = view->parallelScale();
+        doubleClick(&freeScene);
+        require(stack->currentWidget() == &freeScene && view->parallelScale() == afterDefaultZoom,
+            "Frei in a small slot must swap back without resetting other camera");
+        button->click();
+    }
+    require(sameCamera(freeCamera, freeScene.cameraView()),
+        "bound interactions must leave free camera unchanged");
+    // Frei remains a full free camera even in a small slot.
+    doubleClick(views[1]);
+    const auto beforeRotation = freeScene.cameraView();
+    drag(&freeScene, Qt::LeftButton, Qt::NoModifier, {12., 10.});
+    require(!sameCamera(beforeRotation, freeScene.cameraView()),
+        "Frei must still rotate while in a small slot");
+    require(freeScene.setCameraView(freeCamera), "restore free camera");
+    doubleClick(views[2]);
+    require(stack->currentWidget() == views[2], "swap must target current large view, not fixed Frei");
+    labels();
+    window.findChild<QPushButton*>(QStringLiteral("configureGraphics"))->click();
+    stack->currentWidget()->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+    require(stack->currentWidget() == views[2], "graphics Back must restore currently enlarged view");
+    require(window.grab().save(evidence.filePath(QStringLiteral("swapped_views.bmp")), "BMP"),
+        "view swapping screenshot");
+    doubleClick(&freeScene);
+    // Restore the two permuted small views using only the actual double-click path.
+    doubleClick(views[1]);
+    doubleClick(views[2]);
+    doubleClick(&freeScene);
+    labels();
+    require(stack->currentWidget() == &freeScene, "free view restored");
+    testStaticViews(window, freeScene);
+    // Leaving static mode must restore the real free scene for dynamic mode.
+    doubleClick(views[1]);
+    doubleClick(views[3]);
+    auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    require(stack->currentWidget() == &freeScene
+            && freeScene.findChild<QLabel*>(QStringLiteral("viewName"))->isVisible(),
+        "dynamic workspace must restore free scene and retain its view name");
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    testStaticViews(window, freeScene);
+}
+
 void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
     const QDir& evidence, QJsonObject& report)
 {
@@ -568,11 +1112,11 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
             if (button->text() == QStringLiteral("Modellordner wählen")) folder = button;
         require(folder && folder->isVisible() == (selected == 0),
             "folder selection exists only in boat selection");
-        require(models->isVisible() == (selected != 1)
-            && staticSidebar->isVisible() == (selected == 1),
-            "static workspace replaces model list with display sidebar only");
-        require(staticSidebar->isAncestorOf(displayControls) == (selected == 1),
-            "same complete display controls move between static left and dynamic right");
+        require(models->isVisible() == (selected == 0)
+            && staticSidebar->isVisible() == (selected > 0),
+            "both simulation workspaces replace model list with display sidebar");
+        require(staticSidebar->isAncestorOf(displayControls) == (selected > 0),
+            "same complete display controls occupy the left in both simulation workspaces");
         require(modelName->font().pixelSize() == title->font().pixelSize()
             && modelName->font().pointSizeF() == title->font().pointSizeF()
             && modelName->alignment().testFlag(Qt::AlignRight),
@@ -585,25 +1129,71 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
         require(vectors->isChecked() == initialVectors,
             "moving display controls preserves vector visibility selection");
         if (selected == 1) {
+            auto* navigationColumn = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
+            require(navigationColumn && navigationColumn->isVisible()
+                    && navigationColumn->widget()
+                    && navigationColumn->widget()->objectName() == QStringLiteral("navigationOverlay")
+                    && staticSidebar->mapToGlobal(QPoint()).x() + staticSidebar->width()
+                        <= navigationColumn->mapToGlobal(QPoint()).x()
+                    && navigationColumn->mapToGlobal(QPoint()).x() + navigationColumn->width()
+                        <= scene.mapToGlobal(QPoint()).x(),
+                "Static navigation must be a separate column between selection and main scene.");
             auto* turning = window.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"));
-            require(turning && turning->isVisible() && turning->isEnabled()
-                    && turning->isChecked(),
-                "explicit stationary turning mode must be visible and initially enabled");
+            require(!turning && !window.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"))
+                    ->findChild<QComboBox*>(),
+                "Stationary turning and model-fixed force are unconditional, not user switches.");
+            auto* staticMenu = window.findChild<QWidget*>(QStringLiteral("staticForceMenu"));
+            require(staticMenu && staticMenu->isVisible(),
+                "Static resultant selection must be visible.");
+            const auto staticDefaults = forcedisplay::staticForceDefaults();
+            for (const auto& entry : staticDefaults) {
+                auto* check = window.findChild<QCheckBox*>(QStringLiteral("staticForce_") + entry.key);
+                require(check && check->isChecked() == entry.enabled,
+                    "Static menu defaults must enable only the simple entries.");
+            }
             require(staticSidebar->mapToGlobal(QPoint()).x() < scene.mapToGlobal(QPoint()).x()
                 && displayControls->isVisible(),
                 "static display controls occupy the left of the rendering viewport");
             vectors->setChecked(!initialVectors);
-            require(scene.options().forces == !initialVectors,
-                "relocated vector toggle still updates actual scene options");
+            require(!vectors->isVisible() && !scene.options().forces
+                    && !scene.options().leverArm && scene.options().courseArrow
+                    && scene.options().staticForces,
+                "Static resultants must be independent of hidden dynamic vector settings.");
             vectors->setChecked(initialVectors);
+            auto* graphicsButton = window.findChild<QPushButton*>(QStringLiteral("configureGraphics"));
+            require(graphicsButton->height() >= graphicsButton->sizeHint().height(),
+                "static graphics button text must not be clipped after hiding vector rows");
+            auto* cameraCombo = window.findChild<QComboBox*>(QStringLiteral("cameraPreset"));
+            require(cameraCombo->height() >= cameraCombo->sizeHint().height()
+                    && cameraCombo->height() >= cameraCombo->fontMetrics().height() + 12,
+                "camera preset must remain readable after reducing static controls");
+            auto* navigation = window.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
+            require(navigation->mapToGlobal(QPoint()).y() >=
+                    cameraCombo->mapToGlobal(QPoint()).y() + cameraCombo->height(),
+                "remaining static display controls must not overlap");
+            const auto priorSize = window.size();
+            for (const auto size : {QSize(1500, 940), QSize(1200, 800), QSize(1024, 680)}) {
+                window.resize(size);
+                QApplication::processEvents();
+                testStaticViews(window, scene);
+            }
+            window.resize(priorSize);
+            QApplication::processEvents();
+        } else if (selected == 0) {
+            require(!window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"))->isVisible(),
+                "auxiliary views must not appear in boat selection");
+        } else {
+            require(window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"))->isVisible()
+                    && !vectors->isVisible() && scene.options().staticForces,
+                "dynamic workspace shares the static views and resultant controls");
         }
         const auto* mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"));
         require(!mode->isVisible() && (selected == 0 || mode->currentData().toBool() == (selected == 2)),
             "workspace determines simulation mode without dropdown");
         auto* forcePanel = window.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"));
-        require(forcePanel && forcePanel->isVisible() == (selected == 1),
-            "stationary force configuration exists only in static workspace");
-        if (selected == 1) {
+        require(forcePanel && forcePanel->isVisible() == (selected > 0),
+            "shared force configuration exists in both simulation workspaces");
+        if (selected > 0) {
             auto* stop = window.findChild<QPushButton*>(QStringLiteral("stopSimulation"));
             require(forcePanel->mapToGlobal(QPoint()).y() >=
                 stop->mapToGlobal(QPoint()).y()+stop->height(),
@@ -631,11 +1221,12 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
         require(central->palette().color(QPalette::Window) == backgrounds[selected],
             "entire workspace must use selected theme");
         if (selected != 0) {
-            auto* speed = scene.findChild<QWidget*>(QStringLiteral("navigationSpeed"));
-            auto* magnitude = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
-            auto* rate = scene.findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
-            auto* axisX = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
-            auto* axisZ = scene.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
+            auto* nav = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"))->widget();
+            auto* speed = nav->findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+            auto* magnitude = nav->findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
+            auto* rate = nav->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+            auto* axisX = nav->findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
+            auto* axisZ = nav->findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
             require(speed && magnitude && rate && axisX && axisZ
                     && magnitude->y() < rate->y() && rate->y() < axisX->y()
                     && speed->rect().contains(rate->geometry())
@@ -1253,7 +1844,8 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     }
     require(scene != nullptr, "MainWindow scene absent");
     testWorkspaceTabs(window, *scene, evidence, report);
-    auto* overlay = scene->findChild<QWidget*>(QStringLiteral("navigationOverlay"));
+    auto* navigationColumn = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
+    auto* overlay = navigationColumn->findChild<QWidget*>(QStringLiteral("navigationOverlay"));
     require(overlay && overlay->isVisible(), "viewport navigation overlay absent");
     require(cameraCombo->isEnabled() && cameraCombo->count() == 15, "14 camera presets plus free view");
     const auto selectCamera = [cameraCombo](int index) {
@@ -1285,8 +1877,10 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     require(scene->setCameraView(initialCamera), "restore camera after repeated preset");
     navigationCheck->setChecked(false);
     require(!overlay->isVisible(), "navigation visibility off");
+    require(!navigationColumn->isVisible(), "Hiding static navigation must release its entire column.");
     navigationCheck->setChecked(true);
     require(overlay->isVisible(), "navigation visibility on");
+    require(navigationColumn->isVisible(), "Navigation switch must restore its static column.");
     vectors->setChecked(false);
     require(profiles->isEnabled(), "hidden vectors disable profile selection");
     vectors->setChecked(true);
@@ -1301,19 +1895,21 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         if ((*it)->text(0) == QStringLiteral("Stationäre Auswertung (Core)"))
             stationaryResultItem = *it;
     require(stationaryResultItem, "real stationary Core result displayed through V5 GUI force parser");
-    auto* courseRateLabel = scene->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+    auto* courseRateLabel = overlay->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
     require(courseRateLabel && courseRateLabel->text() == QStringLiteral("0.00 °/s"),
         "stationary V6 zero course rate must be shown as numeric zero");
     scene->renderNow();
-    require(scene->courseArrowGeometry()
-            && std::abs(scene->courseArrowGeometry()->tangent[2]) < 1e-12,
-        "zero-rate Core state must render a straight horizontal direction arrow");
+    require(scene->courseArrowGeometry().has_value(),
+        "Zero-rate static result must render the straight direction arrow like Frei.");
+    testStaticViews(window, *scene);
     navigationCheck->setChecked(false);
     scene->renderNow();
-    require(!scene->courseArrowGeometry(), "navigation off must hide the direction arrow");
+    require(scene->courseArrowGeometry().has_value(),
+        "Static direction arrow must be independent of navigation visibility.");
     navigationCheck->setChecked(true);
     scene->renderNow();
-    require(scene->courseArrowGeometry().has_value(), "navigation on must restore the direction arrow");
+    require(scene->courseArrowGeometry().has_value(),
+        "Navigation visibility must not change the static direction arrow.");
     const QStringList stationaryFields{
         QStringLiteral("residuum_kraft_welt_n"), QStringLiteral("residuum_moment_modell_nm"),
         QStringLiteral("krafttoleranz_n"), QStringLiteral("momenttoleranz_nm"),
@@ -1341,6 +1937,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(2);
     duration->setValue(2.0);
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "GUI mode change readiness");
+    confirmDynamicRun(window, 2.);
     run->click();
     waitUntil([&] { return slider->maximum() > 2 || unexpectedDialog; }, "GUI live states absent");
     require(!unexpectedDialog, "unexpected live error");
@@ -1367,12 +1964,13 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "tab switch cancellation timeout");
     require(!unexpectedDialog && slider->maximum() == 0 && values->topLevelItemCount() == 0,
         "cancelled live run must not repopulate the new workspace");
+    confirmDynamicRun(window, 2.);
     run->click();
     waitUntil([&] { return slider->maximum() > 2 || unexpectedDialog; }, "fresh live run after tab reset");
     require(!unexpectedDialog, "fresh dynamic run failed");
     slider->setValue(0);
     const auto camera = scene->cameraView();
-    auto* compassWidget = scene->findChild<QWidget*>(QStringLiteral("navigation_compass"));
+    auto* compassWidget = navigationColumn->findChild<QWidget*>(QStringLiteral("navigation_compass"));
     auto* compass = dynamic_cast<navigation::Instrument*>(compassWidget);
     require(compass, "live GUI compass absent");
     scene->renderNow();
@@ -1386,15 +1984,18 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     require(scene->setCameraView(camera), "restore actual camera");
     scene->renderNow();
     require(compass->renderedSvg() == initialCompass, "camera marker restoration");
+    values = window.findChild<QTreeWidget*>(QStringLiteral("staticForceValues"));
     QStringList before;
     for (QTreeWidgetItemIterator item(values); *item; ++item) {
         for (int column = 0; column < values->columnCount(); ++column) before << (*item)->text(column);
     }
     require(!before.isEmpty(), "GUI force table empty");
-    require(!profiles->isVisible(), "Static settings must not be offered in the dynamic workspace.");
+    require(profiles->isVisible(), "Dynamic settings must use the shared display configuration entry.");
     profiles->click();
     auto* settingsStack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
-    require(settingsStack->currentWidget() == scene, "Dynamic must not open static configuration.");
+    require(settingsStack->currentWidget() != scene, "Dynamic must open its own graphics configuration.");
+    settingsStack->currentWidget()->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+    require(settingsStack->currentWidget() == scene, "Dynamic settings must return to the large view.");
     QStringList after;
     for (QTreeWidgetItemIterator item(values); *item; ++item) {
         for (int column = 0; column < values->columnCount(); ++column) after << (*item)->text(column);
@@ -1482,9 +2083,10 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     persistedLateral->setChecked(false);
     navigationCheck->setChecked(false);
     window.close();
-    require(QSettings().value(QStringLiteral("darstellung/navigation")).toBool() == false,
-        "navigation visibility must be saved");
+    require(QSettings().value(QStringLiteral("statisch/navigation")).toBool() == false,
+        "navigation visibility must be saved for the active workspace");
     MainWindow reopened;
+    reopened.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(1);
     auto* restoredNavigation = reopened.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
     require(restoredNavigation && !restoredNavigation->isChecked(),
         "navigation visibility must be restored in the next window");
@@ -1544,66 +2146,39 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         "dynamic movement run did not become available");
     require(!unexpectedDialog, "unexpected dynamic movement setup error");
     movementDuration->setValue(0.0);
+    auto* fixedRudderInput = movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"));
+    auto* fixedSwordInput = movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Schwert"));
+    fixedRudderInput->setValue(20.);
+    fixedSwordInput->setValue(50.);
+    confirmDynamicRun(movementWindow, 0.);
     movementRun->click();
     require(movementStop->isEnabled(), "dynamic run did not enable the stop control");
-    waitUntil([&] { return (rudder->isEnabled() && sword->isEnabled()) || unexpectedDialog; },
-        "movement sliders did not become ready after the first Core state");
+    auto* movementTimeline = movementWindow.findChild<QSlider*>();
+    waitUntil([&] { return movementTimeline->maximum() > 0 || unexpectedDialog; },
+        "fixed-movement run did not publish its first Core states");
     require(!unexpectedDialog, "unexpected movement initialization error");
-    rudder->setValue(1100);
-    sword->setValue(500);
-    auto* rudderValue = movementWindow.findChild<QLabel*>(QStringLiteral("movementValue_Ruder"));
-    auto* swordValue = movementWindow.findChild<QLabel*>(QStringLiteral("movementValue_Schwert"));
-    require(rudderValue && swordValue, "movement confirmation labels are missing");
-    waitUntil([&] {
-        return (rudderValue->text().contains(QStringLiteral("Core 20.0°"))
-            && swordValue->text().contains(QStringLiteral("Core 50.0 %")))
-            || unexpectedDialog;
-    }, "Core did not confirm the requested live movement values");
-    require(!unexpectedDialog, "unexpected live movement error");
+    require(!rudder->isVisible() && !sword->isVisible()
+            && !fixedRudderInput->isEnabled() && !fixedSwordInput->isEnabled()
+            && fixedRudderInput->value() == 20. && fixedSwordInput->value() == 50.,
+        "dynamic fixed settings must stay frozen and legacy live sliders hidden");
     movementStop->click();
     waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
         "live movement simulation cancellation timeout");
     require(!unexpectedDialog, "unexpected movement cancellation error");
-    errors.stop();
-    bool residualDialogShown = false;
-    QTimer residualDialog;
-    QObject::connect(&residualDialog, &QTimer::timeout, [&] {
-        for (auto* widget : QApplication::topLevelWidgets()) {
-            if (auto* box = qobject_cast<QMessageBox*>(widget); box && box->isVisible()) {
-                residualDialogShown = box->text().contains(QStringLiteral("Restkraft Welt"))
-                    && box->text().contains(QStringLiteral("Restmoment Modell"))
-                    && box->text().contains(QStringLiteral("Nur Näherungszustand"))
-                    && box->text().contains(QStringLiteral("0.05"));
-                box->accept();
-            }
-        }
-    });
-    residualDialog.start(50);
     movementWindow.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(1);
-    movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"))->setChecked(false);
     movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryForceActive"))->setChecked(true);
-    movementWindow.findChild<QGroupBox*>(QStringLiteral("stationaryForcePanel"))
-        ->findChild<QComboBox*>()->setCurrentIndex(1);
     movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(100.);
     movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointX"))->setValue(1.);
     movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))->setValue(0.);
     movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Schwert"))->setValue(100.);
-    movementRun->click();
-    waitUntil([&] { return residualDialogShown; }, "stationary failure dialog omitted residual explanation");
-    require(movementWindow.findChild<QLabel*>(QStringLiteral("balance"))->text()
-            .contains(QStringLiteral("nur Näherungswerte")),
-        "non-converged speed and pose must be marked approximate");
-    residualDialog.stop();
-    errors.start(50);
-    auto* turningMode = movementWindow.findChild<QCheckBox*>(QStringLiteral("stationaryTurning"));
     auto* movementScene = dynamic_cast<VtkSceneWidget*>(
         movementWindow.findChild<QWidget*>(QStringLiteral("simulationScene")));
     require(movementScene, "420 simulation scene required");
-    auto* turningRate = movementScene->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
-    require(turningMode && turningRate, "turning mode and heading-rate display must exist");
+    auto* turningRate = movementWindow.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"))
+        ->widget()->findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
+    require(turningRate, "Heading-rate display must exist with unconditional turning.");
     movementWindow.findChild<QCheckBox*>(QStringLiteral("displayNavigation"))->setChecked(true);
     require(turningRate->isVisible(), "turning screenshot must show the actual navigation rate");
-    turningMode->setChecked(true);
     for (double fixedRudder : {1., -1., 24.}) {
         if (fixedRudder == 24.) {
             movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(150.);
@@ -1613,7 +2188,8 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         }
         movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))->setValue(fixedRudder);
         movementRun->click();
-        require(!turningMode->isEnabled(), "turning mode is part of the immutable running case");
+        require(!movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->isEnabled(),
+            "Model-fixed force is part of the immutable running case.");
         waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
             "420 turning GUI solve timeout");
         require(!unexpectedDialog, "real 420 turning GUI case must converge without a warning");
@@ -1639,11 +2215,14 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
             movementWindow.findChild<QPushButton*>(QStringLiteral("configureGraphics"))->click();
             auto* stack = movementWindow.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
             auto* page = stack->currentWidget();
+            require(!page->findChild<QCheckBox*>(QStringLiteral("profile0_throughBody")),
+                "static graphics page must not retain hidden force/vector configuration");
             auto* grid = page->findChild<QCheckBox*>(QStringLiteral("profile0_grid"));
             const bool wasGrid = grid->isChecked();
             grid->toggle();
             require(movementScene->graphicsProfile().on(graphics::Feature::Grid) != wasGrid,
                 "Immediate change must update the rendered static profile.");
+            testStaticViews(movementWindow, *movementScene);
             require(page->findChild<QLabel*>(QStringLiteral("profile0_status_grid"))->text()
                 .contains(wasGrid ? QStringLiteral("Ausgeschaltet.")
                                   : QStringLiteral("Aktiviert;")),
@@ -1665,15 +2244,8 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
                 && !turningRate->text().contains(QStringLiteral("≈")),
             "actual positive/negative 420 course rates must be signed and converged");
         movementScene->renderNow();
-        const auto& directionArrow = movementScene->courseArrowGeometry();
-        require(directionArrow && directionArrow->points.front()[2] > 0.
-                && directionArrow->tip[2] == directionArrow->points.front()[2],
-            "actual Core turning state must render a horizontal arrow above water");
-        const auto arrowForward = forcedisplay::sub(directionArrow->points.at(1),
-            directionArrow->points.front());
-        require(forcedisplay::cross(arrowForward, directionArrow->tangent)[2]
-                * (fixedRudder > 0. ? -1. : 1.) > 0.,
-            "rendered arrow must bend in the actual signed Core turning direction");
+        require(movementScene->courseArrowGeometry().has_value(),
+            "Static Frei must show the shared direction arrow.");
         if (fixedRudder == 24.)
             require(turningRate->text().contains(QStringLiteral("-17."))
                     && movementWindow.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryMovement_Ruder"))
@@ -1683,6 +2255,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
                 .contains(QStringLiteral("Bewegungsresiduum Welt")),
             "turning result must display motion residuals, not merely external force sums");
         movementScene->renderNow();
+        testStaticViews(movementWindow, *movementScene);
         require(movementScene->pressurePoint(true).has_value(),
             "Active real Core force must render its replacement SDP.");
         require(movementScene->pressurePoint(false).has_value(),
@@ -1696,32 +2269,38 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         auto* sailToggle = movementWindow.findChild<QCheckBox*>(QStringLiteral("displaySailCenter"));
         sailToggle->setChecked(false);
         movementScene->renderNow();
-        require(!movementScene->pressurePoint(true) && movementScene->pressurePoint(false),
-            "SDP visibility must be independent of LDP.");
+        require(!sailToggle->isVisible()
+                && movementScene->pressurePoint(true) && movementScene->pressurePoint(false),
+            "static pressure markers must not inherit hidden dynamic SDP settings");
         sailToggle->setChecked(true);
         auto* lateralToggle = movementWindow.findChild<QCheckBox*>(QStringLiteral("displayLateralCenter"));
         lateralToggle->setChecked(false);
         movementScene->renderNow();
-        require(movementScene->pressurePoint(true) && !movementScene->pressurePoint(false),
-            "LDP visibility must be independent of SDP.");
+        require(!lateralToggle->isVisible()
+                && movementScene->pressurePoint(true) && movementScene->pressurePoint(false),
+            "static pressure markers must not inherit hidden dynamic LDP settings");
         lateralToggle->setChecked(true);
         movementScene->renderNow();
         const auto pressureImage = movementScene->captureImage();
-        int magentaPixels = 0, orangePixels = 0;
+        int lightGreenPixels = 0, darkGreenPixels = 0;
         for (int y = 0; y < pressureImage.height(); ++y)
             for (int x = 0; x < pressureImage.width(); ++x) {
                 const auto color = pressureImage.pixelColor(x, y);
-                if (color.red() > 200 && color.blue() > 150 && color.green() < 140) ++magentaPixels;
-                if (color.red() > 220 && color.green() > 120 && color.green() < 200
-                    && color.blue() < 120) ++orangePixels;
+                if (color.green() > 150 && color.red() < 140 && color.blue() < 150) ++lightGreenPixels;
+                if (color.green() > 65 && color.green() < 140 && color.red() < 65
+                    && color.blue() < 100) ++darkGreenPixels;
             }
-        require(magentaPixels > 10 && orangePixels > 10,
+        require(lightGreenPixels > 10 && darkGreenPixels > 10,
             "Both pressure markers/labels must actually be visible in the analysis raster.");
         require(movementWindow.grab().save(evidence.filePath(
                 fixedRudder == 24. ? QStringLiteral("turning_rudder_24.bmp")
                     : fixedRudder > 0. ? QStringLiteral("turning_positive_rudder.bmp")
                             : QStringLiteral("turning_negative_rudder.bmp")), "BMP"),
             "actual signed turning display screenshot");
+        if (fixedRudder == 24.) {
+            testStaticForceMenu(movementWindow, *movementScene, evidence);
+            testViewInteraction(movementWindow, *movementScene, evidence);
+        }
     }
     errors.stop();
     movementRun->click();
@@ -1732,21 +2311,99 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         "stationary calculation did not stop after workspace change");
     require(!unexpectedDialog && !movementScene->courseArrowGeometry()
             && !movementScene->pressurePoint(true) && !movementScene->pressurePoint(false)
-            && movementWindow.findChild<QLabel*>(QStringLiteral("navigationCourseRate"))
-                ->text() == QStringLiteral("-- °/s"),
+            && turningRate->text() == QStringLiteral("-- °/s"),
         "late stationary result must not restore a discarded state");
+    testStaticViews(movementWindow, *movementScene);
     QJsonObject markerState{
         {QStringLiteral("position_m"), QJsonArray{2., -3., .4}},
-        {QStringLiteral("orientierung_xyzw"), QJsonArray{.5, 0., 0., std::sqrt(.75)}},
+        {QStringLiteral("orientierung_xyzw"), QJsonArray{.25, -.15, .3, std::sqrt(.825)}},
         {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}}};
     forcedisplay::ForceState markerForces;
     markerForces.lateral = forcedisplay::LateralCenter{
         QStringLiteral("gueltig"), forcedisplay::Vec3{9., 0., -.6}, 2};
     markerForces.sailCenter = forcedisplay::SailCenter{
         QStringLiteral("gueltig"), forcedisplay::Vec3{.5, .2, 3.}};
+    markerForces.reference = forcedisplay::Vec3{0., 0., 0.};
+    markerForces.stationary.insert(QStringLiteral("konvergiert"), true);
+    markerForces.balanceStatus = QStringLiteral("vollstaendig");
+    markerForces.total = forcedisplay::GroupSum{};
+    markerForces.total->moment = forcedisplay::Vec3{-8., 17., -26.};
+    markerForces.lateral->transverseForce = -80.;
+    forcedisplay::Contribution drive;
+    drive.id = QStringLiteral("fixture:external");
+    drive.source = QStringLiteral("externe_kraft");
+    drive.frame = QStringLiteral("modell");
+    drive.state = QStringLiteral("gueltig");
+    drive.vector = forcedisplay::Vec3{1., 2., 3.};
+    drive.momentS = forcedisplay::Vec3{12., -23., 34.};
+    markerForces.contributions.push_back(drive);
+    auto counter = drive;
+    counter.id = QStringLiteral("fixture:counter");
+    counter.source = QStringLiteral("hydrostatik");
+    counter.momentS = forcedisplay::Vec3{10000., 20000., 30000.};
+    markerForces.contributions.push_back(counter);
+    auto vertical = drive;
+    vertical.frame = QStringLiteral("welt");
+    vertical.point = forcedisplay::Vec3{2., -3., .4};
+    vertical.id = QStringLiteral("fixture:weight");
+    vertical.source = QStringLiteral("schwerkraft");
+    vertical.category = forcedisplay::Category::Weight;
+    vertical.vector = forcedisplay::Vec3{0., 0., -500.};
+    markerForces.contributions.push_back(vertical);
+    vertical.id = QStringLiteral("fixture:buoyancy");
+    vertical.source = QStringLiteral("hydrostatik");
+    vertical.category = forcedisplay::Category::Buoyancy;
+    vertical.point = forcedisplay::Vec3{2.1, -3., .2};
+    vertical.vector = forcedisplay::Vec3{0., 0., 500.};
+    markerForces.contributions.push_back(vertical);
     QString markerError;
-    require(movementScene->setState(markerState, markerForces, &markerError),
-        "marker pose fixture failed");
+    const auto setMarkerState = [&] {
+        require(movementScene->setState(markerState, markerForces, &markerError),
+            "marker pose fixture failed");
+        for (int i = 0; i < 3; ++i) {
+            auto* view = dynamic_cast<VtkSceneWidget*>(movementWindow.findChild<QWidget*>(
+                QStringLiteral("staticScene%1").arg(i)));
+            require(view->setState(markerState, markerForces, &markerError),
+                "auxiliary marker pose fixture failed");
+            view->renderNow();
+            auto* renderers = view->findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetRenderers();
+            renderers->InitTraversal();
+            bool lateralArrow = false, sailArrow = false;
+            bool weightArrow = false, buoyancyArrow = false, buoyancyPoint = false, centerPoint = false;
+            while (auto* layer = renderers->GetNextItem()) {
+                if (layer->GetLayer() != 1) continue;
+                auto* actors = layer->GetActors();
+                actors->InitTraversal();
+                while (auto* actor = actors->GetNextActor()) {
+                    if (!actor->GetVisibility()) continue;
+                    auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+                    if (!mapper || !mapper->GetInput()) continue;
+                    const auto* color = actor->GetProperty()->GetColor();
+                    const bool lines = mapper->GetInput()->GetNumberOfLines() > 0;
+                    if (std::abs(color[0] - 99./255.) < .001 && std::abs(color[2] - 121./255.) < .001 && lines)
+                        lateralArrow = true;
+                    if (std::abs(color[0] - 23./255.) < .001 && std::abs(color[2] - 56./255.) < .001 && lines)
+                        sailArrow = true;
+                    if (std::abs(color[0] - 26./255.) < .001 && std::abs(color[2] - 204./255.) < .001) {
+                        weightArrow = weightArrow || lines;
+                        centerPoint = centerPoint || mapper->GetInput()->GetNumberOfVerts() > 0;
+                    }
+                    if (std::abs(color[0] - 85./255.) < .001 && std::abs(color[2] - 240./255.) < .001) {
+                        buoyancyArrow = buoyancyArrow || lines;
+                        buoyancyPoint = buoyancyPoint || mapper->GetInput()->GetNumberOfVerts() > 0;
+                    }
+                }
+                require(!layer->GetPreserveDepthBuffer(), "markers and arrows must ignore body occlusion");
+            }
+            require(lateralArrow == view->pressurePoint(false).has_value()
+                    && sailArrow == view->pressurePoint(true).has_value(),
+                "nonzero projected LDP and SDP arrows must be visible in exact marker colors in all three views");
+            require(centerPoint && buoyancyPoint && weightArrow == (i != 2) && buoyancyArrow == (i != 2),
+                "S and A must remain visible, with blue vertical resultant arrows only in side/stern projections");
+        }
+        testStaticViews(movementWindow, *movementScene);
+    };
+    setMarkerState();
     const auto markerPose = forcedisplay::readPose(markerState);
     require(movementScene->pressurePoint(false) && movementScene->pressurePoint(true)
         && forcedisplay::norm(forcedisplay::sub(*movementScene->pressurePoint(false),
@@ -1756,13 +2413,13 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         "Pressure points must preserve exact XYZ with roll/translation, even outside the boat.");
     markerForces.lateral->status = QStringLiteral("geometrisch");
     markerForces.sailCenter.reset();
-    require(movementScene->setState(markerState, markerForces, &markerError)
-        && !movementScene->pressurePoint(false) && !movementScene->pressurePoint(true),
+    setMarkerState();
+    require(!movementScene->pressurePoint(false) && !movementScene->pressurePoint(true),
         "Geometric points must not masquerade as LDP; missing force must not invent SDP.");
     markerForces.lateral->status = QStringLiteral("gueltig");
     markerForces.lateral->evaluationVersion = 0;
-    require(movementScene->setState(markerState, markerForces, &markerError)
-        && !movementScene->pressurePoint(false), "Legacy LDP must not claim corrected placement.");
+    setMarkerState();
+    require(!movementScene->pressurePoint(false), "Legacy LDP must not claim corrected placement.");
     movementWindow.close();
     report.insert(QStringLiteral("stationaryTurningAndSignedCourseRate"), true);
     report.insert(QStringLiteral("liveMovementOverlay"), true);
@@ -2178,16 +2835,20 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
     active->setChecked(true);
     waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "UI dynamic readiness");
     require(!unexpectedDialog, "UI dynamic initialization error");
+    auto* sharedForce = window.findChild<QCheckBox*>(QStringLiteral("stationaryForceActive"));
+    sharedForce->setChecked(true);
+    window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(200.);
+    confirmDynamicRun(window, 2.);
     run->click();
     waitUntil([&] { return slider->maximum() >= 4 || unexpectedDialog; }, "UI live history");
-    require(!unexpectedDialog && active->isEnabled() && !force->isEnabled() && !speed->isEnabled(),
-        "running drive parameter locks/live flag");
+    require(!unexpectedDialog && !active->isVisible() && !force->isVisible() && !speed->isVisible()
+            && !sharedForce->isEnabled(),
+        "legacy drive stays hidden and the shared dynamic force is frozen");
     slider->setValue(0);
-    active->setChecked(false);
     waitUntil([&] { return !stop->isEnabled() || unexpectedDialog; }, "UI live completion");
-    require(!unexpectedDialog && force->isEnabled() && speed->isEnabled(), "UI drive completion");
+    require(!unexpectedDialog && sharedForce->isEnabled(), "UI force completion");
     window.close();
-    report.insert(QStringLiteral("temporaryUiDefaultsLocksLiveAndRewind"), true);
+    report.insert(QStringLiteral("sharedDynamicForceLocksAndRewind"), true);
     QFile file(evidence.filePath(QStringLiteral("report.json")));
     require(file.open(QIODevice::WriteOnly), "motion evidence file");
     const auto bytes = QJsonDocument(report).toJson();
@@ -2200,12 +2861,392 @@ int main(int argc, char** argv)
 {
     vtkLogger::SetStderrVerbosity(vtkLogger::VERBOSITY_WARNING);
     QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     QElapsedTimer startup;
     startup.start();
     vtkNew<RenderErrors> renderErrors;
     vtkOutputWindow::SetInstance(renderErrors);
     try {
+        if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--performance-audit-only")) {
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "Performance evidence directory required.");
+            const auto catalog = segelphysik::modellkatalog(
+                std::filesystem::path(app.arguments()[2].toStdWString()));
+            QJsonObject report;
+            report.insert(QStringLiteral("duration_s"), .5);
+            report.insert(QStringLiteral("step_s"), .01);
+            report.insert(QStringLiteral("repeats"), 3);
+            report.insert(QStringLiteral("rendered_snapshots_per_repeat"), 8);
+            for (const QString& id : {QStringLiteral("420"), QStringLiteral("folkeboot")}) {
+                const auto* entry = catalog.eintrag(id.toStdString());
+                require(entry, "Performance reference model missing.");
+                const auto path = QDir(app.arguments()[2]).filePath(id + QStringLiteral("/modell.json"));
+                const auto validation = validateModel(path);
+                require(validation.valid, "Performance reference model invalid.");
+                const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
+                    catalog, entry->modell_id, entry->modell_fassung));
+                QJsonArray runs;
+                for (int repeat = 0; repeat < 3; ++repeat) {
+                    QString error;
+                    auto live = LiveSimulation::create(path, validation, .5, .01, false, &error, {},
+                        TestDriveOptions{true, 200., 463. / 90.});
+                    require(live != nullptr, "Performance Core run creation failed.");
+                    QElapsedTimer timer;
+                    std::atomic_bool cancelled{false};
+                    timer.start();
+                    live->run(cancelled);
+                    const double wallMs = timer.nsecsElapsed() / 1e6;
+                    const auto progress = live->progress();
+                    require(progress.status == QStringLiteral("abgeschlossen") && progress.states == 51,
+                        "Performance Core run must finish all 50 steps.");
+                    QVector<QJsonObject> snapshots;
+                    timer.restart();
+                    for (int i = 1; i <= 8; ++i) {
+                        auto state = live->stateJson(i * 6, &error);
+                        require(error.isEmpty() && !state.isEmpty(), "Performance JSON snapshot failed.");
+                        snapshots.push_back(state);
+                    }
+                    const double jsonMs = timer.nsecsElapsed() / 1e6;
+                    QWidget panel;
+                    auto* layout = new QHBoxLayout(&panel);
+                    auto* free = new VtkSceneWidget;
+                    free->setMinimumSize(720, 480);
+                    layout->addWidget(free);
+                    std::array<VtkSceneWidget*, 3> auxiliary{};
+                    auto* column = new QVBoxLayout;
+                    layout->addLayout(column);
+                    for (int i = 0; i < 3; ++i) {
+                        auxiliary[i] = new VtkSceneWidget;
+                        auxiliary[i]->setMinimumSize(140, 160);
+                        auxiliary[i]->setOrthographicView(
+                            static_cast<VtkSceneWidget::OrthographicView>(i + 1));
+                        column->addWidget(auxiliary[i]);
+                    }
+                    std::array<VtkSceneWidget*, 4> scenes{free, auxiliary[0], auxiliary[1], auxiliary[2]};
+                    VtkSceneWidget::DisplayOptions options;
+                    options.forces = false;
+                    options.staticForces = true;
+                    options.staticStyles = forcedisplay::staticForceDefaults();
+                    graphics::Profile profile;
+                    for (auto* scene : scenes) {
+                        require(scene->setModel(parts, &error), "Performance scene model failed.");
+                        scene->setOptions(options);
+                        scene->setGraphicsProfile(profile);
+                    }
+                    panel.show();
+                    QApplication::processEvents();
+                    const auto firstForces = forcedisplay::parseForceState(snapshots.front());
+                    for (auto* scene : scenes)
+                        require(scene->setState(snapshots.front(), firstForces, &error),
+                            "Performance warmup failed.");
+                    double freeMs = 0., auxiliaryMs = 0., profileMs = 0.;
+                    for (const auto& state : snapshots) {
+                        const auto forces = forcedisplay::parseForceState(state);
+                        timer.restart();
+                        require(free->setState(state, forces, &error), "Performance free state failed.");
+                        freeMs += timer.nsecsElapsed() / 1e6;
+                        timer.restart();
+                        for (auto* scene : auxiliary)
+                            require(scene->setState(state, forces, &error), "Performance auxiliary state failed.");
+                        auxiliaryMs += timer.nsecsElapsed() / 1e6;
+                        timer.restart();
+                        // Current MainWindow reapplies an unchanged profile during each progress/state update.
+                        for (auto* scene : scenes) scene->setGraphicsProfile(profile);
+                        profileMs += timer.nsecsElapsed() / 1e6;
+                    }
+                    runs.append(QJsonObject{
+                        {QStringLiteral("core_wall_ms"), wallMs},
+                        {QStringLiteral("core_compute_ms"), progress.coreSeconds * 1000.},
+                        {QStringLiteral("snapshot_json_8_ms"), jsonMs},
+                        {QStringLiteral("free_state_mean_ms"), freeMs / 8.},
+                        {QStringLiteral("three_auxiliary_state_mean_ms"), auxiliaryMs / 8.},
+                        {QStringLiteral("unchanged_profile_four_views_mean_ms"), profileMs / 8.},
+                        {QStringLiteral("four_views_and_profile_mean_ms"), (freeMs + auxiliaryMs + profileMs) / 8.}});
+                    panel.close();
+                }
+                report.insert(id, runs);
+            }
+            require(renderErrors->count == 0, "VTK error in performance audit.");
+            const auto output = QJsonDocument(report).toJson();
+            QFile file(evidence.filePath(QStringLiteral("performance-audit.json")));
+            require(file.open(QIODevice::WriteOnly) && file.write(output) == output.size(),
+                "Performance report persistence failed.");
+            std::cout << output.toStdString();
+            return 0;
+        }
+        if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--dynamic-layout-only")) {
+            QTemporaryDir settings;
+            require(settings.isValid(), "Temporary dynamic-test settings directory required.");
+            QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikDynamicLayoutTest"));
+            QCoreApplication::setApplicationName(QStringLiteral("DynamicLayout"));
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "Dynamic evidence directory required.");
+            bool unexpectedDialog = false;
+            QTimer errors;
+            QObject::connect(&errors, &QTimer::timeout, [&] {
+                for (auto* widget : QApplication::topLevelWidgets()) {
+                    if (auto* message = qobject_cast<QMessageBox*>(widget)) {
+                        std::cerr << message->text().toStdString() << '\n';
+                        unexpectedDialog = true;
+                        message->reject();
+                    }
+                }
+            });
+            errors.start(50);
+            MainWindow window;
+            window.resize(1600, 1000);
+            window.setModelFolder(app.arguments()[2]);
+            window.selectInitialModel(QStringLiteral("folkeboot"));
+            window.show();
+            auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+            auto* run = window.findChild<QPushButton*>(QStringLiteral("primaryButton"));
+            require(tabs && run, "Dynamic workspace controls required.");
+            waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Dynamic model load timeout.");
+            require(!unexpectedDialog, "Dynamic model load failed.");
+            tabs->setCurrentIndex(1);
+            auto* activeForce = window.findChild<QCheckBox*>(QStringLiteral("stationaryForceActive"));
+            activeForce->setChecked(true);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(150.);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceY"))->setValue(10.);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointZ"))->setValue(3.);
+            const auto fixedInputs = window.findChildren<QDoubleSpinBox*>(
+                QRegularExpression(QStringLiteral("^stationaryMovement_")));
+            require(!fixedInputs.isEmpty(), "Reference model needs fixed movement input.");
+            fixedInputs.front()->setValue(fixedInputs.front()->value() + 5.);
+            const double fixedValue = fixedInputs.front()->value();
+            auto* staticWeight = window.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"));
+            staticWeight->setChecked(false);
+            tabs->setCurrentIndex(2);
+            QApplication::processEvents();
+            auto* sidebar = window.findChild<QWidget*>(QStringLiteral("staticDisplaySidebar"));
+            auto* navigation = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
+            auto* views = window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"));
+            auto* table = window.findChild<QTreeWidget*>(QStringLiteral("staticForceValues"));
+            auto* frame = window.findChild<QComboBox*>(QStringLiteral("dynamicCameraFrame"));
+            auto* drive = window.findChild<QCheckBox*>(QStringLiteral("testDriveActive"));
+            auto* duration = window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationDuration"));
+            auto* step = window.findChild<QDoubleSpinBox*>(QStringLiteral("simulationStep"));
+            auto* realtime = window.findChild<QCheckBox*>(QStringLiteral("realtime"));
+            auto* scene = dynamic_cast<VtkSceneWidget*>(
+                window.findChild<QWidget*>(QStringLiteral("simulationScene")));
+            require(sidebar && navigation && views && table && frame && drive && duration
+                    && step && realtime && scene, "Shared dynamic layout and parameters required.");
+            require(sidebar->isVisible() && navigation->isVisible() && views->isVisible()
+                    && table->isVisible() && frame->isVisible() && !duration->isVisible()
+                    && !step->isVisible() && !realtime->isVisible() && !drive->isVisible()
+                    && activeForce->isVisible() && fixedInputs.front()->isVisible()
+                    && fixedInputs.front()->value() == fixedValue,
+                "Dynamic workspace must expose shared fixed inputs, not legacy test drive/run parameters.");
+            require(frame->count() == 2 && frame->itemText(0) == QStringLiteral("Körpermodell")
+                    && frame->itemText(1) == QStringLiteral("Weltmodell")
+                    && frame->isVisible(),
+                "Body/world selector must remain separately available.");
+            require(staticWeight->isChecked(), "Dynamic force selection must not inherit changed static selection.");
+            auto* configure = window.findChild<QPushButton*>(QStringLiteral("configureGraphics"));
+            configure->click();
+            auto* graphicsStack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+            auto* opacity = graphicsStack->currentWidget()->findChild<QDoubleSpinBox*>(
+                QStringLiteral("profile0_waterOpacity"));
+            require(opacity, "Dynamic graphics settings must match static controls.");
+            opacity->setValue(.37);
+            graphicsStack->currentWidget()->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+            tabs->setCurrentIndex(1);
+            require(!staticWeight->isChecked(), "Static selection must restore separately.");
+            configure->click();
+            opacity = graphicsStack->currentWidget()->findChild<QDoubleSpinBox*>(QStringLiteral("profile0_waterOpacity"));
+            require(opacity && std::abs(opacity->value() - .37) > .001,
+                "Dynamic graphics change must not alter static graphics.");
+            graphicsStack->currentWidget()->findChild<QPushButton*>(QStringLiteral("closeGraphics"))->click();
+            tabs->setCurrentIndex(2);
+            require(staticWeight->isChecked(), "Dynamic selection restores independently.");
+            require(!window.findChild<QTreeWidget*>(QStringLiteral("simulationValues"))->isVisible()
+                    && !window.findChild<QWidget*>(QStringLiteral("staticForceMenu"))->isHidden()
+                    && scene->options().staticForces && !scene->options().forces,
+                "Dynamic workspace must replace legacy values/vectors with shared resultants.");
+            auto* attitude = window.findChild<QCheckBox*>(QStringLiteral("displayAttitudeViews"));
+            attitude->setChecked(false);
+            require(!views->isVisible(), "Dynamic attitude toggle must hide the right views.");
+            attitude->setChecked(true);
+            const auto answerRunDialog = [&](bool accept, double seconds) {
+                QTimer::singleShot(0, &window, [&, accept, seconds] {
+                    auto* dialog = window.findChild<QDialog*>(QStringLiteral("dynamicRunDialog"));
+                    require(dialog, "Start must open the dynamic run dialog.");
+                    dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runDuration"))->setValue(seconds);
+                    dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runStep"))->setValue(.01);
+                    dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(false);
+                    if (accept)
+                        dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+                    else dialog->reject();
+                });
+            };
+            answerRunDialog(false, .7);
+            run->click();
+            require(duration->value() == 10. && table->topLevelItemCount() == 0,
+                "Cancelled start must preserve parameters and not run.");
+            answerRunDialog(true, .2);
+            run->click();
+            waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Short dynamic run timeout.");
+            require(!unexpectedDialog && scene->statePose() && table->topLevelItemCount() > 0,
+                "Actual dynamic simulation must populate the shared force/moment table.");
+            const auto rowCount = table->topLevelItemCount();
+            auto* weight = window.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"));
+            weight->setChecked(false);
+            require(table->topLevelItemCount() == rowCount,
+                "Dynamic numerical rows must be independent of graphical selection.");
+            weight->setChecked(true);
+            auto* filter = window.findChild<QLineEdit*>(QStringLiteral("staticValueFilter2"));
+            filter->setText(QStringLiteral("fremdkraft"));
+            int visibleRows = 0;
+            for (int i = 0; i < rowCount; ++i) {
+                auto* row = table->topLevelItem(i);
+                if (row->isHidden()) continue;
+                ++visibleRows;
+                require(row->text(2).contains(QStringLiteral("fremdkraft"), Qt::CaseInsensitive),
+                    "Dynamic table filter must hide nonmatching numerical rows.");
+            }
+            require(visibleRows > 0, "Actual dynamic external-force contribution must be present.");
+            filter->clear();
+            answerRunDialog(false, .8);
+            run->click();
+            require(table->topLevelItemCount() == rowCount && scene->statePose()
+                    && duration->value() == .2,
+                "Cancelling a later start must retain prior results and confirmed run parameters.");
+            const auto pose = scene->statePose();
+            for (int i = 0; i < 3; ++i) {
+                auto* view = dynamic_cast<VtkSceneWidget*>(window.findChild<QWidget*>(
+                    QStringLiteral("staticScene%1").arg(i)));
+                require(view && view->statePose() && view->statePose()->position == pose->position
+                        && view->options().staticForces,
+                    "All dynamic views must receive the displayed Core snapshot.");
+            }
+            auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+            auto* small = dynamic_cast<VtkSceneWidget*>(
+                window.findChild<QWidget*>(QStringLiteral("staticScene0")));
+            small->onDoubleClicked();
+            require(stack->currentWidget() == small, "Dynamic small view must enlarge.");
+            scene->onDoubleClicked();
+            require(stack->currentWidget() == scene, "Dynamic free view must restore.");
+            require(window.grab().save(evidence.filePath(QStringLiteral("dynamic-layout.bmp")), "BMP"),
+                "Dynamic layout screenshot.");
+            frame->setCurrentIndex(1);
+            const auto before = scene->cameraView();
+            QJsonObject moved{{QStringLiteral("position_m"), QJsonArray{10., 4., .2}},
+                {QStringLiteral("orientierung_xyzw"), QJsonArray{0., 0., 0., 1.}},
+                {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{1., 0., 0.}}};
+            QString error;
+            const auto previousPose = scene->statePose()->position;
+            require(scene->setState(moved, {}, &error) && !scene->bodyFixedCamera()
+                    && std::abs(scene->cameraView().position[0] - before.position[0]
+                        - (10. - previousPose[0])) < 1e-8,
+                "World-oriented camera must follow boat translation to keep it centered.");
+            const auto worldCamera = scene->cameraView();
+            moved.insert(QStringLiteral("orientierung_xyzw"),
+                QJsonArray{0., 0., std::sqrt(.5), std::sqrt(.5)});
+            require(scene->setState(moved, {}, &error)
+                    && scene->cameraView().position == worldCamera.position
+                    && scene->cameraView().focalPoint == worldCamera.focalPoint
+                    && scene->cameraView().viewUp == worldCamera.viewUp,
+                "World-oriented camera must not rotate with the boat.");
+            frame->setCurrentIndex(0);
+            const auto followed = scene->cameraView();
+            moved.insert(QStringLiteral("position_m"), QJsonArray{12., 4., .2});
+            require(scene->setState(moved, {}, &error) && scene->bodyFixedCamera()
+                    && std::abs(scene->cameraView().position[0] - followed.position[0] - 2.) < 1e-8,
+                "Body camera must resume following without a jump.");
+            tabs->setCurrentIndex(1);
+            require(!duration->isVisible() && !frame->isVisible() && scene->bodyFixedCamera()
+                    && table->topLevelItemCount() == 0,
+                "Static workspace must retain its controls and clear dynamic results.");
+            tabs->setCurrentIndex(2);
+            require(duration->value() == .2 && frame->currentIndex() == 0 && table->isVisible(),
+                "Dynamic inputs must survive workspace switches.");
+            require(activeForce->isChecked()
+                    && window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->value() == 150.
+                    && fixedInputs.front()->value() == fixedValue,
+                "Shared physical inputs survive both workspace directions.");
+            require(!unexpectedDialog && renderErrors->count == 0, "Dynamic layout must not raise errors.");
+            window.close();
+            MainWindow restored;
+            restored.setModelFolder(app.arguments()[2]);
+            restored.selectInitialModel(QStringLiteral("folkeboot"));
+            restored.show();
+            auto* restoredRun = restored.findChild<QPushButton*>(QStringLiteral("primaryButton"));
+            waitUntil([&] { return restoredRun->isEnabled() || unexpectedDialog; }, "Restart model load.");
+            auto* restoredTabs = restored.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+            auto* restoredScene = dynamic_cast<VtkSceneWidget*>(
+                restored.findChild<QWidget*>(QStringLiteral("simulationScene")));
+            restoredTabs->setCurrentIndex(1);
+            require(!restored.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"))->isChecked()
+                    && std::abs(restoredScene->graphicsProfile().waterOpacity - .37) > 1e-6,
+                "Restart must restore static display without dynamic edits.");
+            restoredTabs->setCurrentIndex(2);
+            require(restored.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"))->isChecked()
+                    && std::abs(restoredScene->graphicsProfile().waterOpacity - .37) < 1e-6,
+                "Restart must restore dynamic graphics and force selection independently.");
+            require(!unexpectedDialog && renderErrors->count == 0, "Restart display restoration failed.");
+            restored.close();
+            std::cout << "Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.\n";
+            return 0;
+        }
+        if (app.arguments().contains(QStringLiteral("--column-boundaries-only"))) {
+            QTemporaryDir settings;
+            require(settings.isValid(), "Temporary column-test settings directory required.");
+            QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikColumnTest"));
+            QCoreApplication::setApplicationName(QStringLiteral("ColumnBoundaries"));
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+            MainWindow window;
+            window.show();
+            for (const int workspace : {0, 1, 2}) {
+                window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"))->setCurrentIndex(workspace);
+                auto* table = window.findChild<QTreeWidget*>(workspace == 0
+                    ? QStringLiteral("inspectionValues") : QStringLiteral("staticForceValues"));
+                // Bootsauswahl zeigt die Wertetabelle normalerweise erst nach Objektauswahl.
+                for (auto* parent = table->parentWidget(); parent && parent != &window;
+                     parent = parent->parentWidget()) parent->show();
+                table->show();
+                QApplication::processEvents();
+                auto* header = table->header();
+                auto* viewport = header->viewport();
+                require(viewport->width() > 0 && viewport->height() > 0,
+                    "Column header must be visible for raster/cursor checks.");
+                for (int section = 0; section < 2; ++section) {
+                    const int edge = header->sectionViewportPosition(section) + header->sectionSize(section);
+                    const auto image = viewport->grab().toImage();
+                    int bright = 0;
+                    for (int y = 2; y < image.height() - 2; ++y) {
+                        const auto pixel = image.pixelColor(edge - 1, y);
+                        if (pixel.red() > 140 && pixel.green() > 160 && pixel.blue() > 170) ++bright;
+                    }
+                    require(bright >= image.height() - 6,
+                        "Light vertical separator must span both header title and filter row.");
+                    for (const int y : {5, viewport->height() - 5}) {
+                        const QPointF point(edge - 1, y);
+                        QMouseEvent move(QEvent::MouseMove, point,
+                            viewport->mapToGlobal(point.toPoint()), Qt::NoButton,
+                            Qt::NoButton, Qt::NoModifier);
+                        QApplication::sendEvent(viewport, &move);
+                        require(viewport->cursor().shape() == Qt::SizeHorCursor
+                                && header->cursor().shape() == Qt::SizeHorCursor,
+                            "Resizable boundary must show the horizontal double-arrow cursor.");
+                    }
+                    const QPointF centre(header->sectionViewportPosition(section) + 10, 5);
+                    QMouseEvent move(QEvent::MouseMove, centre,
+                        viewport->mapToGlobal(centre.toPoint()), Qt::NoButton,
+                        Qt::NoButton, Qt::NoModifier);
+                    QApplication::sendEvent(viewport, &move);
+                    require(viewport->cursor().shape() != Qt::SizeHorCursor
+                            && header->cursor().shape() != Qt::SizeHorCursor,
+                        "Header away from a boundary must not show resize cursor.");
+                }
+            }
+            window.close();
+            std::cout << "Column separators and resize cursor passed in all three workspaces.\n";
+            return 0;
+        }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--inspection-only")) {
             QDir evidence(app.arguments()[3]);
             require(evidence.mkpath(QStringLiteral(".")), "inspection evidence directory");

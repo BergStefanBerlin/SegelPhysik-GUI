@@ -1,12 +1,16 @@
 #include "vtk_scene.hpp"
 #include <QJsonArray>
 #include "navigation.hpp"
+#include <QScrollArea>
 
 #include <QColor>
 #include <QEvent>
 #include <QFileInfo>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QLabel>
+#include <QPushButton>
+#include <QWheelEvent>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
@@ -945,6 +949,36 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     renderWindow_->SetMultiSamples(0);
     vtkWidget_->setRenderWindow(renderWindow_);
     navigation_ = new navigation::Overlay(vtkWidget_);
+    navigation_->installEventFilter(this);
+    for (auto* child : navigation_->findChildren<QWidget*>())
+        if (child->objectName() != QStringLiteral("navigationDragHandle")
+            && child->objectName() != QStringLiteral("navigationSizeGrip"))
+            child->installEventFilter(this);
+    viewName_ = new QLabel(vtkWidget_);
+    viewName_->setObjectName(QStringLiteral("viewName"));
+    viewName_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    viewName_->setStyleSheet(QStringLiteral(
+        "background:rgba(11,20,32,210); color:#e8eef5; padding:2px 4px;"
+        "font-family:'Segoe UI'; font-size:11px;"));
+    viewName_->hide();
+    centerLabel_ = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+    centerLabel_->SetInput("S");
+    centerLabel_->PickableOff();
+    centerLabel_->GetTextProperty()->SetColor(0.1, 0.3, 0.8);
+    centerLabel_->GetTextProperty()->BoldOn();
+    centerLabel_->VisibilityOff();
+    buoyancyLabel_ = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+    buoyancyLabel_->SetInput("A");
+    buoyancyLabel_->PickableOff();
+    buoyancyLabel_->GetTextProperty()->BoldOn();
+    buoyancyLabel_->VisibilityOff();
+    defaultViewButton_ = new QPushButton(QStringLiteral("Defaultansicht"), vtkWidget_);
+    defaultViewButton_->setObjectName(QStringLiteral("defaultView"));
+    defaultViewButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { background:#1b2b3d; color:#e8eef5; border:1px solid #344c61;"
+        "border-radius:3px; padding:2px; font-family:'Segoe UI'; font-size:10px; }"));
+    defaultViewButton_->hide();
+    connect(defaultViewButton_, &QPushButton::clicked, this, &VtkSceneWidget::resetOrthographicCamera);
     renderer_->SetBackground(0.035, 0.065, 0.11);
     renderer_->SetBackground2(0.08, 0.16, 0.23);
     renderer_->GradientBackgroundOn();
@@ -1060,6 +1094,12 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     waterActor_->UseBoundsOff();
     applySurface(waterActor_->GetProperty(), DisplayPart::Surface::Glossy);
     waterActor_->GetProperty()->SetRoughness(0.12);
+    waterLevelLine_ = vtkSmartPointer<vtkPolyData>::New();
+    waterLevelActor_ = makeOverlayActor(waterLevelLine_);
+    waterLevelActor_->GetProperty()->SetColor(0.38, 0.60, 0.74);
+    waterLevelActor_->PickableOff();
+    waterLevelActor_->UseBoundsOff();
+    waterLevelActor_->VisibilityOff();
     deepMesh_ = makePolarMesh(false);
     deepActor_ = makeColoredActor(deepMesh_);
     deepActor_->GetProperty()->LightingOff();
@@ -1114,6 +1154,7 @@ void VtkSceneWidget::addEnvironmentActors()
     renderer_->AddActor(skybox_);
     renderer_->AddActor(deepActor_);
     renderer_->AddActor(waterActor_);
+    renderer_->AddActor(waterLevelActor_);
     renderer_->AddActor(gridActor_);
     renderer_->AddActor(trailActor_);
     renderer_->AddActor(motionActor_);
@@ -1127,6 +1168,10 @@ VtkSceneWidget::~VtkSceneWidget()
 
 void VtkSceneWidget::clearModel()
 {
+    waterLevelActor_->VisibilityOff();
+    orthographicScale_ = 0.0;
+    orthographicPan_ = {};
+    cameraDragButton_ = Qt::NoButton;
     resetMotionHistory();
     renderer_->RemoveAllViewProps();
     inspectionPreviewActors_.clear();
@@ -1266,6 +1311,8 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         forceRenderer()->AddActor(lateralLabel_);
         forceRenderer()->AddActor(sailActor_);
         forceRenderer()->AddActor(sailLabel_);
+        forceRenderer()->AddActor(centerLabel_);
+        forceRenderer()->AddActor(buoyancyLabel_);
         sailActor_->VisibilityOff();
         sailLabel_->VisibilityOff();
         lateralActor_->VisibilityOff();
@@ -1273,7 +1320,7 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         pressurePoints_ = {};
         updateWaterPlane();
         frameBodies();
-        if (inspectionMode_) applyBodyStyle();
+        if (inspectionMode_ || orthographicView_ != OrthographicView::Free) applyBodyStyle();
         renderWindow_->Render();
         return true;
     } catch (const std::exception& exception) {
@@ -1440,9 +1487,17 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         const auto position = forcedisplay::toWorldPoint(pose, localPosition);
         const auto target = forcedisplay::toWorldPoint(pose, localTarget);
         const auto up = forcedisplay::toWorldVector(pose, localUp);
-        camera->SetPosition(position.data());
-        camera->SetFocalPoint(target.data());
-        camera->SetViewUp(up.data());
+        if (bodyFixedCamera_) {
+            camera->SetPosition(position.data());
+            camera->SetFocalPoint(target.data());
+            camera->SetViewUp(up.data());
+        } else {
+            const auto displacement = forcedisplay::sub(pose.position, cameraPose_.position);
+            const auto worldPosition = forcedisplay::add(previousView.position, displacement);
+            const auto worldTarget = forcedisplay::add(previousView.focalPoint, displacement);
+            camera->SetPosition(worldPosition.data());
+            camera->SetFocalPoint(worldTarget.data());
+        }
         cameraPose_ = pose;
         pose_ = pose;
         velocityWorld_ = velocityWorld;
@@ -1492,6 +1547,10 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
 
 void VtkSceneWidget::clearState()
 {
+    const auto previousPosition = cameraPose_.position;
+    orthographicScale_ = 0.0;
+    orthographicPan_ = {};
+    cameraDragButton_ = Qt::NoButton;
     const auto previousView = cameraView();
     const auto localPosition = inverseRotate(cameraPose_,
         forcedisplay::sub(previousView.position, cameraPose_.position));
@@ -1512,9 +1571,16 @@ void VtkSceneWidget::clearState()
     pose_ = {};
     cameraPose_ = {};
     auto* camera = renderer_->GetActiveCamera();
-    camera->SetPosition(localPosition.data());
-    camera->SetFocalPoint(localTarget.data());
-    camera->SetViewUp(localUp.data());
+    if (bodyFixedCamera_) {
+        camera->SetPosition(localPosition.data());
+        camera->SetFocalPoint(localTarget.data());
+        camera->SetViewUp(localUp.data());
+    } else {
+        const auto position = forcedisplay::sub(previousView.position, previousPosition);
+        const auto target = forcedisplay::sub(previousView.focalPoint, previousPosition);
+        camera->SetPosition(position.data());
+        camera->SetFocalPoint(target.data());
+    }
     dryLoops_.clear();
     forces_ = {};
     velocityWorld_.reset();
@@ -1743,10 +1809,13 @@ void VtkSceneWidget::updateTrail()
 
 void VtkSceneWidget::setOptions(const DisplayOptions& options)
 {
-    const bool moved = options.visibility != options_.visibility;
+    const auto visibility = orthographicView_ == OrthographicView::Free
+        ? options.visibility : Visibility::ThroughBody;
+    const bool moved = visibility != options_.visibility;
     const bool rescale = options.forceMode != options_.forceMode
         || options.momentMode != options_.momentMode;
     options_ = options;
+    options_.visibility = visibility;
     if (moved) {
         moveForceActors();
     }
@@ -1760,6 +1829,19 @@ void VtkSceneWidget::setOptions(const DisplayOptions& options)
 
 void VtkSceneWidget::setGraphicsProfile(const graphics::Profile& profile)
 {
+    if (orthographicView_ != OrthographicView::Free) {
+        graphicsProfile_ = graphics::Profile{};
+        for (auto feature : {graphics::Feature::Water, graphics::Feature::Waterline, graphics::Feature::Smooth,
+                 graphics::Feature::FXAA})
+            graphicsProfile_.enabled[static_cast<std::size_t>(feature)] = true;
+        graphicsProfile_.waterOpacity = 0.14;
+        const bool moved = options_.visibility != Visibility::ThroughBody;
+        options_.visibility = Visibility::ThroughBody;
+        if (moved) moveForceActors();
+        applyGraphicsProfile();
+        requestRender();
+        return;
+    }
     const bool historyChanged = graphicsProfile_.trackAge != profile.trackAge
         || graphicsProfile_.trackSpacing != profile.trackSpacing
         || graphicsProfile_.markSpacing != profile.markSpacing
@@ -1837,6 +1919,135 @@ VtkSceneWidget::CameraView VtkSceneWidget::cameraView() const
     camera->GetFocalPoint(view.focalPoint.data());
     camera->GetViewUp(view.viewUp.data());
     return view;
+}
+
+bool VtkSceneWidget::parallelProjection() const
+{
+    return renderer_->GetActiveCamera()->GetParallelProjection() != 0;
+}
+
+double VtkSceneWidget::parallelScale() const
+{
+    return renderer_->GetActiveCamera()->GetParallelScale();
+}
+
+void VtkSceneWidget::setViewName(const QString& name)
+{
+    viewName_->setText(name);
+    viewName_->setVisible(!name.isEmpty());
+    layoutViewControls();
+}
+
+void VtkSceneWidget::layoutViewControls()
+{
+    defaultViewButton_->ensurePolished();
+    viewName_->ensurePolished();
+    const int width = vtkWidget_->width();
+    const int height = vtkWidget_->height();
+    viewName_->adjustSize();
+    viewName_->move(std::max(0, width - viewName_->width() - 4),
+        std::max(0, height - viewName_->height() - 4));
+    viewName_->raise();
+    const int buttonWidth = std::max(defaultViewButton_->sizeHint().width(),
+        defaultViewButton_->fontMetrics().horizontalAdvance(defaultViewButton_->text()) + 8);
+    if (orthographicView_ != OrthographicView::Free)
+        setMinimumSize(std::max(buttonWidth, viewName_->width()) + 8,
+            defaultViewButton_->sizeHint().height() + viewName_->height() + 12);
+    defaultViewButton_->resize(std::min(std::max(1, width - 8), buttonWidth),
+        defaultViewButton_->sizeHint().height());
+    defaultViewButton_->move(std::max(0, width - defaultViewButton_->width() - 4), 4);
+    defaultViewButton_->raise();
+}
+
+void VtkSceneWidget::resetOrthographicCamera()
+{
+    orthographicPan_ = {};
+    orthographicScale_ = 0.0;
+    cameraDragButton_ = Qt::NoButton;
+    geometryDirty_ = true;
+    requestRender();
+}
+
+void VtkSceneWidget::setOrthographicView(OrthographicView view)
+{
+    orthographicView_ = view;
+    waterLevelActor_->VisibilityOff();
+    defaultViewButton_->setVisible(view != OrthographicView::Free);
+    defaultViewButton_->setToolTip(QStringLiteral("Nur diese Kamera neu einpassen; Zoom und Verschiebung zurücksetzen."));
+    if (view != OrthographicView::Free)
+        vtkWidget_->setToolTip(QStringLiteral(
+            "Mausrad oder rechte Maustaste: Zoom. Linke oder mittlere Maustaste: Verschieben. Blickrichtung bleibt fest."));
+    layout()->setContentsMargins(view == OrthographicView::Free ? 1 : 0,
+        view == OrthographicView::Free ? 1 : 0, view == OrthographicView::Free ? 1 : 0,
+        view == OrthographicView::Free ? 1 : 0);
+    axesRenderer_->SetDraw(view == OrthographicView::Free);
+    renderer_->GetActiveCamera()->SetParallelProjection(view != OrthographicView::Free);
+    if (view != OrthographicView::Free) setGraphicsProfile(graphicsProfile_);
+    layoutViewControls();
+    resetOrthographicCamera();
+}
+
+void VtkSceneWidget::updateOrthographicCamera()
+{
+    if (orthographicView_ == OrthographicView::Free) return;
+    double bounds[6];
+    if (!bodyBounds(bounds)) return;
+    Vec3 center{0.5 * (bounds[0] + bounds[1]), 0.5 * (bounds[2] + bounds[3]), 0.0};
+    const auto longitudinal = forcedisplay::toWorldVector(cameraPose_, {1.0, 0.0, 0.0});
+    const auto port = forcedisplay::toWorldVector(cameraPose_, {0.0, 1.0, 0.0});
+    // At vertical pitch use the horizontal port axis to retain a defined heading.
+    const double yaw = std::hypot(longitudinal[0], longitudinal[1]) > 1e-10
+        ? std::atan2(longitudinal[1], longitudinal[0]) : std::atan2(-port[0], port[1]);
+    const Vec3 forward{std::cos(yaw), std::sin(yaw), 0.0};
+    Vec3 direction{};
+    Vec3 up{0.0, 0.0, 1.0};
+    if (orthographicView_ == OrthographicView::Port)
+        direction = {-forward[1], forward[0], 0.0};
+    else if (orthographicView_ == OrthographicView::Stern)
+        direction = forcedisplay::scale(forward, -1.0);
+    else {
+        direction = {0.0, 0.0, 1.0};
+        up = forward;
+    }
+    const auto right = forcedisplay::cross(up, direction);
+    double halfHeight = 0.1, halfWidth = 0.1, radius = 0.1;
+    for (int corner = 0; corner < 8; ++corner) {
+        const Vec3 offset = forcedisplay::sub(
+            {bounds[(corner & 1) ? 1 : 0], bounds[(corner & 2) ? 3 : 2],
+                bounds[(corner & 4) ? 5 : 4]}, center);
+        const auto dot = [](const Vec3& a, const Vec3& b) {
+            return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+        };
+        halfHeight = std::max(halfHeight, std::abs(dot(offset, up)));
+        halfWidth = std::max(halfWidth, std::abs(dot(offset, right)));
+        radius = std::max(radius, forcedisplay::norm(offset));
+    }
+    const double aspect = static_cast<double>(std::max(1, vtkWidget_->width()))
+        / std::max(1, vtkWidget_->height());
+    if (orthographicScale_ <= 0.0)
+        orthographicScale_ = 1.12 * std::max(halfHeight, halfWidth / aspect);
+    center = forcedisplay::add(center,
+        forcedisplay::add(forcedisplay::scale(right, orthographicPan_.x()),
+            forcedisplay::scale(up, orthographicPan_.y())));
+    auto* camera = renderer_->GetActiveCamera();
+    const auto position = forcedisplay::add(center, forcedisplay::scale(direction, 3.0 * radius));
+    camera->ParallelProjectionOn();
+    camera->SetFocalPoint(center.data());
+    camera->SetPosition(position.data());
+    camera->SetViewUp(up.data());
+    camera->SetParallelScale(orthographicScale_);
+    const bool waterLevel = orthographicView_ != OrthographicView::Top;
+    waterLevelActor_->SetVisibility(waterLevel);
+    if (waterLevel) {
+        const Vec3 waterCenter{center[0], center[1], 0.0};
+        const auto halfLine = forcedisplay::scale(right, orthographicScale_ * aspect * 1.1);
+        PolyBuilder line;
+        line.segment(forcedisplay::sub(waterCenter, halfLine),
+            forcedisplay::add(waterCenter, halfLine));
+        line.storeLines(waterLevelLine_);
+        waterLevelActor_->GetProperty()->SetLineWidth(
+            static_cast<float>(vtkWidget_->devicePixelRatioF()));
+    }
 }
 
 bool VtkSceneWidget::setCameraView(const CameraView& view)
@@ -1921,6 +2132,22 @@ bool VtkSceneWidget::setCameraPreset(const QString& id, QString* error)
     geometryDirty_ = true;
     requestRender();
     return true;
+}
+
+void VtkSceneWidget::dockNavigation(QScrollArea* destination)
+{
+    const bool visible = !navigation_->isHidden();
+    if (destination) {
+        navigation_->setDocked(true);
+        destination->setWidget(navigation_);
+    } else {
+        auto* scroll = qobject_cast<QScrollArea*>(navigation_->parentWidget()
+            ? navigation_->parentWidget()->parentWidget() : nullptr);
+        if (scroll) scroll->takeWidget();
+        navigation_->setParent(vtkWidget_);
+        navigation_->setDocked(false);
+    }
+    navigation_->setVisible(visible);
 }
 
 void VtkSceneWidget::setNavigationVisible(bool visible)
@@ -2402,6 +2629,14 @@ void VtkSceneWidget::applyBodyStyle()
             ? (inspectionElements_.contains(body.elementId) ? 1.0 : 0.15)
             : bodyTransparency ? std::min(surfaceOpacity, graphicsProfile_.bodyOpacity) : surfaceOpacity;
         property->SetOpacity(opacity);
+        if (orthographicView_ != OrthographicView::Free) {
+            property->SetColor(body.baseColor[0], body.baseColor[1], body.baseColor[2]);
+            property->SetOpacity(1.0);
+            property->SetAmbient(0.55);
+            property->SetDiffuse(0.45);
+            property->SetSpecular(0.0);
+            body.waterline->GetProperty()->SetColor(0.0, 0.35, 0.65);
+        }
 
         auto* reflectionProperty = body.reflection->GetProperty();
         copyMaterial(reflectionProperty, property);
@@ -2441,6 +2676,8 @@ void VtkSceneWidget::applyGraphicsProfile()
         renderer_->SetBackground2(0.22, 0.137, 0.18);
         renderer_->GradientBackgroundOn();
     }
+    if (orthographicView_ != OrthographicView::Free)
+        renderer_->SetBackground(0.86, 0.90, 0.94);
     renderer_->SetUseFXAA(graphicsProfile_.on(graphics::Feature::FXAA));
     renderer_->SetUseSSAO(graphicsProfile_.on(graphics::Feature::SSAO));
     renderer_->SetUseDepthPeeling(graphicsProfile_.on(graphics::Feature::Peeling));
@@ -2469,6 +2706,11 @@ void VtkSceneWidget::applyGraphicsProfile()
     waterActor_->GetProperty()->SetMetallic(0.0);
     waterActor_->GetProperty()->SetBaseIOR(1.333);
     waterActor_->GetProperty()->SetRoughness(0.12);
+    if (orthographicView_ != OrthographicView::Free) {
+        waterActor_->GetProperty()->SetInterpolationToGouraud();
+        waterActor_->GetProperty()->LightingOff();
+        waterActor_->GetProperty()->SetSpecular(0.0);
+    }
     setActorEnvironmentLighting(waterActor_, graphicsProfile_.on(graphics::Feature::WaterIBL));
     for (auto& body : bodies_) {
         body.normals->SplittingOn();
@@ -2548,6 +2790,8 @@ VtkSceneWidget::Visual& VtkSceneWidget::visualFor(const QString& id)
 
 void VtkSceneWidget::hideForceVisuals()
 {
+    centerLabel_->VisibilityOff();
+    buoyancyLabel_->VisibilityOff();
     for (auto& visual : visuals_) {
         visual.lineActor->VisibilityOff();
         visual.headActor->VisibilityOff();
@@ -2600,6 +2844,7 @@ QPointF VtkSceneWidget::toLogicalScreen(const Vec3& point) const
 
 void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
 {
+    updateOrthographicCamera();
     auto* camera = renderer_->GetActiveCamera();
     std::array<double, 15> key{};
     camera->GetPosition(&key[0]);
@@ -2678,9 +2923,17 @@ void VtkSceneWidget::rebuildCourseArrow()
     courseArrowActor_->VisibilityOff();
     courseArrowHeadActor_->VisibilityOff();
     courseArrowGeometry_.reset();
-    if (inspectionMode_ || navigation_->isHidden() || !hasState_
+    const bool staticDirectionView = options_.staticForces
+        && (orthographicView_ == OrthographicView::Free || orthographicView_ == OrthographicView::Top);
+    if (!options_.courseArrow || inspectionMode_ || (!staticDirectionView && navigation_->isHidden()) || !hasState_
         || !forces_.courseRateRadS || bodies_.empty())
         return;
+    if (options_.staticForces && !staticDirectionView) return;
+    const auto color = options_.staticForces
+        ? options_.staticStyles[static_cast<std::size_t>(forcedisplay::StaticForce::Direction)].color
+        : QStringLiteral("#73f3d4");
+    setActorColor(courseArrowActor_, color);
+    setActorColor(courseArrowHeadActor_, color);
     double front = -std::numeric_limits<double>::infinity();
     double back = std::numeric_limits<double>::infinity();
     double left = back, right = front;
@@ -2722,6 +2975,92 @@ void VtkSceneWidget::rebuildCourseArrow()
     courseArrowHeadActor_->VisibilityOn();
 }
 
+void VtkSceneWidget::rebuildSchematicForces()
+{
+    if (orthographicView_ == OrthographicView::Free && !options_.staticForces) return;
+    if (!hasState_ || bodies_.empty() || inspectionMode_) return;
+    const auto forceArrow = [this](const Vec3& start, const Vec3& worldForce,
+                                  const QString& id, const QString& color) {
+        auto* camera = renderer_->GetActiveCamera();
+        const auto* direction = camera->GetDirectionOfProjection();
+        const Vec3 normal{direction[0], direction[1], direction[2]};
+        const auto projected = orthographicView_ == OrthographicView::Free ? worldForce
+            : forcedisplay::sub(worldForce,
+                forcedisplay::scale(normal, forcedisplay::dot(worldForce, normal)));
+        const double magnitude = forcedisplay::norm(projected);
+        const double perPixel = worldPerLogicalPixel(start);
+        if (magnitude < 1e-8 || perPixel <= 0.) return;
+        const auto scaled = forcedisplay::scaleMagnitude(
+            magnitude, std::max(forceReference_, 1.0), forcedisplay::ScaleMode::Logarithmic);
+        const double length = forcedisplay::pixelLength(scaled,
+            std::clamp(vtkWidget_->width() * .45, 28., 100.), 12.) * perPixel;
+        const double headLength = std::min(7. * perPixel, length * .4);
+        const auto arrow = forcedisplay::arrowGeometry(start, projected, length, headLength);
+        if (!arrow) return;
+        PolyBuilder lines, head;
+        lines.segment(start, arrow->headBase);
+        head.cone(arrow->tip, arrow->direction, headLength, headLength * .4);
+        auto& visual = visualFor(id);
+        lines.storeLines(visual.lines);
+        head.storePolys(visual.head);
+        for (auto* actor : {visual.lineActor.GetPointer(), visual.headActor.GetPointer()}) {
+            setActorColor(actor, color);
+            actor->GetProperty()->SetLineWidth(static_cast<float>(2. * vtkWidget_->devicePixelRatioF()));
+            actor->VisibilityOn();
+        }
+    };
+    const auto marker = [this](const Vec3& center, const QString& id,
+                              const QString& color, vtkBillboardTextActor3D* label) {
+        auto& visual = visualFor(id);
+        vtkNew<vtkPoints> points;
+        points->SetDataTypeToDouble();
+        const auto point = points->InsertNextPoint(center.data());
+        vtkNew<vtkCellArray> vertices;
+        vertices->InsertNextCell(1, &point);
+        visual.lines->Initialize();
+        visual.lines->SetPoints(points);
+        visual.lines->SetVerts(vertices);
+        setActorColor(visual.lineActor, color);
+        visual.lineActor->GetProperty()->SetPointSize(
+            static_cast<float>(11. * vtkWidget_->devicePixelRatioF()));
+        visual.lineActor->GetProperty()->RenderPointsAsSpheresOn();
+        visual.lineActor->VisibilityOn();
+        label->SetPosition(center[0], center[1], center[2]);
+        label->SetDisplayOffset(5, 5);
+        const QColor tint(color);
+        label->GetTextProperty()->SetColor(tint.redF(), tint.greenF(), tint.blueF());
+        label->GetTextProperty()->SetFontSize(
+            static_cast<int>(13. * vtkWidget_->devicePixelRatioF()));
+        label->VisibilityOn();
+    };
+    const auto sums = forcedisplay::staticResultants(forces_, pose_, hydrodynamicRoles_);
+    for (std::size_t i = 0; i < sums.size(); ++i) {
+        const auto type = static_cast<forcedisplay::StaticForce>(i);
+        const auto& style = options_.staticStyles[i];
+        const auto& sum = sums[i];
+        if (!style.enabled) continue;
+        if (type == forcedisplay::StaticForce::Weight && forces_.reference
+            && !forces_.stationary.isEmpty())
+            marker(forcedisplay::toWorldPoint(pose_, *forces_.reference),
+                QStringLiteral("schematic:center"), style.color, centerLabel_);
+        if (!sum.pointWorld || !sum.forceWorld) continue;
+        QString id = QStringLiteral("static:") + style.key;
+        if (type == forcedisplay::StaticForce::Buoyancy) {
+            marker(*sum.pointWorld, QStringLiteral("schematic:buoyancy"), style.color, buoyancyLabel_);
+            id = QStringLiteral("schematic:buoyancy-force");
+        } else if (type == forcedisplay::StaticForce::Weight) {
+            id = QStringLiteral("schematic:weight-force");
+        } else if (type == forcedisplay::StaticForce::Lateral) {
+            if (!pressurePoints_[0]) continue;
+            id = QStringLiteral("schematic:ldp-force");
+        } else if (type == forcedisplay::StaticForce::Sail) {
+            if (!pressurePoints_[1]) continue;
+            id = QStringLiteral("schematic:sdp-force");
+        }
+        forceArrow(*sum.pointWorld, *sum.forceWorld, id, style.color);
+    }
+}
+
 void VtkSceneWidget::rebuildForceGeometry()
 {
     hideForceVisuals();
@@ -2741,13 +3080,20 @@ void VtkSceneWidget::rebuildForceGeometry()
             data->Initialize();
             data->SetPoints(points);
             data->SetVerts(vertices);
-            const QColor color(sail ? QStringLiteral("#ffad48") : QStringLiteral("#ff4fd8"));
+            const bool auxiliary = orthographicView_ != OrthographicView::Free;
+            const QColor color(options_.staticForces || auxiliary
+                ? options_.staticStyles[static_cast<std::size_t>(sail
+                    ? forcedisplay::StaticForce::Sail : forcedisplay::StaticForce::Lateral)].color
+                : (sail ? QStringLiteral("#ffad48") : QStringLiteral("#ff4fd8")));
             actor->GetProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
             actor->GetProperty()->SetPointSize(static_cast<float>(11. * vtkWidget_->devicePixelRatioF()));
             actor->GetProperty()->RenderPointsAsSpheresOn();
             label->SetPosition(point[0], point[1], point[2]);
             label->GetTextProperty()->SetColor(color.redF(), color.greenF(), color.blueF());
-            label->GetTextProperty()->SetFontSize(static_cast<int>(16. * vtkWidget_->devicePixelRatioF()));
+            label->GetTextProperty()->SetFontSize(
+                static_cast<int>((auxiliary ? 11. : 16.) * vtkWidget_->devicePixelRatioF()));
+            if (auxiliary) label->GetTextProperty()->SetJustificationToCentered();
+            else label->GetTextProperty()->SetJustificationToLeft();
             label->GetTextProperty()->SetVerticalJustificationToBottom();
             actor->VisibilityOn();
             label->VisibilityOn();
@@ -2759,6 +3105,7 @@ void VtkSceneWidget::rebuildForceGeometry()
         if (options_.sailCenter && forces_.sailCenter && forces_.sailCenter->position)
             marker(*forces_.sailCenter->position, true);
     }
+    rebuildSchematicForces();
     if (!options_.forces || !hasState_ || bodies_.empty()) {
         return;
     }
@@ -2902,8 +3249,70 @@ void VtkSceneWidget::rebuildForceGeometry()
 
 bool VtkSceneWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    if ((watched == vtkWidget_ || (navigation_->parentWidget() == vtkWidget_
+            && (watched == navigation_ || navigation_->isAncestorOf(qobject_cast<QWidget*>(watched)))))
+        && event->type() == QEvent::MouseButtonDblClick && onDoubleClicked) {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton) {
+            pressActive_ = false;
+            cameraDragButton_ = Qt::NoButton;
+            QTimer::singleShot(0, this, [this] { if (onDoubleClicked) onDoubleClicked(); });
+            return true;
+        }
+    }
     if (watched == vtkWidget_) {
-        if (event->type() == QEvent::Resize) updateInspectionMask();
+        if (event->type() == QEvent::Resize) {
+            updateInspectionMask();
+            layoutViewControls();
+        }
+        if (orthographicView_ != OrthographicView::Free) {
+            if (event->type() == QEvent::Wheel) {
+                const auto* wheel = static_cast<QWheelEvent*>(event);
+                updateOrthographicCamera();
+                if (orthographicScale_ > 0.0)
+                    orthographicScale_ = std::clamp(orthographicScale_
+                        * std::pow(1.1, -wheel->angleDelta().y() / 120.0), 1e-6, 1e9);
+                geometryDirty_ = true;
+                requestRender();
+                return true;
+            }
+            if (event->type() == QEvent::MouseButtonPress) {
+                const auto* mouse = static_cast<QMouseEvent*>(event);
+                cameraDragPosition_ = mouse->position();
+                cameraDragButton_ = mouse->button();
+                cameraDragPan_ = mouse->button() == Qt::MiddleButton
+                    || (mouse->button() == Qt::LeftButton
+                        && !(mouse->modifiers().testFlag(Qt::ShiftModifier)
+                            && mouse->modifiers().testFlag(Qt::ControlModifier)));
+                return true;
+            }
+            if (event->type() == QEvent::MouseMove) {
+                const auto* mouse = static_cast<QMouseEvent*>(event);
+                const auto delta = mouse->position() - cameraDragPosition_;
+                cameraDragPosition_ = mouse->position();
+                updateOrthographicCamera();
+                if (cameraDragButton_ != Qt::NoButton && cameraDragPan_) {
+                    const double unitsPerPixel = 2.0 * orthographicScale_ / std::max(1, vtkWidget_->height());
+                    orthographicPan_ += QPointF(-delta.x(), delta.y()) * unitsPerPixel;
+                } else if (cameraDragButton_ == Qt::RightButton
+                    || (cameraDragButton_ == Qt::LeftButton
+                        && mouse->modifiers().testFlag(Qt::ShiftModifier)
+                        && mouse->modifiers().testFlag(Qt::ControlModifier))) {
+                    if (orthographicScale_ > 0.0)
+                        orthographicScale_ = std::clamp(orthographicScale_
+                            * std::exp(-delta.y() * 0.01), 1e-6, 1e9);
+                }
+                geometryDirty_ = true;
+                requestRender();
+                return true;
+            }
+            if (event->type() == QEvent::MouseButtonRelease) {
+                cameraDragButton_ = Qt::NoButton;
+                return true;
+            }
+            if (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse)
+                cameraDragButton_ = Qt::NoButton;
+        }
         if (event->type() == QEvent::MouseButtonPress) {
             const auto* mouse = static_cast<QMouseEvent*>(event);
             pressActive_ = mouse->button() == Qt::LeftButton;
@@ -3121,9 +3530,10 @@ void VtkSceneWidget::rebuildEnvironment()
         const double inspectionSky[3] = {198.0 / 255.0, 149.0 / 255.0, 165.0 / 255.0};
         const auto* water = inspectionMode_ ? inspectionWater : waterColor;
         const auto* sky = inspectionMode_ ? inspectionSky : horizonColor;
-        rgba[0] = toByte(mix(water[0], sky[0], haze));
-        rgba[1] = toByte(mix(water[1], sky[1], haze));
-        rgba[2] = toByte(mix(water[2], sky[2], haze));
+        const bool schematic = orthographicView_ != OrthographicView::Free;
+        rgba[0] = toByte(schematic ? 0.38 : mix(water[0], sky[0], haze));
+        rgba[1] = toByte(schematic ? 0.60 : mix(water[1], sky[1], haze));
+        rgba[2] = toByte(schematic ? 0.74 : mix(water[2], sky[2], haze));
         rgba[3] = toByte(alpha);
     };
     auto setVertex = [&](vtkIdType id, double x, double y) {

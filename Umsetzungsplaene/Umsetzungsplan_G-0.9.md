@@ -5,7 +5,7 @@
 **Ziel:** G-0.9; der veroeffentlichte Tag G-0.8 bleibt unveraendert.
 
 Massgeblich:
-[GUI-Spezifikation](../Spezifikationen/Spezifikation_GUI_Statisches_Modell.md).
+[GUI-Spezifikation im veroeffentlichten G-0.9-Stand](https://github.com/BergStefanBerlin/SegelPhysik-GUI/blob/G-0.9/Spezifikationen/Spezifikation_GUI_Statisches_Modell.md).
 Physikalische Voraussetzung:
 [Core-Spezifikation](../../CORE/Spezifikationen/Spezifikation_Stationaeres_Fahrtgleichgewicht.md)
 und [einziger Core-Plan C-0.8](../../CORE/Umsetzungsplaene/Umsetzungsplan_Modellinspektion.md#stationaeres-fahrtgleichgewicht).
@@ -264,7 +264,7 @@ Keine Aenderung an Core-Physik oder V6; kein Commit, Tag oder Push.
 **Status:** ausdruecklich finalisiert und Umsetzung beauftragt.
 Die bisherigen U-G-Schritte beziehen sich auf die geradlinige Lieferung.
 Massgeblich ist
-[Spezifikation Abschnitt 6](../Spezifikationen/Spezifikation_GUI_Statisches_Modell.md#6-stationaere-kurvenfahrt-und-drehratenanzeige).
+[Spezifikation Abschnitt 6 im G-0.9-Stand](https://github.com/BergStefanBerlin/SegelPhysik-GUI/blob/G-0.9/Spezifikationen/Spezifikation_GUI_Statisches_Modell.md#6-stationaere-kurvenfahrt-und-drehratenanzeige).
 Keine parallele Spezifikation und kein weiterer Versionsplan.
 Ziel G-0.9 zusammen mit Core C-0.8 bestaetigt.
 

@@ -7,6 +7,7 @@
 #include "graphics_settings.hpp"
 
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QPointer>
 #include <QSet>
@@ -39,6 +40,7 @@ class QStackedWidget;
 class QHBoxLayout;
 class QVBoxLayout;
 class QScrollArea;
+class QLineEdit;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -63,6 +65,7 @@ private:
     QDockWidget* buildValuesDock();
     void applyWorkspaceTheme(int index);
     void updateWorkspace(int index);
+    void swapStaticView(VtkSceneWidget* view);
     void chooseModelFolder();
     void reloadCatalog();
     void applyCatalog(const CatalogSnapshot& snapshot);
@@ -90,23 +93,38 @@ private:
     void showError(const QString& title, const QString& message);
 
     void applyDisplayOptions();
+    void updateStaticForceMenu();
     void setupGraphics();
     void closeGraphics();
     void setupMaterialPreview();
     void applyGraphicsProfile();
     void loadSettings();
-    void saveDisplaySettings() const;
+    void saveDisplaySettings();
+    void restoreModeDisplaySettings();
     void initialReferences(const ModelDisplayData& data);
     void storeReferences() const;
     void updateReferenceLabel();
     void clearValues();
     void showModelProblems(const QVector<ModelProblem>& problems);
     void updateValues();
+    void updateStaticValues();
+    void filterStaticValues();
     void updateDetail();
     void selectContribution(const QString& id);
     void copyValues() const;
 
     VtkSceneWidget* scene_ = nullptr;
+    std::array<VtkSceneWidget*, 3> staticScenes_{};
+    std::array<QWidget*, 3> staticViewSlots_{};
+    VtkSceneWidget* largeScene_ = nullptr;
+    QWidget* staticViewsColumn_ = nullptr;
+    QList<QWidget*> vectorControls_;
+    QWidget* staticForceMenu_ = nullptr;
+    std::array<QCheckBox*, forcedisplay::staticForceCount> staticForceChecks_{};
+    std::array<QPushButton*, forcedisplay::staticForceCount> staticColorButtons_{};
+    std::array<forcedisplay::StaticForceStyle, forcedisplay::staticForceCount> staticForceStyles_ =
+        forcedisplay::staticForceDefaults();
+    QHash<QString, QString> hydrodynamicRoles_;
     BoatInspection* inspection_ = nullptr;
     QStackedWidget* workspaceStack_ = nullptr;
     QStackedWidget* sceneStack_ = nullptr;
@@ -120,6 +138,7 @@ private:
     QHBoxLayout* mainArea_ = nullptr;
     QWidget* displayPanel_ = nullptr;
     QScrollArea* staticDisplaySidebar_ = nullptr;
+    QScrollArea* staticNavigationColumn_ = nullptr;
     QVBoxLayout* simulationControlsLayout_ = nullptr;
     graphics::Settings graphics_ = graphics::defaults();
     graphics::Settings staticGraphics_ = graphics::defaults();
@@ -138,6 +157,8 @@ private:
     QDoubleSpinBox* durationSpin_ = nullptr;
     QDoubleSpinBox* stepSpin_ = nullptr;
     QCheckBox* testDriveCheck_ = nullptr;
+    QComboBox* cameraFrameCombo_ = nullptr;
+    QWidget* cameraFramePanel_ = nullptr;
     QDoubleSpinBox* testForceSpin_ = nullptr;
     QDoubleSpinBox* testSpeedSpin_ = nullptr;
     QLabel* testDriveStatus_ = nullptr;
@@ -145,8 +166,6 @@ private:
     QGroupBox* movementPanel_ = nullptr;
     QGroupBox* stationaryForcePanel_ = nullptr;
     QCheckBox* stationaryForceActive_ = nullptr;
-    QCheckBox* stationaryTurning_ = nullptr;
-    QComboBox* stationaryForceFrame_ = nullptr;
     std::array<QDoubleSpinBox*, 3> stationaryForce_{};
     std::array<QDoubleSpinBox*, 3> stationaryPoint_{};
     QHash<QString, QDoubleSpinBox*> stationaryMovements_;
@@ -171,6 +190,7 @@ private:
     QPushButton* graphicsButton_ = nullptr;
     QComboBox* cameraCombo_ = nullptr;
     QCheckBox* navigationCheck_ = nullptr;
+    QCheckBox* attitudeViewsCheck_ = nullptr;
     // Je Rubrik (Kräfte, Momente): Gewicht gesamt/Teile, Auftrieb gesamt/Teile, Summe.
     std::array<QCheckBox*, 5> forceChecks_{};
     std::array<QCheckBox*, 5> momentChecks_{};
@@ -187,6 +207,9 @@ private:
     QLabel* balanceLabel_ = nullptr;
     QLabel* stepInfoLabel_ = nullptr;
     QTreeWidget* valuesTree_ = nullptr;
+    QWidget* legacyValues_ = nullptr;
+    QTreeWidget* staticValues_ = nullptr;
+    std::array<QLineEdit*, 10> staticValueFilters_{};
     QLabel* detailLabel_ = nullptr;
     QTreeWidgetItem* rootItem_ = nullptr;
     QTreeWidgetItem* stationaryItem_ = nullptr;

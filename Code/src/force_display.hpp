@@ -6,6 +6,7 @@
 // Zuordnung und Texte. Ohne VTK/Qt-GUI testbar.
 
 #include <QJsonObject>
+#include <QHash>
 #include <QPointF>
 #include <QString>
 #include <QStringList>
@@ -99,6 +100,7 @@ struct LateralCenter {
     QString status;                // gueltig, geometrisch, nicht_bestimmbar
     std::optional<Vec3> position;  // Modellframe, nur bei gueltig/geometrisch
     int evaluationVersion = 0;
+    std::optional<double> transverseForce;
 };
 
 struct SailCenter {
@@ -140,6 +142,29 @@ ForceState parseForceState(const QJsonObject& state);
 // Teilmomente je Element, gebildet ausschließlich durch Aufsummieren der vom
 // Core gelieferten Kräfte, Angriffspunkte und Momente um S (A-G-00014).
 QVector<Contribution> derivedContributions(const ForceState& state);
+
+enum class StaticForce : std::size_t {
+    Buoyancy, Weight, Sail, Lateral, Direction, Friction, HullPressure,
+    Rudder, Centreboard, HeaveDamping, TestDrive, Total, Count
+};
+constexpr std::size_t staticForceCount = static_cast<std::size_t>(StaticForce::Count);
+struct StaticForceStyle {
+    QString key;
+    QString name;
+    QString explanation;
+    QString color;
+    bool enabled = false;
+};
+std::array<StaticForceStyle, staticForceCount> staticForceDefaults();
+struct StaticResultant {
+    bool available = false;
+    QString diagnostic;
+    std::optional<Vec3> pointWorld;
+    std::optional<Vec3> forceWorld;
+};
+// Rollen stammen aus der Core-Inspektion, niemals aus Elementnamen.
+std::array<StaticResultant, staticForceCount> staticResultants(
+    const ForceState& state, const Pose& pose, const QHash<QString, QString>& roles);
 Category categorize(const Contribution& contribution);
 QString colorFor(Category category, const QString& group = {});
 // Wie colorFor; Gesamtwerte (Contribution::total) erhalten ein helleres Blau.

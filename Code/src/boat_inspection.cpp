@@ -2,6 +2,7 @@
 
 #include "display_geometry.hpp"
 #include "vtk_scene.hpp"
+#include "filter_header.hpp"
 #include <vtkPolyData.h>
 
 #include <QHeaderView>
@@ -33,62 +34,6 @@ constexpr int rawValueRole = Qt::UserRole + 10;
 constexpr int colorRole = Qt::UserRole + 11;
 constexpr int movementIdRole = Qt::UserRole + 12;
 constexpr int movementActionRole = Qt::UserRole + 13;
-
-class FilterHeader final : public QHeaderView {
-public:
-    explicit FilterHeader(QWidget* parent) : QHeaderView(Qt::Horizontal, parent)
-    {
-        setObjectName(QStringLiteral("inspectionValueHeader"));
-        setStyleSheet(QStringLiteral(
-            "QHeaderView::section { border-right:1px solid #795565; }"));
-        connect(this, &QHeaderView::sectionResized, this, [this] { positionFilters(); });
-        connect(this, &QHeaderView::geometriesChanged, this, [this] { positionFilters(); });
-    }
-
-    void setFilters(const std::array<QLineEdit*, 6>& filters)
-    {
-        filters_ = filters;
-        positionFilters();
-    }
-
-    QSize sizeHint() const override
-    {
-        auto size = QHeaderView::sizeHint();
-        size.rheight() += filterHeight();
-        return size;
-    }
-
-protected:
-    void paintSection(QPainter* painter, const QRect& rect, int section) const override
-    {
-        auto title = rect;
-        title.setHeight(std::max(0, rect.height() - filterHeight()));
-        QHeaderView::paintSection(painter, title, section);
-    }
-
-    void resizeEvent(QResizeEvent* event) override
-    {
-        QHeaderView::resizeEvent(event);
-        positionFilters();
-    }
-
-    void scrollContentsBy(int dx, int dy) override
-    {
-        QHeaderView::scrollContentsBy(dx, dy);
-        positionFilters();
-    }
-
-private:
-    int filterHeight() const { return fontMetrics().height() + 14; }
-    void positionFilters()
-    {
-        for (int i = 0; i < static_cast<int>(filters_.size()); ++i)
-            if (filters_[i])
-                filters_[i]->setGeometry(sectionViewportPosition(i),
-                    height() - filterHeight(), sectionSize(i), filterHeight());
-    }
-    std::array<QLineEdit*, 6> filters_{};
-};
 
 class ValueItem final : public QTreeWidgetItem {
 public:
@@ -244,7 +189,7 @@ BoatInspection::BoatInspection(QWidget* parent) : QWidget(parent)
     tree_->setHeaderLabel(QStringLiteral("Objekt / Teil"));
     tree_->setHeaderHidden(true);
     tree_->setStyleSheet(QStringLiteral(
-        "QTreeWidget#inspectionObjectTree { border-radius:6px; padding:3px; }"));
+        "QTreeWidget#inspectionObjectTree { border-radius:12px; padding:3px; }"));
     tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     panelLayout->addWidget(tree_, 1);
@@ -260,6 +205,9 @@ BoatInspection::BoatInspection(QWidget* parent) : QWidget(parent)
     values_ = new QTreeWidget;
     values_->setObjectName(QStringLiteral("inspectionValues"));
     auto* header = new FilterHeader(values_);
+    header->setObjectName(QStringLiteral("inspectionValueHeader"));
+    header->setStyleSheet(QStringLiteral(
+        "QHeaderView::section { border-right:1px solid #795565; }"));
     values_->setHeader(header);
     values_->setHeaderLabels({QStringLiteral("Objekt/Pfad"), QStringLiteral("Bereich"), QStringLiteral("Eigenschaft"),
         QStringLiteral("Wert"), QStringLiteral("Einheit"), QStringLiteral("Status")});

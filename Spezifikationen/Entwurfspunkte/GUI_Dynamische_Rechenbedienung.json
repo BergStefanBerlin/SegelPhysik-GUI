@@ -1,0 +1,61 @@
+{
+  "status": "mindestintegration_technisch_geprueft_persoenliche_abnahme_offen",
+  "stand": "2026-11-03",
+  "spezifikation": "../Spezifikation_GUI_Statisches_Modell.md#13-identische-rechenbedienung-fuer-statik-und-dynamik",
+  "zielversion": "G-0.10",
+  "herkunft": "Nutzerauftrag 03.11.2026 18:17 und Spec-Auftrag 18:19; Umsetzungsauftrag 18:43 finalisiert GUI und Core-Mindestintegration. Danach verbindlicher Halt zur persoenlichen GUI-Pruefung; Performancevergleich erst nach erneutem Go.",
+  "punkte": [
+    {
+      "id": "IDEE-G-00080",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00125"],
+      "umsetzungsschritte": ["U-G-000131", "U-G-000132", "U-G-000133", "U-G-000137", "U-G-000138"],
+      "abschnitt": "13.1",
+      "text": "Statische/dynamische Eingabe, Optionen und Look and Feel nahezu identisch; gruen statt blau. Praezisierung 18:26: Darstellungseinstellungen einschliesslich Darstellung-Dialog streng je Modus getrennt speichern/wiederherstellen; gleiche Defaults sind keine gekoppelte Konfiguration.",
+      "offen": []
+    },
+    {
+      "id": "IDEE-G-00081",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00126"],
+      "umsetzungsschritte": ["U-G-000134", "U-G-000138"],
+      "abschnitt": "13.2",
+      "text": "Dauer und Schrittweite erst im dynamischen Startdialog; Start, Abbruch und Validierung ohne unbeabsichtigten Ergebnisverlust.",
+      "offen": [
+        "Letzte bestaetigte Dialogwerte nur in der Sitzung behalten; dauerhafte Speicherung ist nicht beauftragt."
+      ]
+    },
+    {
+      "id": "IDEE-G-00082",
+      "status": "angenommen_technische_kameraauslegung_offengelegt",
+      "anforderungen": ["A-G-00127"],
+      "umsetzungsschritte": ["U-G-000136", "U-G-000137", "U-G-000138"],
+      "abschnitt": "13.3",
+      "text": "Aktivflag, Fremdkraft und Ansatzpunkt als eingefrorenen dynamischen Rechenfall uebergeben; keinen Testantrieb ersatzweise aktivieren.",
+      "offen": [
+        "Persoenliche Pruefung der offengelegten technischen Auslegung: Kraft und Punkt modellfest wie Statik; Auswahl bleibt Kamerabezug. Koerpermodell folgt Pose, Weltmodell folgt Bootsposition mit weltorientierter Kamera. Keine ausdrueckliche Nutzerbestaetigung dieser Auslegung behaupten."
+      ]
+    },
+    {
+      "id": "IDEE-G-00083",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00128"],
+      "umsetzungsschritte": ["U-G-000132", "U-G-000135", "U-G-000136", "U-G-000138"],
+      "abschnitt": "13.3",
+      "text": "Feste Ruder-/Schwertstellungen aus Core-Metadaten ab Laufbeginn uebergeben; keine neuen Live-Stellungswechsel. Gemeinsame rechte Eingaben (Aktivflag, Fremdkraft, Ansatzpunkt, Stellungen) bei Reiterwechsel beidseitig erhalten; Lauf stoppen, aber keine gueltigen Eingabewerte zuruecksetzen.",
+      "offen": []
+    },
+    {
+      "id": "IDEE-G-00084",
+      "status": "angenommen_performancephase_gesperrt",
+      "anforderungen": ["A-G-00129"],
+      "umsetzungsschritte": ["U-G-000138", "U-G-000139"],
+      "abschnitt": "13.4",
+      "text": "GUI/Core-Abgrenzung, Paritaet und vollstaendige fachliche Uebernahme pruefen. Nach GUI-/Core-Mindestintegration und Funktionsgate historischen Vergleich bis etwa 27.10.2026 ausfuehren; Core/JSON/Tabelle/Rendern trennen, unterschiedliche Physikumfaenge nicht als Regression ausgeben. Vorgehen im einzigen G-0.10-Plan Abschnitt 13.",
+      "offen": [
+        "Historischer Vergleich mit C-0.7 und weitergehende Optimierung bleiben bis zur persoenlichen GUI-Pruefung und erneutem Go gesperrt. Modellstruktur, Modellkomplexitaet, wiederholte Nachrechnung und GUI-Mehrarbeit getrennt untersuchen.",
+        "Persoenliche GUI-Abnahme steht aus; technische Nachweise im einzigen G-0.10-Plan."
+      ]
+    }
+  ]
+}

@@ -21,6 +21,8 @@
 #include <vector>
 
 class QVTKOpenGLNativeWidget;
+class QLabel;
+class QPushButton;
 class vtkActor;
 class vtkAxesActor;
 class vtkBillboardTextActor3D;
@@ -40,10 +42,12 @@ class vtkSkybox;
 class vtkTexture;
 class vtkTransform;
 namespace navigation { class Overlay; }
+class QScrollArea;
 
 class VtkSceneWidget final : public QWidget {
 public:
     enum class Visibility { Spatial, ThroughBody };
+    enum class OrthographicView { Free, Port, Stern, Top };
 
     // Je Rubrik: Gewicht gesamt/Teile, Auftrieb gesamt/Teile, Summe.
     struct VectorSelection {
@@ -61,6 +65,10 @@ public:
         bool leverArm = true;
         bool lateralCenter = true;
         bool sailCenter = true;
+        bool courseArrow = true;
+        bool staticForces = false;
+        std::array<forcedisplay::StaticForceStyle, forcedisplay::staticForceCount> staticStyles =
+            forcedisplay::staticForceDefaults();
         Visibility visibility = Visibility::ThroughBody;
         forcedisplay::ScaleMode forceMode = forcedisplay::ScaleMode::Logarithmic;
         forcedisplay::ScaleMode momentMode = forcedisplay::ScaleMode::Logarithmic;
@@ -73,6 +81,7 @@ public:
     // Gruppenzuordnung aller Elemente; ein Teil gilt als geflutet, sobald ein
     // Element seiner Gruppe vollgelaufen ist.
     void setElementGroups(const QHash<QString, QString>& groups) { elementGroups_ = groups; }
+    void setHydrodynamicRoles(const QHash<QString, QString>& roles) { hydrodynamicRoles_ = roles; }
     void clearModel();
     bool setState(const QJsonObject& state, const forcedisplay::ForceState& forces,
         QString* error);
@@ -93,6 +102,8 @@ public:
     { return courseArrowGeometry_; }
     const std::optional<forcedisplay::Vec3>& pressurePoint(bool sail) const
     { return pressurePoints_[sail ? 1 : 0]; }
+    std::optional<forcedisplay::Pose> statePose() const
+    { return hasState_ ? std::optional<forcedisplay::Pose>(pose_) : std::nullopt; }
 
     void setOptions(const DisplayOptions& options);
     const DisplayOptions& options() const { return options_; }
@@ -111,9 +122,17 @@ public:
         forcedisplay::Vec3 viewUp{0.0, 0.0, 1.0};
     };
     CameraView cameraView() const;
+    void setBodyFixedCamera(bool enabled) { bodyFixedCamera_ = enabled; }
+    bool bodyFixedCamera() const { return bodyFixedCamera_; }
+    bool parallelProjection() const;
+    double parallelScale() const;
+    void setOrthographicView(OrthographicView view);
+    void setViewName(const QString& name);
+    void resetOrthographicCamera();
     bool setCameraView(const CameraView& view);
     bool setCameraPreset(const QString& id, QString* error);
     void setNavigationVisible(bool visible);
+    void dockNavigation(QScrollArea* destination);
     void setInspectionMode();
     void setInspectionSelection(const QSet<QString>& elementIds, bool hasSelection = false);
     double inspectionOpacity(const QString& elementId) const;
@@ -135,6 +154,7 @@ public:
     // Auswahl per Klick in 3D (A-G-00014) und geänderte Referenzen.
     std::function<void(const QString&)> onPicked;
     std::function<void()> onReferencesChanged;
+    std::function<void()> onDoubleClicked;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -173,6 +193,7 @@ private:
 
     void onRenderStart(vtkObject* caller, unsigned long event, void* data);
     void rebuildForceGeometry();
+    void rebuildSchematicForces();
     void rebuildCourseArrow();
     void hideForceVisuals();
     Visual& visualFor(const QString& id);
@@ -201,9 +222,21 @@ private:
     double bodyHalfDiagonal() const;
     void frameBodies();
     void frameBounds(const double bounds[6], double zoom);
+    void updateOrthographicCamera();
+    void layoutViewControls();
 
     QVTKOpenGLNativeWidget* vtkWidget_ = nullptr;
     bool inspectionMode_ = false;
+    OrthographicView orthographicView_ = OrthographicView::Free;
+    QLabel* viewName_ = nullptr;
+    vtkSmartPointer<vtkBillboardTextActor3D> centerLabel_;
+    vtkSmartPointer<vtkBillboardTextActor3D> buoyancyLabel_;
+    QPushButton* defaultViewButton_ = nullptr;
+    double orthographicScale_ = 0.0;
+    QPointF orthographicPan_;
+    QPointF cameraDragPosition_;
+    Qt::MouseButton cameraDragButton_ = Qt::NoButton;
+    bool cameraDragPan_ = false;
     bool inspectionHasSelection_ = false;
     QSet<QString> inspectionElements_;
     navigation::Overlay* navigation_ = nullptr;
@@ -242,6 +275,8 @@ private:
     vtkSmartPointer<vtkPolyData> waterMesh_;
     vtkSmartPointer<vtkPolyData> waterDisplay_;
     vtkSmartPointer<vtkActor> waterActor_;
+    vtkSmartPointer<vtkPolyData> waterLevelLine_;
+    vtkSmartPointer<vtkActor> waterLevelActor_;
     vtkSmartPointer<vtkPolyData> deepMesh_;
     vtkSmartPointer<vtkActor> deepActor_;
     vtkSmartPointer<vtkPolyData> gridMesh_;
@@ -291,9 +326,11 @@ private:
     forcedisplay::ForceState forces_;
     forcedisplay::Pose pose_;
     forcedisplay::Pose cameraPose_;
+    bool bodyFixedCamera_ = true;
     std::optional<forcedisplay::Vec3> velocityWorld_;
     bool hasState_ = false;
     DisplayOptions options_;
+    QHash<QString, QString> hydrodynamicRoles_;
     double forceReference_ = 0.0;
     double momentReference_ = 0.0;
     QString selected_;
