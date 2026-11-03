@@ -1,0 +1,14 @@
+{
+    "forceArrowActorAndPixelSelection": true,
+    "interactorSuspended": true,
+    "invalidatedMatrices": true,
+    "liveAndHistoricalResume": true,
+    "modelReplacement": true,
+    "orthographicProfileIdempotent": true,
+    "realFreeSchematicSwaps": 18,
+    "sameSnapshotHistoryReplayInputs": 0,
+    "sharedMeshes": true,
+    "sourceMTimeInvalidation": true,
+    "swappedView": true,
+    "switchedOffSceneWork": 0
+}

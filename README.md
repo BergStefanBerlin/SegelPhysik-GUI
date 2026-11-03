@@ -65,6 +65,14 @@ Set `SEGELPHYSIK_CORE_SOURCE_DIR` to the local Core checkout if it is stored
 elsewhere. The GUI links the Core target directly; the Core CLI is not required
 at runtime.
 
+The performance implementation requires Core C-0.10's
+`Modellaufbereitung` API. Each live run owns separate persistent worker and
+display contexts: stepping and historical JSON generation reuse exact prepared
+data without sharing mutable state between the GUI and worker threads.
+Replacing the model creates new contexts. Batch simulation uses the Core's
+internal context; no solver settings or integration steps are reduced.
+See the [performance plan and evidence](Umsetzungsplaene/Umsetzungsplan_G-0.11.md).
+
 ## Use
 
 ### Workspace tabs and colors

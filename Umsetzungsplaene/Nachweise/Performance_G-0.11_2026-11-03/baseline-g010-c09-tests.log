@@ -1,0 +1,35 @@
+Start testing: Nov 03 21:07 Mitteleuropäische Zeit
+----------------------------------------------------------
+4/43 Testing: gui_water_motion_render
+4/43 Test: gui_water_motion_render
+Command: "C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests/Release/segelphysik_gui_graphics_render_tests.exe" "--water-motion-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests/graphics-evidence/water-motion"
+Directory: C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests
+"gui_water_motion_render" start time: Nov 03 21:07 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+movement model not V4
+<end of output>
+Test time =  10.25 sec
+----------------------------------------------------------
+Test Failed.
+"gui_water_motion_render" end time: Nov 03 21:07 Mitteleuropäische Zeit
+"gui_water_motion_render" time elapsed: 00:00:10
+----------------------------------------------------------
+
+6/43 Testing: gui_graphics_render_100
+6/43 Test: gui_graphics_render_100
+Command: "C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests/Release/segelphysik_gui_graphics_render_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests/graphics-evidence/100"
+Directory: C:/Users/Katarina/.copilot/session-state/b28ed494-d0f6-480b-8717-7d6e136dc7e3/files/gui-performance/build-baseline-tests
+"gui_graphics_render_100" start time: Nov 03 21:07 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+420 disabling course trail must restore the exact image
+<end of output>
+Test time =  23.46 sec
+----------------------------------------------------------
+Test Failed.
+"gui_graphics_render_100" end time: Nov 03 21:07 Mitteleuropäische Zeit
+"gui_graphics_render_100" time elapsed: 00:00:23
+----------------------------------------------------------
+
+End testing: Nov 03 21:07 Mitteleuropäische Zeit

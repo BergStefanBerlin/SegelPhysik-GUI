@@ -159,6 +159,16 @@ if(BUILD_TESTING)
         VTK::RenderingOpenGL2 VTK::RenderingFreeType VTK::GUISupportQt)
     option(SEGELPHYSIK_GRAPHICS_GPU_TEST "Run graphics tests requiring an interactive OpenGL desktop" OFF)
     if(SEGELPHYSIK_GRAPHICS_GPU_TEST)
+        add_test(NAME gui_performance_regression COMMAND segelphysik_gui_graphics_render_tests
+            --performance-regression-only "${SEGELPHYSIK_MODELLE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/performance-regression")
+        set_tests_properties(gui_performance_regression PROPERTIES
+            TIMEOUT 120 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+            set_property(TEST gui_performance_regression APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+        endif()
         add_test(NAME gui_water_motion_render COMMAND segelphysik_gui_graphics_render_tests
             --water-motion-only "${SEGELPHYSIK_MODELLE_DIR}"
             "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/water-motion")

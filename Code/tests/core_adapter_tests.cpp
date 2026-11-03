@@ -1,4 +1,6 @@
 #include "core_adapter.hpp"
+#include "segelphysik/modell.hpp"
+#include "segelphysik/simulation.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -7,9 +9,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -709,6 +713,20 @@ void testDynamicForce(const QString& referenceModelPath)
     require(foundForce, "Dynamic initial state omitted actual external force.");
     for (qsizetype i = 0; i < live->progress().states; ++i) {
         const auto state = live->stateJson(i, &error);
+        require(state.value(QStringLiteral("bilanzstatus")) == QJsonValue(QStringLiteral("vollstaendig"))
+                && state.value(QStringLiteral("fehlende_beitraege")).toArray().isEmpty()
+                && state.value(QStringLiteral("erwartete_beitraege")).toArray()
+                    .contains(QJsonValue(QStringLiteral("dynamisch.fremdkraft")))
+                && !state.value(QStringLiteral("erwartete_beitraege")).toArray()
+                    .contains(QJsonValue(QStringLiteral("stationaer.fremdkraft"))),
+            "Dynamic force inventory must not suppress valid graphical force resultants.");
+        const auto sail = state.value(QStringLiteral("druckpunkte")).toObject()
+            .value(QStringLiteral("ersatz_segel")).toObject();
+        require(sail.value(QStringLiteral("status")) == QJsonValue(QStringLiteral("gueltig"))
+                && sail.value(QStringLiteral("quelle")) == QJsonValue(QStringLiteral("fremdkraft"))
+                && sail.value(QStringLiteral("position_modell_m"))
+                    == configuration.value(QStringLiteral("angriffspunkt_modell_m")),
+            "Dynamic replacement sail point must use the confirmed force application point.");
         const auto movements = state.value(QStringLiteral("bewegungen")).toArray();
         for (const auto& entry : configuration.value(QStringLiteral("stellungen")).toArray()) {
             bool found = false;
@@ -756,6 +774,86 @@ void testDynamicForce(const QString& referenceModelPath)
         "Malformed dynamic activation was silently accepted.");
     require(live->stateJson(0, &error) == frozen,
         "Later runs or invalid requests changed a historical force snapshot.");
+    auto inactiveConfiguration = configuration;
+    inactiveConfiguration.insert(QStringLiteral("aktiv"), false);
+    auto inactive = LiveSimulation::create(modelPath, validation, .01, .01, false, &error,
+        {{QStringLiteral("dynamische_fremdkraft"), inactiveConfiguration}});
+    require(inactive != nullptr, "Inactive dynamic force start rejected.");
+    inactive->run(cancellation);
+    require(inactive->progress().status == QStringLiteral("abgeschlossen")
+            && inactive->progress().states == 2,
+        "Inactive dynamic force run must finish with both snapshots.");
+    for (qsizetype i = 0; i < inactive->progress().states; ++i) {
+        const auto snapshot = inactive->stateJson(i, &error);
+        require(snapshot.value(QStringLiteral("bilanzstatus")) == QJsonValue(QStringLiteral("vollstaendig"))
+                && snapshot.value(QStringLiteral("fehlende_beitraege")).toArray().isEmpty(),
+            "Inactive dynamic foreign force must not mark weight/buoyancy incomplete.");
+        const auto sail = snapshot.value(QStringLiteral("druckpunkte")).toObject()
+            .value(QStringLiteral("ersatz_segel")).toObject();
+        require(sail.value(QStringLiteral("status")) == QJsonValue(QStringLiteral("inaktiv"))
+                && !sail.contains(QStringLiteral("position_modell_m")),
+            "Inactive dynamic force must explicitly hide its replacement sail point.");
+    }
+    auto zeroConfiguration = configuration;
+    zeroConfiguration.insert(QStringLiteral("kraft_n"), QJsonArray{0., 0., 0.});
+    auto zero = LiveSimulation::create(modelPath, validation, .01, .01, false, &error,
+        {{QStringLiteral("dynamische_fremdkraft"), zeroConfiguration}});
+    require(zero != nullptr, "Zero dynamic force start rejected.");
+    zero->run(cancellation);
+    require(zero->progress().status == QStringLiteral("abgeschlossen")
+            && zero->progress().states == 2,
+        "Zero dynamic force run must finish with both snapshots.");
+    for (qsizetype i = 0; i < zero->progress().states; ++i) {
+        const auto snapshot = zero->stateJson(i, &error);
+        const auto sail = snapshot.value(QStringLiteral("druckpunkte")).toObject()
+            .value(QStringLiteral("ersatz_segel")).toObject();
+        require(sail.value(QStringLiteral("status")) == QJsonValue(QStringLiteral("kraft_null"))
+                && !sail.contains(QStringLiteral("position_modell_m"))
+                && snapshot.value(QStringLiteral("bilanzstatus"))
+                    == QJsonValue(QStringLiteral("vollstaendig"))
+                && snapshot.value(QStringLiteral("fehlende_beitraege")).toArray().isEmpty(),
+            "Active zero force must preserve balance and omit a fabricated sail point.");
+    }
+    require(live->stateJson(0, &error) == frozen,
+        "Inactive or zero-force runs changed an active historical force snapshot.");
+}
+
+void testPreparedLiveParity(const QString& referencePath)
+{
+    const QDir models(QFileInfo(referencePath).dir().absoluteFilePath(QStringLiteral("..")));
+    for (const QString id : {QStringLiteral("420"), QStringLiteral("folkeboot")}) {
+        const auto path = models.filePath(id + QStringLiteral("/modell.json"));
+        const auto validation = validateModel(path);
+        const auto model = segelphysik::lade_modell(std::filesystem::path(path.toStdWString()));
+        auto raw = segelphysik::testantrieb_start(model, {},
+            segelphysik::TestantriebKonfiguration{200., .1}, true);
+        raw = segelphysik::hydrodynamik_start(model, raw, {});
+        QString error;
+        auto live = LiveSimulation::create(path, validation, .03, .01, false, &error, {},
+            TestDriveOptions{true, 200., .1});
+        require(live != nullptr, "Prepared live parity initialization failed.");
+        std::atomic_bool stop{false};
+        live->run(stop);
+        require(live->progress().status == QStringLiteral("abgeschlossen")
+                && live->progress().states == 4, "Prepared live parity run incomplete.");
+        QVector<QJsonObject> expected;
+        for (int step = 0; step < 4; ++step) {
+            if (step > 0) {
+                const double target = std::min(.03, static_cast<double>(step) * .01);
+                raw = segelphysik::dynamikschritt(model, raw, target - raw.zeit_s);
+                raw.zeit_s = target;
+            }
+            const auto json = segelphysik::zustand_json(model, raw,
+                step == 3 ? "abgeschlossen" : "laufend", {}, nullptr, nullptr,
+                segelphysik::ErgebnisJsonFormat::V6);
+            expected.push_back(QJsonDocument::fromJson(QByteArray::fromStdString(json)).object());
+            require(!expected.back().isEmpty() && live->stateJson(step, &error) == expected.back(),
+                "Prepared Live adapter differs from complete uncached Core JSON.");
+        }
+        for (int step : {3, 0, 2, 1, 3})
+            require(live->stateJson(step, &error) == expected[step],
+                "Historical replay reused stale prepared forces or geometry.");
+    }
 }
 
 } // namespace
@@ -769,8 +867,14 @@ int main(int argc, char* argv[])
     }
     try {
         const auto modelPath = QString::fromLocal8Bit(argv[1]);
+        if (QString::fromLocal8Bit(argv[2]) == QStringLiteral("--preparation-only")) {
+            testPreparedLiveParity(modelPath);
+            std::cout << "Complete prepared Live JSON and historical parity passed.\n";
+            return 0;
+        }
         if (QString::fromLocal8Bit(argv[2]) == QStringLiteral("--dynamic-force-only")) {
             testDynamicForce(modelPath);
+            testPreparedLiveParity(modelPath);
             std::cout << "Dynamic force adapter contract passed.\n";
             return 0;
         }

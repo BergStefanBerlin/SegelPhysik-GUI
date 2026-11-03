@@ -75,6 +75,7 @@
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
+#include <vtkRenderWindowInteractor.h>
 #include <vtkRendererCollection.h>
 #include <algorithm>
 #include <cmath>
@@ -2868,6 +2869,291 @@ int main(int argc, char** argv)
     vtkNew<RenderErrors> renderErrors;
     vtkOutputWindow::SetInstance(renderErrors);
     try {
+        if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--performance-regression-only")) {
+            QTemporaryDir settings;
+            require(settings.isValid(), "Performance settings directory");
+            QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikPerformanceTest"));
+            QCoreApplication::setApplicationName(QStringLiteral("Performance"));
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "Performance evidence directory");
+            const auto catalog = segelphysik::modellkatalog(
+                std::filesystem::path(app.arguments()[2].toStdWString()));
+            const auto* entry = catalog.eintrag("folkeboot");
+            require(entry, "Performance model exists");
+            const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
+                catalog, entry->modell_id, entry->modell_fassung));
+            const auto path = QDir(app.arguments()[2]).filePath(QStringLiteral("folkeboot/modell.json"));
+            QString error;
+            auto live = LiveSimulation::create(path, validateModel(path), .1, .01, false, &error);
+            require(live != nullptr, "Performance reference live create");
+            std::atomic_bool stop{false};
+            live->run(stop);
+            const auto state = live->stateJson(5, &error);
+            require(error.isEmpty() && !state.isEmpty(), "Performance reference state");
+            const auto forces = forcedisplay::parseForceState(state);
+            VtkSceneWidget first, second;
+            first.resize(640, 480);
+            second.resize(240, 180);
+            second.setOrthographicView(VtkSceneWidget::OrthographicView::Port);
+            first.show();
+            second.show();
+            require(first.setModel(parts, &error) && second.setModel(parts, &error), "Shared model load");
+            require(second.workCounters().meshPreparations == 0, "Base mesh preparation shared between scenes");
+            require(first.setState(state, forces, &error), "First prepared state");
+            const auto prepared = first.workCounters().meshPreparations;
+            require(second.setState(state, forces, &error), "Second prepared state");
+            require(second.workCounters().meshPreparations == 0, "Transformed meshes shared between scenes");
+            require(first.setState(state, forces, &error)
+                    && first.workCounters().meshPreparations == prepared,
+                "Unchanged matrices do not rebuild meshes");
+            const auto profileWork = second.workCounters();
+            second.setGraphicsProfile(graphics::defaults(0));
+            second.setGraphicsProfile(graphics::defaults(1));
+            require(second.workCounters().profiles == profileWork.profiles
+                    && second.workCounters().renders == profileWork.renders,
+                "Identical effective orthographic profile has no render");
+            second.setUpdatesActive(false);
+            const auto suspended = second.workCounters();
+            second.setOptions({});
+            second.setGraphicsProfile(graphics::defaults(0));
+            second.setState(state, forces, &error);
+            second.renderNow();
+            second.frameStates({state});
+            second.findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetInteractor()->Render();
+            QApplication::processEvents();
+            require(second.workCounters().states == suspended.states
+                    && second.workCounters().profiles == suspended.profiles
+                    && second.workCounters().renders == suspended.renders
+                    && second.workCounters().meshPreparations == suspended.meshPreparations,
+                "Suspended scene does no work");
+            second.setUpdatesActive(true);
+            require(second.setState(state, forces, &error), "Resume selected state");
+            require(second.statePose()->position == first.statePose()->position, "Resumed pose matches");
+            first.clearState();
+            require(first.setState(state, forces, &error)
+                    && first.workCounters().meshPreparations == prepared,
+                "Clear state restores immutable base without rebuilding meshes");
+            auto moved = state;
+            auto matrices = moved.value(QStringLiteral("elementtransformationen_modell")).toArray();
+            require(!matrices.isEmpty(), "Movement matrices available");
+            auto element = matrices[0].toObject();
+            auto matrix = element.value(QStringLiteral("matrix_zeilenweise")).toArray();
+            matrix[3] = matrix[3].toDouble() + .125;
+            element.insert(QStringLiteral("matrix_zeilenweise"), matrix);
+            matrices[0] = element;
+            moved.insert(QStringLiteral("elementtransformationen_modell"), matrices);
+            require(first.setState(moved, forces, &error), "Changed matrix state");
+            const auto changed = first.workCounters().meshPreparations;
+            require(changed > prepared, "Changed matrix invalidates prepared data");
+            require(second.setState(moved, forces, &error)
+                    && second.workCounters().meshPreparations == 0, "Changed preparation shared");
+            require(first.setState(state, forces, &error), "Historical matrix restored");
+            require(first.workCounters().meshPreparations > changed, "Historical matrix invalidates current cache");
+            const auto beforeSourceChange = first.workCounters().meshPreparations;
+            parts.front().mesh->Modified();
+            require(first.setModel(parts, &error) && second.setModel(parts, &error)
+                    && first.workCounters().meshPreparations > beforeSourceChange,
+                "Changed source MTime invalidates base preparation");
+            require(first.setState(state, forces, &error) && second.setState(state, forces, &error)
+                    && second.workCounters().meshPreparations == 0,
+                "Replaced preparation is shared without stale transformed data");
+            first.close();
+            second.close();
+
+            bool unexpectedDialog = false;
+            QTimer errors;
+            QObject::connect(&errors, &QTimer::timeout, [&] {
+                for (auto* widget : QApplication::topLevelWidgets())
+                    if (auto* message = qobject_cast<QMessageBox*>(widget)) {
+                        std::cerr << message->text().toStdString() << '\n';
+                        unexpectedDialog = true;
+                        message->reject();
+                    }
+            });
+            errors.start(50);
+            MainWindow window;
+            window.resize(1600, 1000);
+            window.setModelFolder(app.arguments()[2]);
+            window.selectInitialModel(QStringLiteral("folkeboot"));
+            window.show();
+            auto* run = window.findChild<QPushButton*>(QStringLiteral("primaryButton"));
+            auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+            waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Performance window load");
+            require(!unexpectedDialog, "Performance model loaded");
+            tabs->setCurrentIndex(2);
+            window.findChild<QCheckBox*>(QStringLiteral("stationaryForceActive"))->setChecked(true);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(150.);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceY"))->setValue(10.);
+            window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointZ"))->setValue(3.);
+            auto* views = window.findChild<QCheckBox*>(QStringLiteral("displayAttitudeViews"));
+            auto* column = window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"));
+            std::vector<VtkSceneWidget*> auxiliary;
+            for (auto* widget : column->findChildren<QWidget*>())
+                if (auto* scene = dynamic_cast<VtkSceneWidget*>(widget)) auxiliary.push_back(scene);
+            require(auxiliary.size() == 3, "Three auxiliary scenes");
+            views->setChecked(false);
+            std::vector<VtkSceneWidget::WorkCounters> before;
+            for (auto* scene : auxiliary) before.push_back(scene->workCounters());
+            confirmDynamicRun(window, .3, false);
+            run->click();
+            auto* cancel = window.findChild<QPushButton*>(QStringLiteral("stopSimulation"));
+            require(cancel, "Performance stop control");
+            waitUntil([&] { return !cancel->isEnabled() || unexpectedDialog; }, "Performance live completion");
+            require(!unexpectedDialog, "Performance live completed");
+            for (std::size_t i = 0; i < auxiliary.size(); ++i) {
+                const auto& after = auxiliary[i]->workCounters();
+                require(after.states == before[i].states && after.profiles == before[i].profiles
+                        && after.renders == before[i].renders
+                        && after.meshPreparations == before[i].meshPreparations,
+                    "Real live ticks leave switched-off scenes untouched");
+            }
+            auto* slider = window.findChild<QSlider*>();
+            require(slider, "Performance history control");
+            auto* free = dynamic_cast<VtkSceneWidget*>(
+                window.findChild<QWidget*>(QStringLiteral("simulationScene")));
+            const auto priorMotionInputs = free->workCounters().motionInputs;
+            views->setChecked(true);
+            const auto coloredArrows = [](VtkSceneWidget* scene, const QColor& color) {
+                int count = 0;
+                auto* layers = scene->findChild<QVTKOpenGLNativeWidget*>()->renderWindow()->GetRenderers();
+                layers->InitTraversal();
+                while (auto* layer = layers->GetNextItem()) {
+                    if (layer->GetLayer() != 1) continue;
+                    auto* actors = layer->GetActors();
+                    actors->InitTraversal();
+                    while (auto* actor = actors->GetNextActor()) {
+                        const auto* rgb = actor->GetProperty()->GetColor();
+                        auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+                        if (actor->GetVisibility() && mapper && mapper->GetInput()
+                            && mapper->GetInput()->GetNumberOfLines() > 0
+                            && std::abs(rgb[0] - color.redF()) < .001
+                            && std::abs(rgb[1] - color.greenF()) < .001
+                            && std::abs(rgb[2] - color.blueF()) < .001)
+                            ++count;
+                    }
+                }
+                return count;
+            };
+            const auto defaults = forcedisplay::staticForceDefaults();
+            for (const auto& style : defaults)
+                window.findChild<QCheckBox*>(QStringLiteral("staticForce_") + style.key)->setChecked(false);
+            for (const auto type : {forcedisplay::StaticForce::Weight, forcedisplay::StaticForce::Buoyancy,
+                     forcedisplay::StaticForce::Sail}) {
+                const auto& style = defaults[static_cast<std::size_t>(type)];
+                auto* choice = window.findChild<QCheckBox*>(QStringLiteral("staticForce_") + style.key);
+                require(choice->isEnabled(), "Weight, buoyancy and external force must be available");
+                choice->setChecked(true);
+                free->renderNow();
+                if (coloredArrows(free, QColor(style.color)) == 0) {
+                    std::cerr << "Missing arrow: " << style.key.toStdString()
+                              << ", selected=" << free->options().staticStyles[static_cast<std::size_t>(type)].enabled
+                              << ", active=" << free->updatesActive()
+                              << ", tooltip=" << choice->toolTip().toStdString() << '\n';
+                }
+                require(coloredArrows(free, QColor(style.color)) > 0,
+                    "Selected weight/buoyancy/external force must produce an actual free-view arrow");
+                const auto enabledImage = digest(free->captureImage());
+                choice->setChecked(false);
+                free->renderNow();
+                require(coloredArrows(free, QColor(style.color)) == 0,
+                    "Deselected force must remove its actual free-view arrow");
+                require(digest(free->captureImage()) != enabledImage,
+                    "Force selection must change the rendered free-view image");
+            }
+            views->setChecked(false);
+            require(free->workCounters().motionInputs == priorMotionInputs,
+                "Changing views at the same snapshot must not replay the complete motion history");
+            for (std::size_t i = 0; i < auxiliary.size(); ++i)
+                before[i] = auxiliary[i]->workCounters();
+            slider->setValue(0);
+            views->setChecked(true);
+            for (std::size_t i = 0; i < auxiliary.size(); ++i)
+                require(auxiliary[i]->workCounters().states == before[i].states + 1
+                        && auxiliary[i]->statePose()->position == free->statePose()->position,
+                    "Resume only selected historical snapshot once");
+            auto* viewport = auxiliary.front()->findChild<QVTKOpenGLNativeWidget*>();
+            const QPointF local(viewport->rect().center());
+            QMouseEvent doubleClick(QEvent::MouseButtonDblClick, local,
+                QPointF(viewport->mapToGlobal(local.toPoint())),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &doubleClick);
+            QApplication::processEvents();
+            views->setChecked(false);
+            require(!free->updatesActive() && auxiliary.front()->updatesActive(),
+                "Swapped large view stays active when column is off");
+            slider->setValue(slider->maximum());
+            require(!unexpectedDialog, "Swapped active view keeps state and navigation valid");
+            free->resetMotionHistory();
+            const auto freeBeforeResume = free->workCounters().states;
+            views->setChecked(true);
+            require(free->workCounters().states == freeBeforeResume + 1,
+                "Empty free-view history resumes without duplicate state replay");
+            const auto selectView = [](VtkSceneWidget* scene) {
+                auto* target = scene->findChild<QVTKOpenGLNativeWidget*>();
+                const QPointF point(target->rect().center());
+                const QPointF global(target->mapToGlobal(point.toPoint()));
+                for (auto type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease,
+                         QEvent::MouseButtonDblClick, QEvent::MouseButtonRelease}) {
+                    QMouseEvent mouse(type, point, global, Qt::LeftButton,
+                        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                        Qt::NoModifier);
+                    QApplication::sendEvent(target, &mouse);
+                }
+                QApplication::processEvents();
+            };
+            auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("sceneStack"));
+            auto* weight = window.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"));
+            const auto historyBeforeSwaps = free->workCounters().motionInputs;
+            selectView(free);
+            for (int repeat = 0; repeat < 3; ++repeat)
+                for (auto* view : auxiliary) {
+                    selectView(view);
+                    require(stack->currentWidget() == view, "Real double click enlarges selected schematic view");
+                    views->setChecked(false);
+                    weight->setChecked(false);
+                    weight->setChecked(true);
+                    require(view->options().staticStyles[static_cast<std::size_t>(
+                                forcedisplay::StaticForce::Weight)].enabled,
+                        "Visible schematic view follows force selection while free view is suspended");
+                    views->setChecked(true);
+                    selectView(free);
+                    require(stack->currentWidget() == free && free->updatesActive()
+                            && free->statePose()->position == view->statePose()->position,
+                        "Real double click restores free view with selected snapshot");
+                    require(coloredArrows(free, QColor(defaults[static_cast<std::size_t>(
+                                forcedisplay::StaticForce::Weight)].color)) > 0,
+                        "Free-view force arrow returns after schematic swap and hidden selection change");
+                }
+            require(free->workCounters().motionInputs == historyBeforeSwaps,
+                "Repeated actual free/schematic swaps must not replay old motion inputs");
+            for (std::size_t i = 0; i < defaults.size(); ++i)
+                window.findChild<QCheckBox*>(QStringLiteral("staticForce_") + defaults[i].key)
+                    ->setChecked(defaults[i].enabled);
+            const auto image = window.grab().toImage();
+            require(image.save(evidence.filePath(QStringLiteral("performance-window.bmp")), "BMP"),
+                "Performance image evidence");
+            views->setChecked(false);
+            window.selectInitialModel(QStringLiteral("420"));
+            waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Model change while views off");
+            require(!unexpectedDialog, "Model replacement succeeded");
+            views->setChecked(true);
+            require(!free->statePose().has_value(), "Model replacement invalidates historical geometry");
+            for (auto* view : auxiliary)
+                require(!view->statePose().has_value(), "No stale auxiliary state after model replacement");
+            window.close();
+            QFile report(evidence.filePath(QStringLiteral("report.json")));
+            require(report.open(QIODevice::WriteOnly), "Performance report");
+            report.write(QJsonDocument(QJsonObject{{"sharedMeshes", true}, {"invalidatedMatrices", true},
+                {"orthographicProfileIdempotent", true}, {"switchedOffSceneWork", 0},
+                {"liveAndHistoricalResume", true}, {"swappedView", true},
+                {"sourceMTimeInvalidation", true}, {"modelReplacement", true},
+                {"interactorSuspended", true}, {"forceArrowActorAndPixelSelection", true},
+                {"realFreeSchematicSwaps", 18}, {"sameSnapshotHistoryReplayInputs", 0}}).toJson());
+            require(renderErrors->count == 0, "Performance VTK errors");
+            return 0;
+        }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--performance-audit-only")) {
             QDir evidence(app.arguments()[3]);
             require(evidence.mkpath(QStringLiteral(".")), "Performance evidence directory required.");

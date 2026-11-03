@@ -45,6 +45,8 @@ SimulationResult runSimulation(const QString& modelPath,
 // Dynamischer Lauf ohne Vorausrechnung: run() rechnet im Worker-Thread
 // Schritt für Schritt und legt nur Rohzustände ab. Die GUI liest jederzeit
 // den Fortschritt und erzeugt Ergebnis-JSON nur für angezeigte Zustände.
+// Worker und Anzeige besitzen getrennte langlebige Core-Aufbereitungen;
+// historische JSON-Anfragen blockieren keinen Integrationsschritt.
 class LiveSimulation {
 public:
     struct Progress {

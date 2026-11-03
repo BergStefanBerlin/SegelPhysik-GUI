@@ -66,6 +66,7 @@ private:
     void applyWorkspaceTheme(int index);
     void updateWorkspace(int index);
     void swapStaticView(VtkSceneWidget* view);
+    void updateSceneActivity(bool synchronize = true);
     void chooseModelFolder();
     void reloadCatalog();
     void applyCatalog(const CatalogSnapshot& snapshot);
@@ -92,12 +93,12 @@ private:
     void updateMovementControls(const QJsonObject& state);
     void showError(const QString& title, const QString& message);
 
-    void applyDisplayOptions();
+    void applyDisplayOptions(bool restoreHistory = true);
     void updateStaticForceMenu();
     void setupGraphics();
     void closeGraphics();
     void setupMaterialPreview();
-    void applyGraphicsProfile();
+    void applyGraphicsProfile(bool restoreHistory = true);
     void loadSettings();
     void saveDisplaySettings();
     void restoreModeDisplaySettings();

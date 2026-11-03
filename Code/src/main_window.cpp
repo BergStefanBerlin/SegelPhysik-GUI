@@ -764,6 +764,7 @@ void MainWindow::updateWorkspace(int index)
     modeCombo_->setVisible(false);
     updateModeControls();
     graphicsButton_->setVisible(simulation);
+    updateSceneActivity(false);
     applyDisplayOptions();
 }
 
@@ -781,7 +782,24 @@ void MainWindow::swapStaticView(VtkSceneWidget* view)
         sceneStack_->setCurrentWidget(view);
         previous->show();
         view->show();
+        updateSceneActivity();
         return;
+    }
+}
+
+void MainWindow::updateSceneActivity(bool synchronize)
+{
+    if (!graphicsReady_) return;
+    auto update = [this](VtkSceneWidget* view) {
+        const bool active = workspaceIndex_ <= 0 ? view == scene_
+            : view == largeScene_ || attitudeViewsCheck_->isChecked();
+        view->setUpdatesActive(active);
+    };
+    update(scene_);
+    for (auto* view : staticScenes_) update(view);
+    if (synchronize) {
+        applyDisplayOptions(false);
+        if (displayedIndex_ >= 0) displayState(displayedIndex_, true);
     }
 }
 
@@ -907,6 +925,7 @@ QWidget* MainWindow::buildDisplayPanel()
     layout->addWidget(attitudeViewsCheck_);
     connect(attitudeViewsCheck_, &QCheckBox::toggled, this, [this](bool visible) {
         staticViewsColumn_->setVisible(workspaceIndex_ > 0 && visible);
+        updateSceneActivity();
         saveDisplaySettings();
     });
     auto scaleCombo = [] {
@@ -1449,7 +1468,7 @@ void MainWindow::setupMaterialPreview()
     applyGraphicsProfile();
 }
 
-void MainWindow::applyGraphicsProfile()
+void MainWindow::applyGraphicsProfile(bool restoreHistory)
 {
     auto profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
         : graphics_.profiles[0];
@@ -1463,7 +1482,8 @@ void MainWindow::applyGraphicsProfile()
     scene_->setGraphicsProfile(profile);
     if (workspaceIndex_ > 0)
         for (auto* view : staticScenes_) view->setGraphicsProfile(profile);
-    if (scene_->motionStateCount() == 0 && displayedIndex_ >= 0 && displayedIndex_ < stateCount()) {
+    if (restoreHistory && scene_->updatesActive() && scene_->motionStateCount() == 0
+        && displayedIndex_ >= 0 && displayedIndex_ < stateCount()) {
         displayState(displayedIndex_, true);
     }
     const QString prefix = reduced
@@ -1472,13 +1492,13 @@ void MainWindow::applyGraphicsProfile()
     graphicsStatus_->setText(prefix + scene_->graphicsStatus());
 }
 
-void MainWindow::applyDisplayOptions()
+void MainWindow::applyDisplayOptions(bool restoreHistory)
 {
     if (!graphicsReady_) return;
     graphicsButton_->setToolTip(QStringLiteral("Technikdarstellung für Frei. Seite, Heck und Draufsicht bleiben fest schematisch. Änderungen werden sofort gespeichert."));
     const auto& profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
         : graphics_.profiles[0];
-    applyGraphicsProfile();
+    applyGraphicsProfile(restoreHistory);
     VtkSceneWidget::DisplayOptions options;
     options.forces = forcesCheck_->isChecked();
     auto selection = [](const std::array<QCheckBox*, 5>& checks) {
@@ -1527,7 +1547,7 @@ void MainWindow::applyDisplayOptions()
 void MainWindow::updateStaticForceMenu()
 {
     const auto sums = forcedisplay::staticResultants(currentForces_,
-        scene_->statePose().value_or(forcedisplay::Pose{}), hydrodynamicRoles_);
+        largeScene_->statePose().value_or(forcedisplay::Pose{}), hydrodynamicRoles_);
     for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
         const auto& style = staticForceStyles_[i];
         auto* check = staticForceChecks_[i];
@@ -2462,9 +2482,9 @@ void MainWindow::displayState(qsizetype index, bool force)
     } catch (const std::exception& exception) {
         error = QString::fromUtf8(exception.what());
     }
-    if (error.isEmpty()) {
+    if (error.isEmpty() && scene_->updatesActive()) {
         QString motionError;
-        if (scene_->motionStateCount() > index) scene_->resetMotionHistory();
+        if (scene_->motionStateCount() > index + 1) scene_->resetMotionHistory();
         for (auto begin = scene_->motionStateCount(); begin <= index && motionError.isEmpty();) {
             const auto end = std::min(index + 1, begin + 256);
             QVector<QJsonObject> motion;
@@ -2480,10 +2500,22 @@ void MainWindow::displayState(qsizetype index, bool force)
         }
         if (!motionError.isEmpty()) scene_->invalidateMotionHistory(index + 1, motionError);
     }
-    bool rendered = error.isEmpty() && scene_->setState(state, forces, &error);
+    bool rendered = error.isEmpty()
+        && (!scene_->updatesActive() || scene_->setState(state, forces, &error));
     if (rendered && workspaceIndex_ > 0)
         for (auto* view : staticScenes_)
-            if (!view->setState(state, forces, &error)) { rendered = false; break; }
+            if (view->updatesActive() && !view->setState(state, forces, &error)) {
+                rendered = false;
+                break;
+            }
+    if (rendered && !scene_->updatesActive() && navigationCheck_->isChecked()) {
+        try {
+            scene_->updateDockedNavigation(state, forces);
+        } catch (const std::exception& exception) {
+            rendered = false;
+            error = QString::fromUtf8(exception.what());
+        }
+    }
     if (!rendered) {
         scene_->clearState();
         for (auto* view : staticScenes_) view->clearState();
@@ -2649,7 +2681,7 @@ void MainWindow::updateStaticValues()
         auto* row = staticValues_->topLevelItem(i);
         rows.insert(row->data(0, Qt::UserRole).toString(), row);
     }
-    const auto pose = scene_->statePose();
+    const auto pose = largeScene_->statePose();
     forcedisplay::Pose inverse;
     if (pose) {
         inverse.quaternionXyzw = pose->quaternionXyzw;

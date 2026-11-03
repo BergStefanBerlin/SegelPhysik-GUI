@@ -1,0 +1,26 @@
+{
+  "before-optimization.json": "98e3778a59aa1d58d90d262fb0b5460d16bf1965b9a8375fb5147394c6526821",
+  "after-optimization.json": "38b0ac4adeff8d0262037b126a9f88c0f1f5d51c0bd75107c4cba43e329717de",
+  "snapshots\\420.json": "6e7c885847d95bc6d244402bc5768b5a2cb9ee5fe1301c96205d2635f853f55b",
+  "snapshots\\folkeboot.json": "e51331ad772191151adffd5f412b551e5b962d989aabffdd646ecc5f7db00226",
+  "build-before-optimization\\Release\\gui_audit.exe": "b42e81e7e05fcec6b2680f73a618d20ec184dfafc5cd08493e18c3fe784b0d47",
+  "build-after-optimization\\Release\\gui_audit.exe": "aea805202ccb036d27c2150d0c3f1e0239455f89d7add9b26db77cdcc345ad4f",
+  "gui_base_commit": "6f2f0b782fb4d52277c62201ab3f22b7fc0d9780",
+  "core_base_commit": "3fa197135a0858ee525d3e4bc8273242e0ee97c2",
+  "working_tree": "uncommitted performance implementation; base commit alone is not the measured source",
+  "gui_sources_sha256": {
+    "Code/src/core_adapter.cpp": "1f5775b9b7df24c46a401e89766abbe6db2f96825028f9bf5a4a3fc22089bd6a",
+    "Code/src/core_adapter.hpp": "dc7806fefbfdb2e13812d03dbd2b7ce1cd298bdaf99551a9f65a3be335936697",
+    "Code/src/display_geometry.hpp": "1f818c2f04b4b531ffec62654772cfddc6bb62190967a7ccb27a6af0f5a47d5e",
+    "Code/src/main_window.cpp": "e91e4cadead5393f71eeb8e22c711484e3ce91003b57b41148506f1832917dc6",
+    "Code/src/main_window.hpp": "02dc6a1ce1d74ffb79355c29ba5c66d7d381e9bf6f645e4ae0bc0726de5304ef",
+    "Code/src/vtk_scene.cpp": "b38275575ff4d7f0cc2d226d81107b28f8d96fe5eee561559200ae1d5ed4a8d9",
+    "Code/src/vtk_scene.hpp": "21214dbddd81a87ce7d2c174342279dbccebabc63c22feabee0016e43c060e31",
+    "Code/tests/core_adapter_tests.cpp": "39be50dc38795041f5ca0b308103979c17b2d683589392f3e916a2e4966b376a",
+    "Code/tests/graphics_render_tests.cpp": "b427efeec863b19cf3f2d809a8b08974959207065d00969c775018036cf80f88",
+    "CMakeLists.txt": "c3b13e4be208d6edc66559174fa89b211d38cb9a57bb8f4d380faefece8e4950"
+  },
+  "baseline_core_library_sha256": "3d983d6ca0217ceafa2dc09e9659415cd20cffb2f7daa903084070676a27a448",
+  "optimized_core_library_sha256": "983c1ee0a04ac9b69254b722039fb1dcbd80dd04e7a7b1fafd37ffd5e6db7e04",
+  "production_gui_sha256": "b0e2c1989b26b5aa1a210c0aac06fb7bac93686e5f14b31266ae905348590ebd"
+}

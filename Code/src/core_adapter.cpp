@@ -1,5 +1,6 @@
 #include "core_adapter.hpp"
 
+#include "segelphysik/aufbereitung.hpp"
 #include "segelphysik/modell.hpp"
 #include "segelphysik/simulation.hpp"
 
@@ -367,8 +368,8 @@ SimulationResult runSimulation(const QString& modelPath,
 }
 
 struct LiveSimulation::Impl {
-    segelphysik::Modell workerModel;
-    segelphysik::Modell displayModel;
+    std::unique_ptr<segelphysik::Modellaufbereitung> workerPreparation;
+    std::unique_ptr<segelphysik::Modellaufbereitung> displayPreparation;
     QString modelId;
     QString fingerprint;
     double durationSeconds = 0.0;
@@ -465,10 +466,13 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
             return fail(QStringLiteral("Bewegungs-Ereigniskennung erschoepft."));
         live->impl_->nextMovementEvent =
             live->impl_->start.letzte_bewegungsereigniskennung + 1;
-        live->impl_->workerModel = segelphysik::lade_modell(nativePath(modelPath));
-        live->impl_->displayModel = live->impl_->workerModel;
+        live->impl_->workerPreparation = std::make_unique<segelphysik::Modellaufbereitung>(
+            segelphysik::lade_modell(nativePath(modelPath)));
+        const auto& model = live->impl_->workerPreparation->modell();
+        live->impl_->displayPreparation =
+            std::make_unique<segelphysik::Modellaufbereitung>(model);
         if (testDrive) {
-            live->impl_->start = segelphysik::testantrieb_start(live->impl_->workerModel,
+            live->impl_->start = segelphysik::testantrieb_start(model,
                 live->impl_->start,
                 segelphysik::TestantriebKonfiguration{testDrive->forceN, testDrive->speedLimit},
                 testDrive->active);
@@ -479,23 +483,23 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
         }
         if (force)
             live->impl_->start = segelphysik::dynamische_fremdkraft_start(
-                live->impl_->workerModel, live->impl_->start, *force);
+                model, live->impl_->start, *force);
         const bool hasHydrodynamicHull = std::any_of(
-            live->impl_->workerModel.elemente.cbegin(),
-            live->impl_->workerModel.elemente.cend(),
+            model.elemente.cbegin(),
+            model.elemente.cend(),
             [](const segelphysik::Element& element) {
                 return element.hydrodynamik_rolle == segelphysik::HydrodynamikRolle::rumpf;
             });
         if (hasHydrodynamicHull) {
             live->impl_->start = segelphysik::hydrodynamik_start(
-                live->impl_->workerModel, live->impl_->start,
+                model, live->impl_->start,
                 segelphysik::HydrodynamikKonfiguration{});
         }
     } catch (const std::exception& exception) {
         return fail(QString::fromUtf8(exception.what()));
     }
-    if (QString::fromStdString(live->impl_->workerModel.id) != validation.modelId
-        || QString::fromStdString(live->impl_->workerModel.fassung)
+    if (QString::fromStdString(live->impl_->workerPreparation->modell().id) != validation.modelId
+        || QString::fromStdString(live->impl_->workerPreparation->modell().fassung)
             != validation.fingerprint) {
         return fail(QStringLiteral(
             "Die Modelldatei wurde seit der Core-Prüfung verändert."));
@@ -555,7 +559,7 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
                 events.swap(d.pendingTestEvents);
                 movementEvents.swap(d.pendingMovementEvents);
             }
-            auto next = segelphysik::dynamikschritt(d.workerModel, state,
+            auto next = d.workerPreparation->schritt(state,
                 target - state.zeit_s, events, movementEvents);
             if (!events.empty()) {
                 const std::lock_guard<std::mutex> lock(d.mutex);
@@ -630,9 +634,10 @@ bool LiveSimulation::setMovementValue(const QString& elementId, double value, QS
         return false;
     }
     const auto id = elementId.toStdString();
-    const auto element = std::find_if(d.workerModel.elemente.begin(), d.workerModel.elemente.end(),
+    const auto& elements = d.workerPreparation->modell().elemente;
+    const auto element = std::find_if(elements.begin(), elements.end(),
         [&](const segelphysik::Element& candidate) { return candidate.id == id; });
-    if (element == d.workerModel.elemente.end() || !element->bewegung) {
+    if (element == elements.end() || !element->bewegung) {
         if (error) *error = QStringLiteral("Element besitzt keine gueltige Bewegungsdefinition.");
         return false;
     }
@@ -674,8 +679,8 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
     }
 
     try {
-        return parseObject(QByteArray::fromStdString(segelphysik::zustand_json(
-                               d.displayModel, state, status, diagnostic, nullptr, nullptr,
+        return parseObject(QByteArray::fromStdString(d.displayPreparation->json(
+                               state, status, diagnostic, nullptr, nullptr,
                                segelphysik::ErgebnisJsonFormat::V6)),
             QStringLiteral("Core-Zustand"));
     } catch (const std::exception& exception) {
@@ -707,7 +712,8 @@ QVector<QJsonObject> LiveSimulation::motionStates(qsizetype begin, qsizetype end
             {QStringLiteral("position_m"), array(s.pose.position_m())},
             {QStringLiteral("orientierung_xyzw"), array(s.pose.orientierung_xyzw())},
             {QStringLiteral("geschwindigkeit_welt_m_s"), array(s.geschwindigkeit_welt_m_s)},
-            {QStringLiteral("moment_bezug_modell_m"), array(d.displayModel.schwerpunkt_m)}});
+            {QStringLiteral("moment_bezug_modell_m"),
+                array(d.displayPreparation->modell().schwerpunkt_m)}});
     }
     return result;
 }

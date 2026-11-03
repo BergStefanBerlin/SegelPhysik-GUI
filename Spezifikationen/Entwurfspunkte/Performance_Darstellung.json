@@ -1,0 +1,14 @@
+{
+  "status": "finalisiert_umsetzung_freigegeben_2026-11-03_20-45",
+  "stand": "2026-11-03",
+  "spezifikation": "../Spezifikation_Performance_Darstellung.md",
+  "arbeitszielversion": "G-0.11",
+  "herkunft": "Nutzerabgrenzung 20:37 Uhr; Auftrag zu getrennten Spezifikationen und Performanceplaenen 20:40 Uhr.",
+  "punkte": [
+    {"id": "IDEE-G-00085", "status": "angenommen", "anforderungen": ["A-G-00130"], "abschnitt": "2", "text": "Abgeschaltete Zusatzansichten vollstaendig von laufender Aufbereitungs-/Renderarbeit ausnehmen und korrekt reaktivieren."},
+    {"id": "IDEE-G-00086", "status": "angenommen", "anforderungen": ["A-G-00131"], "abschnitt": "3", "text": "Identische effektive Grafikprofile ohne erneutes Styling/Render behandeln und redundante Renderanforderungen buendeln."},
+    {"id": "IDEE-G-00087", "status": "angenommen", "anforderungen": ["A-G-00132"], "abschnitt": "4", "text": "Gemeinsame unveraenderliche Meshvorbereitung wiederverwenden, ansichtsspezifische Daten korrekt getrennt halten."},
+    {"id": "IDEE-G-00088", "status": "angenommen", "anforderungen": ["A-G-00133"], "abschnitt": "5", "text": "Null-Aufruf-Kriterien, visuelle/numerische Regression und Performance EIN/AUS fuer Statik/Dynamik nachweisen."}
+  ],
+  "offen": []
+}

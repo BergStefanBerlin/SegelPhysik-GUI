@@ -78,6 +78,18 @@ public:
     ~VtkSceneWidget() override;
 
     bool setModel(const QVector<DisplayPart>& parts, QString* error);
+    void setUpdatesActive(bool active);
+    bool updatesActive() const { return updatesActive_; }
+    void updateDockedNavigation(const QJsonObject& state,
+        const forcedisplay::ForceState& forces);
+    struct WorkCounters {
+        std::size_t states = 0;
+        std::size_t motionInputs = 0;
+        std::size_t meshPreparations = 0;
+        std::size_t profiles = 0;
+        std::size_t renders = 0;
+    };
+    const WorkCounters& workCounters() const { return workCounters_; }
     // Gruppenzuordnung aller Elemente; ein Teil gilt als geflutet, sobald ein
     // Element seiner Gruppe vollgelaufen ist.
     void setElementGroups(const QHash<QString, QString>& groups) { elementGroups_ = groups; }
@@ -162,10 +174,9 @@ protected:
 private:
     struct BodyActor {
         vtkSmartPointer<vtkPolyData> mesh;
-        vtkSmartPointer<vtkPolyData> originalMesh;
         vtkSmartPointer<vtkPolyData> materialMesh;
-        vtkSmartPointer<vtkPolyData> originalMaterialMesh;
-        bool coreTransformApplied = false;
+        std::shared_ptr<DisplayMeshCache> preparation;
+        std::shared_ptr<const DisplayMeshData> prepared;
         vtkSmartPointer<vtkActor> body;
         vtkSmartPointer<vtkTriangleFilter> triangles;
         vtkSmartPointer<vtkPolyDataNormals> normals;
@@ -206,6 +217,9 @@ private:
     QPointF toLogicalScreen(const forcedisplay::Vec3& point) const;
     void pickAt(const QPoint& position);
     void requestRender();
+    void renderScene();
+    std::shared_ptr<const DisplayMeshData> prepareMesh(
+        const std::shared_ptr<DisplayMeshCache>& cache, const QJsonArray& matrix);
     void applyBodyStyle();
     void applyGraphicsProfile();
     void updateEnvironmentTexture();
@@ -226,6 +240,8 @@ private:
     void layoutViewControls();
 
     QVTKOpenGLNativeWidget* vtkWidget_ = nullptr;
+    bool updatesActive_ = true;
+    WorkCounters workCounters_;
     bool inspectionMode_ = false;
     OrthographicView orthographicView_ = OrthographicView::Free;
     QLabel* viewName_ = nullptr;

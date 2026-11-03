@@ -1,0 +1,11 @@
+{
+    "interactorSuspended": true,
+    "invalidatedMatrices": true,
+    "liveAndHistoricalResume": true,
+    "modelReplacement": true,
+    "orthographicProfileIdempotent": true,
+    "sharedMeshes": true,
+    "sourceMTimeInvalidation": true,
+    "swappedView": true,
+    "switchedOffSceneWork": 0
+}
