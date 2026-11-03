@@ -958,10 +958,12 @@ Auf Nutzerauftrag vom 03.11.2026, 18:28 Uhr zuerst die fachliche
 Uebernahme und danach Performance untersucht. Verbindliche fachliche
 Pruefmatrix fuer den neuen Core-Entwurf:
 [Abschnitt 6.1 der Core-Spezifikation](../../CORE/Spezifikationen/Spezifikation_Dynamische_Fremdkraft.md#61-vollstaendige-fachliche-uebernahme-aus-der-statik).
-Vollstaendige Uebernahme ist derzeit **nicht nachgewiesen**:
-allgemeine dynamische Fremdkraft fehlt; bewegte physische Geometrie im
-Kraftpfad und Grundmodell-Schwerpunkt/-Traegheit im Integrator sind noch
-nicht konsistent nachgewiesen. Bereits vorhandene lokale
+Vollstaendige Uebernahme ist derzeit **nicht nachgewiesen**.
+Historischer Vorbefund vor G-0.10/C-0.9: allgemeine dynamische Fremdkraft
+fehlte und bewegte Geometrie sowie Integrator-Schwerpunkt/-Traegheit
+waren inkonsistent. Diese Mindestluecken sind inzwischen implementiert
+und gezielt getestet; die weitergehende Matrix bleibt offen.
+Bereits vorhandene lokale
 Rotationsanstroemung, Kirchhoff-/Kreiselterme und V6-Ausgabe sind keine
 automatische Abnahme des neuen Gesamtrechenfalls.
 GUI uebernimmt alle Kraft-/Momentenkomponenten, korrekte Frames,
@@ -970,7 +972,11 @@ ehrliche Datenlueckendiagnosen auch dynamisch. Keine stationaere
 Konvergenzforderung Summe F/M=0 auf eine beschleunigte Bahn anwenden.
 Stationaere numerische Suchheuristiken nicht in Zeitschritte kopieren.
 
-**Messung des aktuellen Release-Builds:** Reproduzierbarer Testmodus
+**Historische Voruntersuchung vor Abschluss der Mindestintegration:**
+Die folgenden Zahlen bleiben als damaliger Befund erhalten, nicht als
+aktuelle Versionsvergleichsmessung. Die autorisierte erneute Analyse
+steht in Abschnitt 13.7 und im G-0.10-Plan ab Abschnitt 13.6.
+Reproduzierbarer Testmodus
 `--performance-audit-only <Modellordner> <Nachweisordner>` im vorhandenen
 Grafiktestprogramm. Je Modell drei Laeufe, 0,5 s Simulationszeit,
 dt=0,01 s, 50 Schritte, Testantrieb 200 N, keine Echtzeitbremse.
@@ -995,10 +1001,11 @@ acht Snapshots zusaetzlich etwa 111 ms/8,8 ms. Tabellenaktualisierung,
 GUI-Livekonkurrenz, abweichende Fenstergroessen/DPI und benutzerspezifische
 Profile sind nicht in diesen Einzelzeiten enthalten.
 
-Codebefunde zur Ursache:
+Historische Codebefunde vor Abschluss der Mindestintegration
+(nicht als aktuelle Behauptung unveraenderter Core-Quellen verstehen):
 
 - Die juengste Layoutarbeit hat Core und GUI-Core-Adapter nicht geaendert
-  (Git-Diffs gegen aktuellen HEAD leer). Neue GUI-Arbeit vervielfacht
+  (Git-Diffs gegen den damaligen HEAD leer). Neue GUI-Arbeit vervielfacht
   dagegen Zustandstransformation und synchrones Rendering.
 - `displayState` aktualisiert jetzt vier Szenen. Jede `setState`-
   Ausfuehrung rendert synchron und verarbeitet Geometrie/Wasserlinie.
@@ -1043,3 +1050,63 @@ Keine vorweggenommene Performancezusage und keine Optimierung durch
 groessere Zeitschritte, ausgelassene Core-Schritte oder reduzierte
 Physik. Das genaue Vorgehen und die historischen Kandidaten stehen
 im einzigen GUI-Plan, Abschnitt 13.4, sowie im Core-Gegenplan.
+
+### 13.7 Freigegebene vorrangige Performance-Ursachenanalyse
+
+Nutzerauftrag 03.11.2026, 19:21 Uhr und ausdrueckliches Go 19:23 Uhr:
+**Analyse jetzt vor weiterer Umsetzung und Optimierung.**
+Dies ersetzt nur fuer die Untersuchung das fruehere Eintrittsgate
+persoenlicher GUI-Abnahme/vollstaendiger Physikmatrix. Es nimmt keine
+fachliche Abnahme vorweg und autorisiert keine Optimierung.
+A-G-00129 und U-G-000139 werden fuer diese Analyse praezisiert;
+keine neue Anforderung fuer denselben fachlichen Gegenstand anlegen.
+
+Alle laufzeitrelevanten Aenderungen in der untersuchten Versionsspanne
+systematisch inventarisieren: GUI G-0.9 gegen G-0.10, aeltere GUI-Staende
+bis etwa 27.10.2026 fuer Ursprungszuordnung; Core bevorzugt C-0.7,
+Zwischenstand C-0.8 und C-0.9. Vollstaendigkeit bedeutet nachvollziehbare
+Abdeckung der Diffs, keine unbelegbare Zusage, jeden Hardwareeffekt oder
+jede denkbare Modelleingabe gemessen zu haben.
+
+Statische und dynamische Pfade getrennt kennzeichnen. Identische
+allgemeine Kraft-, Geometrie-, Modellbewegungs-, Massen- und
+Traegheitsgrundlagen verlangen; dynamische Beschleunigung, lokale
+Rotationsanstroemung, Zusatztraegheit und stationaere Solversuche nicht
+verwechseln. Keine Gleichgewichtsbedingung auf beschleunigte Dynamik
+uebertragen. Offene Physiknachweise aus 13.5 bleiben sichtbar.
+
+GUI bei ansonsten identischem Modell, Zustand, Kamera, Profil,
+Fenstergroesse und DPI mit allen fuenf einfachen Darstellungen
+(Gewicht, Auftrieb, Ersatz-SDP, LDP, Richtungspfeil) gemaess Default
+und mit allen fuenf ausgeschaltet untersuchen. Vollstaendige
+Kraftdarstellungen bleiben in beiden Faellen ausgeschaltet.
+Abschalten betrifft ausschliesslich die Darstellung, nicht den Core.
+Nicht bloss Checkboxkosten messen, sondern Zustandsdarstellung,
+Geometrie, Tabelle und Rendering; auch vier/eine/verborgene Ansichten.
+
+Verbindliches Ausgabeformat im einzigen GUI-Plan:
+Tabelle mit Aenderung/Befund, GUI/Core, Statisch/Dynamisch,
+Quelle/Version, gemessenen Mehrkosten oder explizit fehlender Messung,
+potenziellem Einsparpotenzial und physikalischem Risiko.
+Messung, Codebefund und Hypothese strikt unterscheiden.
+Einsparpotenziale ohne Optimierungsversuch qualitativ bewerten;
+keine additive Gesamtersparnis aus ueberlappenden Teilzeiten ableiten.
+Auch statische Optimierungsmoeglichkeiten auffuehren.
+
+Ein Warmlauf plus fuenf Wiederholungen, Rohwerte/Median/Min/Max,
+eingefrorene identische Snapshots und Modellidentitaet dokumentieren.
+Historische Rendervergleiche mit heutigem Core sind explizite
+Komponentenvergleiche, keine historischen Gesamt-EXE-Benchmarks.
+Modellkomplexitaet, Ableitungen, Cache-Invalidierung, Wiederholungen,
+JSON/Parser, Tabellen, Render-/Profilrunden und Livekonkurrenz trennen.
+Produktionscode und Standard-EXE nicht aendern, keine Git-Aktionen.
+Isolierte Messprogramme ausserhalb des Repositorys sind Nachweise,
+keine Optimierung. Ergebnisse vorlegen und danach erneut stoppen.
+
+**Nachweisstand:** Vollstaendiges GUI-Dateiinventar mit Ursachen und
+Risiken im [Plan, Abschnitt 13.7](../Umsetzungsplaene/Umsetzungsplan_G-0.10.md#137-vollstaendiges-gui-diff-inventar-und-ursachenbefunde).
+Die beendete Ein/Aus-/Ansichten-/Workspace-Messmatrix samt historischem
+Komponentenvergleich und Rohwerten steht im
+[Plan, Abschnitt 13.8](../Umsetzungsplaene/Umsetzungsplan_G-0.10.md#138-gui-messnachweis-g-010-und-g-09).
+Keine Produktionsoptimierung umgesetzt. Die dort benannten Messgrenzen
+und die offene fachliche Gesamtmatrix bleiben verbindlich sichtbar.

@@ -3,7 +3,7 @@
   "stand": "2026-11-03",
   "spezifikation": "../Spezifikation_GUI_Statisches_Modell.md#13-identische-rechenbedienung-fuer-statik-und-dynamik",
   "zielversion": "G-0.10",
-  "herkunft": "Nutzerauftrag 03.11.2026 18:17 und Spec-Auftrag 18:19; Umsetzungsauftrag 18:43 finalisiert GUI und Core-Mindestintegration. Danach verbindlicher Halt zur persoenlichen GUI-Pruefung; Performancevergleich erst nach erneutem Go.",
+  "herkunft": "Nutzerauftrag 03.11.2026 18:17 und Spec-Auftrag 18:19; Umsetzungsauftrag 18:43 finalisiert GUI und Core-Mindestintegration. Danach Halt zur persoenlichen GUI-Pruefung. Go vom 03.11.2026 19:23 priorisiert ausschliesslich Performance-Ursachenanalyse; weitere Produktionsumsetzung und Optimierung bleiben gesperrt.",
   "punkte": [
     {
       "id": "IDEE-G-00080",
@@ -47,13 +47,13 @@
     },
     {
       "id": "IDEE-G-00084",
-      "status": "angenommen_performancephase_gesperrt",
+      "status": "performancebefunde_vorgelegt_messgrenzen_offen_optimierung_gesperrt",
       "anforderungen": ["A-G-00129"],
       "umsetzungsschritte": ["U-G-000138", "U-G-000139"],
       "abschnitt": "13.4",
       "text": "GUI/Core-Abgrenzung, Paritaet und vollstaendige fachliche Uebernahme pruefen. Nach GUI-/Core-Mindestintegration und Funktionsgate historischen Vergleich bis etwa 27.10.2026 ausfuehren; Core/JSON/Tabelle/Rendern trennen, unterschiedliche Physikumfaenge nicht als Regression ausgeben. Vorgehen im einzigen G-0.10-Plan Abschnitt 13.",
       "offen": [
-        "Historischer Vergleich mit C-0.7 und weitergehende Optimierung bleiben bis zur persoenlichen GUI-Pruefung und erneutem Go gesperrt. Modellstruktur, Modellkomplexitaet, wiederholte Nachrechnung und GUI-Mehrarbeit getrennt untersuchen.",
+        "Go vom 03.11.2026 19:23 Uhr: Ursacheninventar, GUI-Ein/Aus-Matrix und Core-Versionsmessungen im G-0.10-Plan 13.7-13.9 sowie Core-Gegenplan 4.1-4.3 vorgelegt. Nicht isolierte Funktionskosten, statische Solverzeiten, Inspektionszeit, lange Horizonte und Livekonkurrenz bleiben explizite Messgrenzen. Optimierungen und weitere Produktionsaenderungen bleiben bis zur Ergebnisfreigabe gesperrt.",
         "Persoenliche GUI-Abnahme steht aus; technische Nachweise im einzigen G-0.10-Plan."
       ]
     }

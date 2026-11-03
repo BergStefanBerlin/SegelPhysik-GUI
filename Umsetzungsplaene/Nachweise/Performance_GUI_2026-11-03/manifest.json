@@ -1,0 +1,46 @@
+﻿{
+    "created":  "2026-11-03T19:34:08.7259945+01:00",
+    "gui_head":  "6f2f0b782fb4d52277c62201ab3f22b7fc0d9780",
+    "gui_old":  "67c2ce7534126525cf0c75d27c72338276f4d356",
+    "core":  "3fa197135a0858ee525d3e4bc8273242e0ee97c2",
+    "configuration":  "MSVC 19.44 Release /O2; Qt6 VTK9.3; scale 1; independent stages no concurrent Core benchmark",
+    "cpu":  [
+                {
+                    "Name":  "AMD Ryzen 5 8600G w/ Radeon 760M Graphics      ",
+                    "NumberOfCores":  6,
+                    "NumberOfLogicalProcessors":  12
+                }
+            ],
+    "gpu":  [
+                {
+                    "Name":  "AMD Radeon 760M Graphics",
+                    "DriverVersion":  "32.0.32015.7029"
+                }
+            ],
+    "snapshots":  [
+                      {
+                          "file":  "420.json",
+                          "sha256":  "6E7C885847D95BC6D244402BC5768B5A2CB9EE5FE1301C96205D2635F853F55B",
+                          "model_id":  "420",
+                          "model_fingerprint":  "fnv1a64:5cc5842cbbd3001c",
+                          "states":  6
+                      },
+                      {
+                          "file":  "folkeboot.json",
+                          "sha256":  "E51331AD772191151ADFFD5F412B551E5B962D989AABFFDD646ECC5F7DB00226",
+                          "model_id":  "folkeboot",
+                          "model_fingerprint":  "fnv1a64:a2edc6b0146bcd48",
+                          "states":  6
+                      }
+                  ],
+    "harness":  [
+                    {
+                        "file":  "audit.cpp",
+                        "sha256":  "28D6143B779D49F10B0496564CDBBA45753A8CF2E2233FC916C66588EA9A0796"
+                    },
+                    {
+                        "file":  "CMakeLists.txt",
+                        "sha256":  "9F8003459E0FB4575F50BA4BB85F04A40E72C73B103F132DF0F919945DA7591A"
+                    }
+                ]
+}

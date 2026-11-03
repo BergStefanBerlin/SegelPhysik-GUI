@@ -856,6 +856,8 @@ ordentlich testen und mit aelteren Versionen vergleichen“.
 **Status:** Durch Umsetzungsauftrag vom 03.11.2026, 18:43 Uhr
 finalisiert. GUI/Core-Mindestintegration technisch geprueft und am
 verbindlichen Haltepunkt zur persoenlichen GUI-Pruefung gestoppt.
+Analyse-Go vom 03.11.2026, 19:23 Uhr hebt nur die Diagnosesperre auf;
+Optimierung und weitere Produktionsumsetzung bleiben gesperrt.
 Massgeblich ist
 [Spezifikation Abschnitt 13](../Spezifikationen/Spezifikation_GUI_Statisches_Modell.md#13-identische-rechenbedienung-fuer-statik-und-dynamik).
 Offene Punkte und Herkunft:
@@ -876,6 +878,8 @@ und stoppen. Ohne erneutes Nutzer-Go weder den historischen
 Performancevergleich noch weitergehende Optimierungen oder weitere
 Umsetzungspakete starten. Die technische Pruefung ersetzt diese
 persoenliche Freigabe nicht.
+Das erneute Go ist fuer die Performance-Ursachenanalyse inzwischen
+erteilt (Abschnitte 13.6 ff.); die uebrigen Grenzen gelten unveraendert.
 
 Die Spec ist fuer diesen Umfang finalisiert; die Core-Schnittstelle
 verwendet unveraenderliche modellfeste Kraft-/Ansatzpunktdaten.
@@ -906,7 +910,7 @@ Finalisierung ist kein technischer oder persoenlicher Abnahmenachweis.
 | U-G-000136: Dynamischen Core-Auftrag anbinden | A-G-00127, A-G-00128 | U-G-000132, U-G-000134; Core-Mindestvertrag | Unveraenderlicher Kraftfall und feste Stellungen ab Zustand null; V7-Ausgabe strikt lesen. Kein alter Testantrieb/Begrenzer. | technisch geprueft, Batch/Live identisch |
 | U-G-000137: Kamera und vier Ansichten abgleichen | A-G-00125, A-G-00129 | U-G-000131, U-G-000136 | Beide Kameramodi folgen dem Boot, Pan/Zoom bleiben; echte Snapshots in vier Ansichten. | technisch geprueft; Auslegungsbestaetigung offen |
 | U-G-000138: Gemeinsames Funktionsgate pruefen | A-G-00125 bis A-G-00129 | U-G-000132 bis U-G-000137; Core-Mindesttests | Gezielte Tests, Standard-EXE, ehrliche offene Punkte; persoenliche GUI-Abnahme getrennt. | Mindestintegrationsgate bestanden; persoenliche Abnahme und vollstaendige fachliche Matrix offen |
-| U-G-000139: Historische GUI-/Core-Performance messen | A-G-00129 | U-G-000138; persoenliche GUI-Pruefung; erneutes Go; Core-Vergleichsplan | Vergleich mit C-0.7, getrennte Komponenten und Modellstruktur beachten. | gesperrt, nicht begonnen |
+| U-G-000139: Historische GUI-/Core-Performance messen | A-G-00129 | Mindestintegration; Analyse-Go 03.11.2026 19:23 Uhr; Core-Vergleichsplan | Alle laufzeitrelevanten Diffs erfassen; statisch/dynamisch, einfache Darstellung ein/aus, getrennte Komponenten und Modellstruktur. Optimierungen erst nach Ergebnisfreigabe. | Ursacheninventar und begrenzte GUI-/Core-Versionsmessungen vorgelegt (13.7-13.9); nicht isolierte Anteile und offene Physiknachweise ausdruecklich benannt. Keine vollstaendige fachliche Abnahme; Optimierung gesperrt |
 
 Rechenleiste, Darstellungstrennung und Startdialog koennen nach
 Vertragsklaerung unabhaengig vorbereitet werden. Echter dynamischer
@@ -932,7 +936,10 @@ Vorhandene gezielte Tests erweitern; keine breite Suite ohne Anlass.
 
 ### 13.4 Historischer Vergleich und Performance-Vorgehen
 
-**Bis zur persoenlichen GUI-Pruefung und erneutem Nutzer-Go gesperrt.**
+**Aktualisierung 03.11.2026, 19:23 Uhr:** ausdrueckliches Go fuer
+vorrangige Ursachenanalyse. Das bisherige Eintrittsgate wird nur fuer
+diese Analyse aufgehoben. Umsetzung von Optimierungen bleibt gesperrt;
+persoenliche Abnahme und offene Physikmatrix sind nicht damit erledigt.
 Nutzerhinweis vom 03.11.2026, 18:42 Uhr: Die Modellstruktur wurde
 geaendert. Als Ursachenhypothesen sind komplexere abgeleitete Modelle
 und haeufigere Neuberechnungen ausdruecklich zu untersuchen, nicht
@@ -1064,4 +1071,286 @@ bleiben offen. Vor spaeterem Performancevergleich diese Nachweise
 abschliessen; technische Mindestintegration ist kein Beleg fuer alle
 physikalischen Referenzen. Historischer Vergleich mit C-0.7,
 Modellstruktur-/Nachrechnungsanalyse und weitergehende Optimierung
-bleiben bis zu erneutem Nutzer-Go gesperrt.
+blieben an diesem damaligen Haltepunkt gesperrt. Fuer die Analyse gilt
+inzwischen der nachfolgende Auftrag; Optimierung bleibt gesperrt.
+
+### 13.6 Analyseauftrag vom 03.11.2026, 19:23 Uhr
+
+Auf ausdrueckliches Go jetzt Performance-Ursachen vor weiterer Umsetzung
+untersuchen, einschliesslich aller laufzeitrelevanten Aenderungen in
+der betrachteten Versionsspanne. A-G-00129 / U-G-000139 gelten weiter;
+die Prioritaetsaenderung erweitert keine Produktionsimplementierung.
+Persoenliche GUI-Abnahme und vollstaendige fachliche Matrix sind
+weiterhin offen, aber keine Sperre fuer eine rein diagnostische Messung.
+Nach Vorlage der Befunde wieder stoppen.
+
+Analyse-Reihenfolge:
+
+1. Versionsdiff-Inventar fuer GUI G-0.9/G-0.10 und vorherige Aenderungen
+   seit 27.10.2026; Core separat C-0.7/C-0.8/C-0.9.
+2. Gleiche eingefrorene Core-Snapshots mit 420/Folkeboot darstellen.
+   Renderkosten unabhaengig vom Solver messen; keine Snapshotwerte
+   zur Erreichung besserer Zeiten veraendern.
+3. Ein/eine plus drei/verborgene Zusatzansichten, einfache Darstellung
+   ein/aus, statischen und dynamischen GUI-Pfad getrennt auswerten.
+   Tabellen, Ergebnisparser, erneute Profilzuweisung, Kraftmenue und
+   gesamte Zustandsdarstellung gesondert messen.
+4. Core-Rechenzeit, Geometriekomplexitaet, Modellaufbereitung, statische
+   Solversuche und JSON getrennt gemaess Core-Plan auswerten.
+5. Alle Befunde in Tabellen mit GUI/Core, Statisch/Dynamisch,
+   Versions-/Quellbeleg, Messung/Verdacht, Einbussen-/Einsparpotenzial
+   und physikalischem Risiko zusammenfuehren. Restluecken sichtbar
+   lassen, keine Untersuchung jeder denkbaren Hardware versprechen.
+
+**Unveraenderlich:** Produktionsquellen, Modelle, Integrator,
+Core-Schritte, Toleranzen, dt und erforderliche Physik. Die Auslegung
+statischer und dynamischer Kraefte darf durch die Analyse nicht
+auseinanderlaufen. Kein Commit, Tag, Push, Release oder Standard-EXE-
+Update fuer diesen Auftrag.
+
+Isolierte Messprogramme im Sitzungsordner duerfen bestehende Methoden
+aufrufen. Fuer getrennte Methodenzeiten wird nur im isolierten
+MainWindow-Header die Zugriffssichtbarkeit fuer den Harness geoeffnet,
+keine Berechnungsanweisung geaendert. Das ist kein produktiver Patch.
+Abgebrochene Entwicklungs-/Diagnoselaeufe gelten nicht als Messbeleg;
+nur vollstaendig beendete Rohmessungen werden uebernommen.
+
+### 13.7 Vollstaendiges GUI-Diff-Inventar und Ursachenbefunde
+
+Versionsumfang: G-0.10 `6f2f0b782fb4d52277c62201ab3f22b7fc0d9780`
+gegen G-0.9 `67c2ce7534126525cf0c75d27c72338276f4d356`;
+Urspruenge seit `e54497f` vom 27.10.2026 anhand des Dateiverlaufs.
+Alle 14 geaenderten produktiven C++-Dateien/Headers einschliesslich der
+neuen Filterheaderdatei im GUI-Diff sind unten zugeordnet. Test-, CMake- und
+Dokumentationsaenderungen laufen nicht in der produktiven Simulation.
+`graphics_settings.cpp`, `water_motion.cpp`, `display_geometry.cpp`
+und `core_adapter.hpp` sind zwischen G-0.9/G-0.10 unveraendert;
+aeltere Aenderungen werden deshalb als Altbestand markiert.
+
+Potenzial bezeichnet vermutete Einsparbarkeit ohne Funktionsverlust,
+nicht bereits erreichte Beschleunigung. Hoch/mittel/niedrig ist eine
+Priorisierung, keine Prozentangabe. Zeilen ueberlappen und duerfen
+nicht addiert werden. Quellen beziehen sich auf G-0.10.
+
+| Aenderung / Befund | GUI / Core | Statisch / Dynamisch | Quelle / Version / Belegart | Einbussen- bzw. Einsparpotenzial | Physikalisches Risiko / Grenze |
+|---|---|---|---|---|---|
+| Eine freie Szene wird durch vier vollstaendige Szenen ergaenzt; jede erhaelt `setState` und rendert synchron | GUI | beide; statisch pro Ergebnis/Bedienung, dynamisch fortlaufend | G-0.10; [displayState](../Code/src/main_window.cpp#L2440), [setState](../Code/src/vtk_scene.cpp#L1538); Codebeleg, Messung 13.8 | hoch: wiederholte Geometrieaufbereitung und Renderarbeit | Keine Ansicht/Ergebnisfunktion entfernen; nur redundante Arbeit waere kandidat |
+| Ausgeblendete Zusatzansichten werden weiterhin bedient; `requestRender` prueft nur vorhandene Koerper, nicht Sichtbarkeit | GUI | beide | [displayState](../Code/src/main_window.cpp#L2490), [requestRender](../Code/src/vtk_scene.cpp#L2356); Codebeleg, Hidden-Messfall | hoch; Ausblenden alleine ist keine Optimierung | Bei spaeterem Einblenden aktuellen Snapshot korrekt herstellen |
+| Unveraendertes Profil der drei gebundenen Ansichten umgeht den Gleichheitsabbruch der freien Ansicht; Styling und Render erneut | GUI | beide | neu G-0.10; [setGraphicsProfile](../Code/src/vtk_scene.cpp#L1830); Codebeleg und Messung | hoch fuer redundante Profilrunden | Feste schematische Profile, Transparenz und ThroughBody muessen identisch bleiben |
+| Profilrunde schon am Beginn des 33-ms-Live-Ticks und erneut nach `setState`; auch ohne neuen Snapshot kann sie arbeiten | GUI | dynamisch; Profilwechsel auch statisch | [updateLiveProgress](../Code/src/main_window.cpp#L2303), [displayState](../Code/src/main_window.cpp#L2499), [applyGraphicsProfile](../Code/src/main_window.cpp#L1452); neue Vervielfachung, Timer Altbestand | hoch; Zielintervall ist kein garantierter Frame-Durchsatz | Core-Takt und vollstaendige Zustandshistorie nicht beschneiden |
+| Wasserlinienschnitt, Stripper, Trocken-/Flutungsloops, Normalen und lokale Meshtransformation fuer jeden Koerper pro Szene/Snapshot | GUI | beide | Altbestand u.a. G-0.7/0.9, jetzt vierfach; [setState](../Code/src/vtk_scene.cpp#L1384) | hoch bei komplexen Modellen; genaue Teilzeit noch nicht isoliert | Feste Elementstellung ist nicht feste Bootspose; Flutung und Welt-Wasserebene korrekt invalidieren |
+| Bewegungsmatrizen im Snapshot fuehren auch bei unveraenderten Elementstellungen zu DeepCopy, Matrixanwendung und neuen Normalen | GUI | beide, dynamisch besonders haeufig | [setState](../Code/src/vtk_scene.cpp#L1385); vor G-0.10 vorhanden, vierfach multipliziert | hoch als Cache-Kandidat; kein Prozentbeleg | Matrix/Modellfassung/Topologie vollstaendig als Cache-Schluessel, nicht nur Element-ID |
+| `geometryDirty` erzwingt Umwelt-, Wasser-, Raster-, Kraft- und Kursgeometrie-Neuaufbau | GUI | beide | [setState](../Code/src/vtk_scene.cpp#L1535), [Renderpfad](../Code/src/vtk_scene.cpp#L2860), [rebuildEnvironment](../Code/src/vtk_scene.cpp#L3495); ueberwiegend Altbestand | hoch/mittel, im Gesamt-State-Aufwand enthalten | Kameraabhaengige Ausschnitte und Flutung duerfen nicht veralten |
+| Wasserflaeche samt Farbfeldern, Trockenmaske, tiefer Kopie und Raster wird pro Szene aufgebaut; kleine Ansichten nutzen dieselbe Infrastruktur | GUI | beide | [rebuildEnvironment](../Code/src/vtk_scene.cpp#L3505); Altbestand, neue schematische Zweige G-0.10 | mittel/hoch, nicht separat gemessen | Kein Wasser im trockenen Bootsinneren; Wasserlinie und Ebenenprojektion erhalten |
+| Fuenf einfache Darstellungen erzeugen Resultierende, Marker, Pfeilgeometrie und Labels | GUI | beide | neu G-0.10; [rebuildSchematicForces](../Code/src/vtk_scene.cpp#L2980), [Kurs](../Code/src/vtk_scene.cpp#L2923); Ein/Aus-Messmatrix | Messung entscheidet; kein pauschales Hauptursachenurteil | Abschalten der Anzeige darf niemals Kraftauswertung im Core aendern |
+| Selbst bei allen einfachen Darstellungen AUS wird `staticResultants` vor den `enabled`-Checks berechnet | GUI | beide | [rebuildSchematicForces](../Code/src/vtk_scene.cpp#L3036); Codebeleg | mittel; AUS beseitigt nicht den gesamten Auswahl-/Aggregationsaufwand | Numerische Tabelle und Verfuegbarkeitsdiagnosen muessen vollstaendig bleiben |
+| Resultierende und abgeleitete Summen mehrfach: jede Szene, Kraftmenue und neue Tabelle | GUI | beide | [setState](../Code/src/vtk_scene.cpp#L1505), [Menue](../Code/src/main_window.cpp#L1529), [Tabelle](../Code/src/main_window.cpp#L2659), [staticResultants](../Code/src/force_display.cpp#L545); neu G-0.10 | mittel; unveraenderliche gemeinsame Snapshotauswertung waere Kandidat | Modell-/Weltframe und Momentbezug S nicht vermischen |
+| Neue 10-Spalten-Tabelle wird formatiert, sortiert und vollstaendig gefiltert, unabhaengig von grafischen Checkboxen | GUI | beide | [updateStaticValues](../Code/src/main_window.cpp#L2643), [filterStaticValues](../Code/src/main_window.cpp#L2631); neu G-0.10 | mittel; messbare eigene Teilzeit | Alle Zahlen, Auswahl, Sortierung, Kopieren und Fehlerstatus erhalten |
+| Verborgene alte Werteansicht wird zusaetzlich zur neuen Tabelle gepflegt | GUI | beide | [updateValues](../Code/src/main_window.cpp#L2743); G-0.10 ruft neue Tabelle vor altem Baum auf | mittel, AllValues minus VisibleTable nur grobe Aufwandsdifferenz | Versteckte Darstellung darf nicht weiterhin fachliche Datenquelle sein muessen; derzeit keine Aenderung |
+| Kraftmenue setzt jedes Mal Stylesheets, Texte und Verfuegbarkeit auch bei unveraenderten Werten | GUI | beide | [updateStaticForceMenu](../Code/src/main_window.cpp#L1527); neu G-0.10 | niedrig/mittel, separat gemessen | Moduslokale Farben und korrekte Verfuegbarkeit erhalten |
+| Kamera-/Navigationswerte werden bei Rendern auch fuer unsichtbare Overlays abgeleitet/formatiert; SVG wird nur bei geaenderten Bytes neu geladen | GUI | beide | [Renderpfad](../Code/src/vtk_scene.cpp#L2905), [Instrument](../Code/src/navigation.cpp#L196); Karte/Docking neu, Gleichheitsabbruch Altbestand | niedrig/mittel; vierfache Ableitung, kein pauschal vierfacher SVG-Reload | Weltkurs, Roll/Stampf und Kameraindikator nicht vertauschen |
+| Koerper-/Weltkamera und gebundene Pan/Zoom-Projektionen; freie Ansicht folgt Pose, Weltmodus nur Position | GUI | beide; Auswahl dynamisch | [setState](../Code/src/vtk_scene.cpp#L1480), neue Orthografiemethoden ab Zeile 1921 | niedrig, konstante Vektor-/Matrixarbeit; Renderfolgen separat oben | Keine Physikframe-Aenderung; persoenliche Kameraabnahme offen |
+| Live-Snapshot serialisiert Core-Zustand erneut und parst JSON; Historienrueckblick kann Bewegungshistorie neu aufbauen | GUI / Core | dynamisch; statische Ausgabe einmalig | [stateJson](../Code/src/core_adapter.cpp#L654), [displayState](../Code/src/main_window.cpp#L2468); Historie/Live Altbestand, V7 neu | mittel/hoch beim 420; Core-JSON-Arbeit separat im Core-Plan | Unveraenderliche Historie und gleiche Beitraege zwingend; keine gemessenen Frames als Solver-Schritte ausgeben |
+| V7-Fremdkraftpruefung und feste Eingaben kommen hinzu; neuer Kraftfall ist nicht identisch zum alten Bug-Testantrieb mit Begrenzer | GUI / Core | dynamisch | [create](../Code/src/core_adapter.cpp#L450), [Parser](../Code/src/force_display.cpp#L235); G-0.10/C-0.9 | Validierung klein/konstant; Physikmehrarbeit im Core-Plan | Korrektheit nicht durch Weglassen von Kontext/Validierung erkaufen; Laufvergleiche nur bei gleichem Kraftfall |
+| Modellinspektion wird seit G-0.9 als gemeinsame Quelle benutzt; G-0.10 fragt Rollen ueber Objekteigenschaften ab | GUI / Core | Laden fuer beide | [loadDisplayData](../Code/src/model_catalog.cpp#L179); c97c439/67c2ce7/6f2f0b7 | Rollenabfrage einmalig, nicht pro Zeitschritt; moegliches Ladepotenzial ungemessen | Source-/Darstellungs-/Physikmesh und Einzelquelle erhalten |
+| Vier `setModel`-Pfade erzeugen VTK-Actors, Cutter, Normalen/Materialdaten und getrennte Renderfenster | GUI | Laden fuer beide | [modelOpened](../Code/src/main_window.cpp#L1939), [setModel](../Code/src/vtk_scene.cpp#L1201); neu G-0.10 | mittel/hoch fuer Ladezeit/Speicher; kein belegter laufender Core-Mehrimport | Nur immutable Meshdaten teilbar; Scene-/Kameraidentitaet erhalten |
+| Tabellenfilterheader, Separatoren, Cursor, Rundungen, Docklayout und SVG-Kartenzuschnitt | GUI | beide / Bootsauswahl | `filter_header.hpp`, `boat_inspection.cpp`, `navigation.cpp`, `main_window.cpp`; G-0.10 | niedrig/ereignisabhaengig; kein belegter Integratorschritt-Aufwand | UX erhalten; nicht als primaere Rechenursache behaupten |
+| Modusgetrennte Grafikprofile/Checkboxen werden bei Bedienung gespeichert; Startdialog fuehrt keine stationaere Suche vor Dynamik aus | GUI | beide / Start | [saveDisplaySettings](../Code/src/main_window.cpp#L1330), [startSimulation](../Code/src/main_window.cpp#L2140), `graphics_dialog.cpp`; neu G-0.10 | niedrig bei Bedienung; kein Beleg fuer pro-Schritt-Dateischreiben | Erhalt physikalischer Eingaben und getrennte Darstellung sind Vertragsbestandteil |
+| Live-Hydrodynamikkontext, ITTC/Daempfung und spaetere stationaere Fahrt/Kursdrehrate wurden bereits vor G-0.10 eingefuehrt | GUI / Core | jeweils dynamisch bzw. statisch | GUI `59f22d6`, `194dbbb`, `67c2ce7`; Core-Versionen im Gegenplan | notwendige Mehrphysik, nicht automatisch Regression | C-0.7 und heutige stationaere Fahrt sind nicht ohne Umfangskontrolle gleichwertige Benchmarks |
+
+**Abdeckung / Negativbefund:** `graphics_settings.hpp` und
+`graphics_dialog.hpp` sind im letzten Versionsdiff nicht geaendert;
+`main_window.hpp`, `vtk_scene.hpp`, `navigation.hpp`, `force_display.hpp`,
+`model_catalog.hpp` liefern die zugeordneten Daten/Felder, keine
+zusaetzliche versteckte Berechnung. Die Auslagerung des Filterheaders
+ersetzt vorhandenen Bootsauswahlcode; sie dupliziert keinen Core-Lauf.
+Farbgebung, Spaltenlinien, Cursor oder Dialogtexte sind ohne Messbeleg
+keine Erklaerung fuer groessere Physik-Rechenzeiten.
+
+#### Physikalische Gleichheit: GUI-Vertrag und Messgrenzen
+
+| Pruefpunkt | Statisch | Dynamisch | Befund / verbleibender Nachweis |
+|---|---|---|---|
+| Aktivflag, Kraftvektor, Ansatzpunkt, feste Elementstellungen | dieselben rechten Eingabefelder | dieselben rechten Eingabefelder | [startSimulation](../Code/src/main_window.cpp#L2201) baut ein gemeinsames Objekt; nur Schluessel `stationaer`/`dynamische_fremdkraft` und Startpfad wechseln |
+| Bezugsrahmen | modellfest | modellfest | `modellfest=true` in derselben Uebergabe; Kameraauswahl ist kein Kraftkoordinatenwechsel |
+| Bewegung/Trimm | stationaeres Gleichgewicht und Kurvenfahrt werden gesucht | zeitliche Fortbewegung mit Core-Integrator | Absichtlich andere Aufgabe: gleiche Grundgesetze bedeuten nicht gleiche Laufzeit, Endpose oder Trajektorie |
+| dt und Dauer | stationaere Suche, kein Lauf ueber die dynamische Dauer | bestaetigte Dialogwerte, Echtzeittakt optional | Kein Beleg fuer neu verfeinertes Standard-dt: weiterhin 0,01 s; Echtzeitwarten ist keine Solverzeit |
+| Hydrodynamik | stationaere Core-Auswertung | bei Rumpfrolle `hydrodynamik_start` mit Defaultkonfiguration | [LiveSimulation::create](../Code/src/core_adapter.cpp#L483); Vollstaendigkeit und Faktoren separat im Core-Plan pruefen |
+| Physik waehrend Display-Messung | identische eingefrorene dynamische Snapshots im statischen Workspace | dieselben Snapshots im dynamischen Workspace | Nachweis fuer GUI-Kosten, **kein** Nachweis fuer eine geloeste stationaere Gleichgewichtslage |
+| Rueckwirkung der einfachen Darstellung | keine Core-Eingabe | keine Core-Eingabe | Die Checkboxen steuern nur VTK-Darstellung; AUS darf keine physikalischen Beitraege entfernen |
+| Fachliche Gesamtparitaet | Referenzen/Residualnachweise teilweise vorhanden | Mindestintegration fuer Fremdkraft/CG/Traegheit vorhanden | Vorhandene Tests sind kein Ersatz fuer die weiter offene dt-/Rudermatrix und Kirchhoff-/Flutungsabnahme |
+
+Besonders wichtig fuer den spaeteren historischen Core-Vergleich:
+200-N-Testantrieb mit Geschwindigkeitsbegrenzer, freie Dynamik ohne
+Fremdkraft und neue modellfeste Fremdkraft sind drei verschiedene
+Rechenfaelle. Nur der gleiche Fall darf eine Regressionszahl liefern.
+Die Modell-Schemaumstellung kann Importkosten, Elementzahl und
+Geometriekomplexitaet veraendern; eine nicht ladbare Schema3-Datei auf
+einer Schema2-Version ist eine Kompatibilitaetsgrenze, kein gemessener
+Geschwindigkeitsfaktor. Kein Modell wird fuer die Analyse vereinfacht.
+
+### 13.8 GUI-Messnachweis: G-0.10 und G-0.9
+
+Gueltiger Lauf `gui-perf-final3`: beide isolierten Release-Harnesses
+erfolgreich gebaut und vollstaendig beendet, Exit 0. Keine Core-
+Benchmarks parallel. MSVC 19.44, Qt6/VTK9.3, Windows, Scale 1,
+Ryzen 5 8600G / Radeon 760M. Modellfassungen und SHA256 der exakten
+Snapshots: [Manifest](Nachweise/Performance_GUI_2026-11-03/manifest.json).
+Rohwerte (jeweils alle fuenf Wiederholungen und Min/Max):
+[G-0.10](Nachweise/Performance_GUI_2026-11-03/current.json),
+[G-0.9](Nachweise/Performance_GUI_2026-11-03/G-0.9.json).
+Eingaben:
+[420](Nachweise/Performance_GUI_2026-11-03/snapshots/420.json),
+[Folkeboot](Nachweise/Performance_GUI_2026-11-03/snapshots/folkeboot.json).
+
+**Methode:** ein Warmlauf, fuenf Wiederholungen mit je sechs
+identischen eingefrorenen Snapshots (0,08 bis 0,48 s des gleichen
+0,5-s-Laufs, dt 0,01 s, Testantrieb 200 N mit altem Begrenzer).
+Median/Min/Max beziehen sich auf die sechs-Snapshot-Mittel der fuenf
+Wiederholungen, nicht auf jedes einzelne Frame. Kein Echtzeitwarten,
+keine Physik waehrend der Renderzeitmessung. Alle Werte Millisekunden
+je Snapshot, gerundet; Rundung kann Nachkommastellen verdecken.
+
+Das isolierte Szenenfenster nutzt 720x480 plus dreimal 180x160,
+gleiche Defaultprofile und versteckte eingebettete Navigation.
+Die fuenf einfachen Flags sind gemeinsam EIN gemaess Default bzw.
+alle AUS; vollstaendige Kraefte und Hebelarme sind in beiden Faellen
+AUS. Nicht verfuegbare Druckpunkte werden nicht kuenstlich erzeugt.
+Die Szenenklasse hat keinen statisch/dynamisch unterschiedlichen
+Geometriealgorithmus; die erste Tabelle ist deshalb **ein gemeinsamer
+Szenenpfad**, keine doppelte Physikmessung.
+
+| Modell | Ansichten | Einfach | setState alle Szenen: Median (Min-Max) | Unveraendertes Profil erneut allen Szenen zuweisen |
+|---|---|---|---:|---:|
+| 420 | eine | ein | 120,2 (110,6-135,5) | <0,002 |
+| 420 | eine | aus | 125,1 (112,0-138,7) | <0,002 |
+| 420 | vier | ein | 373,1 (357,0-380,1) | 35,4 |
+| 420 | vier | aus | 358,5 (352,9-368,4) | 32,4 |
+| 420 | drei Zusatzansichten verborgen | ein | 364,0 (351,6-410,9) | 34,3 |
+| 420 | drei Zusatzansichten verborgen | aus | 458,7 (443,7-481,9) | 41,9 |
+| Folkeboot | eine | ein | 9,5 (7,4-11,2) | <0,002 |
+| Folkeboot | eine | aus | 9,2 (7,5-9,9) | <0,002 |
+| Folkeboot | vier | ein | 50,2 (49,1-51,3) | 27,6 |
+| Folkeboot | vier | aus | 47,3 (45,0-49,2) | 26,2 |
+| Folkeboot | drei Zusatzansichten verborgen | ein | 49,4 (47,8-50,4) | 28,6 |
+| Folkeboot | drei Zusatzansichten verborgen | aus | 49,2 (47,3-50,0) | 26,7 |
+
+Die **wirklichen MainWindow-Workspaces** werden zusaetzlich im Fenster
+1600x1000 vermessen, jeweils mit derselben eingefrorenen Historie.
+`displayState` enthaelt bereits SetState, Profil, Menue und Werte.
+Die daneben gemessenen Methoden wurden danach separat aufgerufen:
+**nicht zu `displayState` addieren**. AllValues enthaelt VisibleTable.
+Kein Core-Worker aktiv; `stateAt` trifft die bereits vorhandenen
+JSON-Objekte, nicht die teurere Live-Serialisierung.
+
+| Modell | Workspace | Einfach | displayState: Median (Min-Max) | VisibleTable | AllValues inkl. VisibleTable | Kraftmenue | Weitere Profilrunde |
+|---|---|---|---:|---:|---:|---:|---:|
+| 420 | statisch | ein | 486,3 (462,0-517,3) | 0,237 | 0,409 | 1,116 | 42,5 |
+| 420 | statisch | aus | 430,3 (407,5-477,2) | 0,225 | 0,377 | 1,021 | 38,3 |
+| 420 | dynamisch | ein | 466,5 (426,1-489,6) | 0,260 | 0,480 | 1,093 | 38,7 |
+| 420 | dynamisch | aus | 439,8 (433,5-471,8) | 0,260 | 0,400 | 1,112 | 39,4 |
+| Folkeboot | statisch | ein | 93,9 (91,0-119,4) | 0,192 | 0,320 | 1,041 | 27,9 |
+| Folkeboot | statisch | aus | 90,0 (87,7-108,5) | 0,169 | 0,291 | 1,048 | 27,7 |
+| Folkeboot | dynamisch | ein | 101,7 (92,6-110,6) | 0,210 | 0,352 | 1,025 | 29,8 |
+| Folkeboot | dynamisch | aus | 94,0 (86,3-100,2) | 0,187 | 0,327 | 0,946 | 28,0 |
+
+Parser der fertigen Kraft-JSON-Objekte: 0,12-0,17 ms/Snapshot;
+Zugriff auf bereits gecachte MainWindow-JSON-Objekte rund 0,001 ms.
+Dies ist **nicht** die Core-Kraftauswertung/JSON-Erzeugung.
+SVG-/Qt-Repaints aus der Eventqueue und Frame-Pacing werden hier
+nicht vollstaendig erfasst; synchrone VTK-Renderaufrufe dagegen schon.
+Statisch bedeutet Workspace mit dynamischem Snapshot: die Messung
+enthaelt keine stationaere Solversuche, keine stationaeren Residuen
+und keine abweichende stationaere Beitragsliste.
+
+#### Historischer GUI-Komponentenvergleich
+
+G-0.9-Szenenquellen gegen **denselben heutigen Core C-0.9** gebaut.
+Die Einzelszene mit allen vergleichbaren Kraeften/Markern/Kurs AUS ist
+der gemeinsame Darstellungsumfang. G-0.9 kennt das neue Fuenfermenue
+nicht: sein EIN-Fall zeigt alte vollstaendige Kraefte und ist deshalb
+kein aequivalenter Einfach-EIN-Vergleich.
+
+| Modell | Gemeinsamer Umfang | G-0.9 setState Median (Min-Max) | G-0.10 setState Median (Min-Max) | Einordnung |
+|---|---|---:|---:|---|
+| 420 | eine Szene, Darstellung aus | 109,4 (105,5-134,1) | 125,1 (112,0-138,7) | Median +14,3 %, Bereiche ueberlappen; kein Beleg fuer Faktorregression der Einzelszene |
+| Folkeboot | eine Szene, Darstellung aus | 8,8 (8,3-9,0) | 9,2 (7,5-9,9) | Median +5,4 %, Bereiche ueberlappen |
+
+Keine historische vollstaendige EXE und kein Vorher/Nachher derselben
+Core-Physik wird damit vorgetaeuscht. Der grosse sichere Struktur-
+unterschied ist die vierfache Szenenversorgung und deren Profilzweig,
+nicht ein nachgewiesener mehrfach langsamerer einzelner Renderer.
+
+#### Auswertung und Prioritaeten
+
+| Befund | GUI / Core | Statisch / Dynamisch | Gemessener Effekt | Potenzial / Urteil |
+|---|---|---|---|---|
+| Vier statt einer Szene | GUI | beide | Einfach EIN: 120,2 -> 373,1 ms beim 420; 9,5 -> 50,2 ms beim Folkeboot, ohne weitere Profilrunde | hoch; ca. 3,1x / 5,3x in diesem Komponentenfall, keine realisierte Ersparnis |
+| Redundante Profilrunde | GUI | beide, dynamisch mehrfach pro Tick | freie Szene <0,002 ms; vier Szenen 26-42 ms, auch bei Einfach AUS | hoch; klarer vermeidbarer Kandidat ohne Physikabbau |
+| Zusatzansichten nur verbergen | GUI | beide | Aufwand bleibt aehnlich oder hoeher; kein Sichtbarkeitsabbruch im Code | hoch; Verbergen alleine hilft nicht |
+| Einfache Darstellung abschalten | GUI | beide | Vieransicht ohne Profil: 373,1 -> 358,5 bzw. 50,2 -> 47,3 ms; Workspace-Zahlen siehe oben | kleiner als Szenen-/Profilstruktur; kein verlaesslicher Alleinhebel |
+| Tabelle plus verborgener Altbaum | GUI | beide | VisibleTable 0,17-0,26 ms, AllValues 0,29-0,48 ms | hier niedrig; sinnvoller Bereinigungskandidat, nicht Hauptursache |
+| Kraftmenue | GUI | beide | rund 0,95-1,12 ms | hier niedrig; redundante Stylesheets nicht als hunderte Millisekunden ausgeben |
+| Fertiges JSON parsen/kopieren | GUI | beide | 0,12-0,17 ms / ca. 0,001 ms | hier niedrig; Live-Core-JSON gesondert untersuchen |
+| Gemeinsame Geometrie/Wasserlinie und Modellkomplexitaet | GUI / Core | beide | 420-Einzelszene trotz AUS 125,1 ms, Folkeboot 9,2 ms; verschiedene Modelle, kein isolierter einzelner Geometriefaktor | hoch plausibel; genaue Kostenverteilung/Cachetreffer noch nicht instrumentiert |
+
+**Streuung nicht verstecken:** Der 420-Hidden-AUS-Fall ist deutlich
+langsamer als Hidden-EIN. Auch die einzelne 420-Szene wird durch AUS
+nicht schneller. Reihenfolge war fest, nicht randomisiert; thermische,
+GPU-/Betriebssystemeffekte oder weitere Zustandskosten sind nicht
+isoliert. Daraus weder „AUS macht langsam“ noch garantierte
+Prozentsaetze fuer Checkboxen ableiten. Fuer eine spaetere Optimierungs-
+abnahme gepaarte/reihenfolgeinvertierte Messung vorsehen. Der im Code
+bewiesene fehlende Sichtbarkeits-/Profilabbruch bleibt davon unberuehrt.
+
+**Grenzen:** Kein End-to-End-Liveprofil unter gleichzeitiger Core-
+Vollauslastung, kein GPU-Hardwaretrace, keine Zaehlung jedes Cutters/
+Cachetreffers und keine historische GUI-Komplettmessung bis 27.10.
+Die aelteren GUI-Commits sind per Diff auf Ursachen zugeordnet, nicht
+alle binär vermessen. „Alle Aenderungen erfasst“ bedeutet das belegte
+Diff-Inventar, nicht dass jede der aufgelisteten Hypothesen bereits
+kausal in Millisekunden isoliert ist. Die Physikmatrix bleibt offen.
+
+### 13.9 Gemeinsame GUI-/Core-Befunduebersicht und Haltepunkt
+
+Core-Quellen, Modellinventar, Versionsmatrix und Messmethodik:
+[einziger Core-Plan, 4.1-4.3](../../CORE/Umsetzungsplaene/Umsetzungsplan_C-0.9.md#41-modellinventar-und-vergleichsgrenzen).
+Die Tabellen sind keine umgesetzten Optimierungen. Unterschiedliche
+Einheiten (pro Snapshot / 50 Schritte / Ladeaufruf) nicht addieren.
+
+| Befund | GUI / Core | Statisch / Dynamisch | Messung / Evidenz | Potenzieller Hebel |
+|---|---|---|---|---|
+| Vierfache Szenenarbeit und mehrfaches Rendern | GUI | beide | 420 120,2 -> 373,1 ms, Folkeboot 9,5 -> 50,2 ms je Snapshot (einfach EIN) | hoch; Geometrieaufbereitung teilen, nur erforderliche sichtbare Aktualisierungen; Funktionen erhalten |
+| Unveraendertes Profil rendert Zusatzansichten erneut | GUI | beide, dynamisch fortlaufend | weitere Profilrunde 26-42 ms; freie Szene <0,002 ms | hoch; korrekter Gleichheitsabbruch/gebuendelte Renderanforderung, keine Core-Aenderung |
+| Einfache Anzeige AUS beseitigt Hauptlast nicht | GUI | beide | vier Szenen 420 373,1 -> 358,5 ms; Folkeboot 50,2 -> 47,3 ms; Streuung beachten | geringerer Hebel als Szenen-/Profilstruktur; nicht automatisch Physik auslassen |
+| Tabellen, Menue, fertiger JSON-Parser | GUI | beide | Tabelle+Altbaum <0,5 ms, Menue ca. 1 ms, Parser 0,12-0,17 ms | hier niedrig; kein Hauptgrund fuer hunderte Millisekunden |
+| Bewegtes physisches Modell wiederholt aufbereitet | Core | beide; zusaetzliche Integratoraufbereitung dynamisch | Archiv-420, free, 50 Schritte C-0.7/0.8/0.9: 87,55/168,24/221,39 ms; Versionsgesamtzeiten, kein isolierter Funktionsanteil | hoch plausibel; exakt stellungs-/modellgebundene Wiederverwendung statt Physik-Rueckbau |
+| Hydro/Testantrieb-Pfad mit korrekter bewegter Traegheit | Core | dynamisch | Schema3-420 C-0.8 -> C-0.9 1.221,16 -> 1.553,53 ms je 50 Schritte; Folkeboot 17,92 -> 23,14 ms | hoch plausibel bei wiederholter Modellvorbereitung; keine Fremdkraft-Alleinschuld belegt |
+| Geometriekomplexitaet | Core / GUI | beide | aktuelle Quellmeshes 420 94.129 Dreiecke, Folkeboot 486; keine identische Modellaufgabe | hoch fuer exakte Wiederverwendung; keine autorisierte Meshvereinfachung |
+| Lade-/Inspektionswiederholungen | Core / GUI | Laden fuer beide | Schema3-Modell laden C-0.9: 420 1.160 ms, Folkeboot 5,17 ms; wiederholte Hash-/Meshpfade Codebefund, Inspektionszeit nicht isoliert | mittel/hoch fuer Start/Bedienung, nicht als Kosten jedes Integratorschritts ausgeben |
+| Core-JSON wertet Kraefte erneut aus | Core | beide, dynamisch je abgefragtem Snapshot | Schema3-V6-Einzelzustand C-0.9: 420 7,08 ms, Folkeboot 0,372 ms; ohne Dateischreiben | mittel; fertige passende Kraftauswertung wiederverwenden, Ergebnisvollstaendigkeit erhalten |
+| Statische Gleichgewichts-/Kurvenfahrtsuche | Core | statisch | Residuen, Jacobi, Liniensuche und Geometrieschnitte im Code nachgewiesen; keine Solverzeitmessung dieses Audits | potenziell hoch; nicht in dynamischen Zeitschritt kopieren, Abnahmekriterien unveraendert |
+| Kein grosser neuer CLI-Gesamtzeit-Sprung auf aktuellen Modellen | Core | dynamisch, free-CLI ohne Hydroanforderung | C-0.8 -> C-0.9: 420 2,930 -> 2,940 s; Folkeboot 0,071 -> 0,073 s, inkl. Laden/51 Ausgaben | Gesamtzeit verdeckt Teilpfade; keine Aussage gegen gemessenen Hydro-Pfad-Anstieg |
+
+**Historische Grenze:** C-0.7 kann die heutigen Schema3-Modelle
+nicht laden. Sein direkter Vergleich nutzt unveraenderte archivierte
+0.1-Modelle; diese sind Entwuerfe ohne Simulationsfreigabe. Die
+Schema3-Zeitreihe C-0.8/C-0.9 ist deshalb separat. Gleiche Endwerte
+einzelner Kurzlaufkomponenten sind keine umfassende Physikparitaet.
+
+**Abschluss dieser Untersuchung:** Spezifikationen und die beiden
+bestehenden Plaene sind auf die priorisierte Analyse ausgerichtet;
+Versions-, Modellstruktur-, Wiederholungs- und Darstellungsbefunde
+sind tabellarisch mit Potentialen, Belegen und Grenzen erfasst.
+Nicht gemessen bleiben insbesondere statische Solverzeiten, der
+Inspektionspfad als eigener Zeitblock, laengere Horizonte, dynamische
+Cache-/Aufrufzaehler und Livekonkurrenz. Damit wird weder jeder
+Hypothese ein gemessener Kostenanteil zugeschrieben noch vollstaendige
+statisch/dynamische Physikgleichheit behauptet.
+
+Keine Produktionsquelle, kein Modell und keine Standard-EXE fuer
+diese Analyse geaendert. Keine neuen funktionalen Tests behauptet;
+isolierte Release-Harnesses ausgefuehrt und Rohwerte/JSON,
+Dokumentlinks sowie Diff-Whitespace geprueft. Dokumentations- und
+Nachweisdateien verbleiben uncommittet. **Hier stoppen:** Weitere
+Messvertiefung, Optimierung und Git-Veroeffentlichung nur nach Auftrag.
