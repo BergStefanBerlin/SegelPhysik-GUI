@@ -1,0 +1,903 @@
+Start testing: Nov 04 09:48 Mitteleuropäische Zeit
+----------------------------------------------------------
+1/45 Testing: gui_water_motion
+1/45 Test: gui_water_motion
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_water_motion_tests.exe"
+Directory: C:/spdeps/guibuild
+"gui_water_motion" start time: Nov 04 09:48 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Water history: spatial interpolation, rotation/heave, reference breaks, age/budget, rewind and contact direction passed.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gui_water_motion" end time: Nov 04 09:48 Mitteleuropäische Zeit
+"gui_water_motion" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/45 Testing: gui_navigation
+2/45 Test: gui_navigation
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_navigation_tests.exe"
+Directory: C:/spdeps/guibuild
+"gui_navigation" start time: Nov 04 09:48 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Navigation: math, SVG bindings, singularities and draggable/resizable overlay passed
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"gui_navigation" end time: Nov 04 09:48 Mitteleuropäische Zeit
+"gui_navigation" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/45 Testing: gui_graphics_settings
+3/45 Test: gui_graphics_settings
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_tests.exe"
+Directory: C:/spdeps/guibuild
+"gui_graphics_settings" start time: Nov 04 09:48 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+28 defaults/toggles, independent profiles, migration, subprocess restart and error cases passed.
+<end of output>
+Test time =   0.45 sec
+----------------------------------------------------------
+Test Passed.
+"gui_graphics_settings" end time: Nov 04 09:48 Mitteleuropäische Zeit
+"gui_graphics_settings" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/45 Testing: gui_performance_regression
+4/45 Test: gui_performance_regression
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--performance-regression-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/performance-regression"
+Directory: C:/spdeps/guibuild
+"gui_performance_regression" start time: Nov 04 09:48 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =  17.00 sec
+----------------------------------------------------------
+Test Passed.
+"gui_performance_regression" end time: Nov 04 09:48 Mitteleuropäische Zeit
+"gui_performance_regression" time elapsed: 00:00:16
+----------------------------------------------------------
+
+5/45 Testing: gui_water_motion_render
+5/45 Test: gui_water_motion_render
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--water-motion-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/water-motion"
+Directory: C:/spdeps/guibuild
+"gui_water_motion_render" start time: Nov 04 09:48 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "420": {
+        "cameraAndPhysicsInvariant": true,
+        "capExercised": true,
+        "contactAndNoContact": true,
+        "modelFingerprint": "fnv1a64:5cc5842cbbd3001c",
+        "replayInvariant": true,
+        "states": 101,
+        "supports": 20,
+        "syntheticMotionImageIsNotPhysicsEvidence": true,
+        "trackLines": 23,
+        "wakeLines": 38
+    },
+    "folkeboot": {
+        "cameraAndPhysicsInvariant": true,
+        "capExercised": true,
+        "contactAndNoContact": true,
+        "modelFingerprint": "fnv1a64:a2edc6b0146bcd48",
+        "replayInvariant": true,
+        "states": 101,
+        "supports": 12,
+        "syntheticMotionImageIsNotPhysicsEvidence": true,
+        "trackLines": 13,
+        "wakeLines": 22
+    },
+    "sharedDynamicForceEditableAndRewind": true,
+    "simpleBodyFixedCOMRotationDriftAndReverse": true,
+    "unrepresentableMarksIsolatedWithDiagnostic": true
+}
+<end of output>
+Test time =  19.70 sec
+----------------------------------------------------------
+Test Passed.
+"gui_water_motion_render" end time: Nov 04 09:49 Mitteleuropäische Zeit
+"gui_water_motion_render" time elapsed: 00:00:19
+----------------------------------------------------------
+
+6/45 Testing: gui_navigation_camera
+6/45 Test: gui_navigation_camera
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--navigation-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/navigation-camera"
+Directory: C:/spdeps/guibuild
+"gui_navigation_camera" start time: Nov 04 09:49 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Body-fixed camera: short real 420 run, translation, roll/pitch/yaw, 14 presets, free edit, rewind and clear-state passed
+<end of output>
+Test time =   8.27 sec
+----------------------------------------------------------
+Test Passed.
+"gui_navigation_camera" end time: Nov 04 09:49 Mitteleuropäische Zeit
+"gui_navigation_camera" time elapsed: 00:00:08
+----------------------------------------------------------
+
+7/45 Testing: gui_graphics_render_100
+7/45 Test: gui_graphics_render_100
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/100"
+Directory: C:/spdeps/guibuild
+"gui_graphics_render_100" start time: Nov 04 09:49 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+<end of output>
+Test time =  67.07 sec
+----------------------------------------------------------
+Test Passed.
+"gui_graphics_render_100" end time: Nov 04 09:50 Mitteleuropäische Zeit
+"gui_graphics_render_100" time elapsed: 00:01:07
+----------------------------------------------------------
+
+8/45 Testing: gui_workspace_tabs_100
+8/45 Test: gui_workspace_tabs_100
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--main-window-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/workspace-tabs-100"
+Directory: C:/spdeps/guibuild
+"gui_workspace_tabs_100" start time: Nov 04 09:50 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "devicePixelRatio": 1,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  34.33 sec
+----------------------------------------------------------
+Test Passed.
+"gui_workspace_tabs_100" end time: Nov 04 09:50 Mitteleuropäische Zeit
+"gui_workspace_tabs_100" time elapsed: 00:00:34
+----------------------------------------------------------
+
+9/45 Testing: gui_dynamic_layout_100
+9/45 Test: gui_dynamic_layout_100
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--dynamic-layout-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/dynamic-layout-100"
+Directory: C:/spdeps/guibuild
+"gui_dynamic_layout_100" start time: Nov 04 09:50 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+<end of output>
+Test time =   8.84 sec
+----------------------------------------------------------
+Test Passed.
+"gui_dynamic_layout_100" end time: Nov 04 09:51 Mitteleuropäische Zeit
+"gui_dynamic_layout_100" time elapsed: 00:00:08
+----------------------------------------------------------
+
+10/45 Testing: gui_boat_inspection_100
+10/45 Test: gui_boat_inspection_100
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--inspection-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/boat-inspection-100"
+Directory: C:/spdeps/guibuild
+"gui_boat_inspection_100" start time: Nov 04 09:51 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  18.21 sec
+----------------------------------------------------------
+Test Passed.
+"gui_boat_inspection_100" end time: Nov 04 09:51 Mitteleuropäische Zeit
+"gui_boat_inspection_100" time elapsed: 00:00:18
+----------------------------------------------------------
+
+11/45 Testing: gui_graphics_render_150
+11/45 Test: gui_graphics_render_150
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/150"
+Directory: C:/spdeps/guibuild
+"gui_graphics_render_150" start time: Nov 04 09:51 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+<end of output>
+Test time =  73.32 sec
+----------------------------------------------------------
+Test Passed.
+"gui_graphics_render_150" end time: Nov 04 09:52 Mitteleuropäische Zeit
+"gui_graphics_render_150" time elapsed: 00:01:13
+----------------------------------------------------------
+
+12/45 Testing: gui_workspace_tabs_150
+12/45 Test: gui_workspace_tabs_150
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--main-window-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/workspace-tabs-150"
+Directory: C:/spdeps/guibuild
+"gui_workspace_tabs_150" start time: Nov 04 09:52 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "devicePixelRatio": 1.5,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  35.34 sec
+----------------------------------------------------------
+Test Passed.
+"gui_workspace_tabs_150" end time: Nov 04 09:53 Mitteleuropäische Zeit
+"gui_workspace_tabs_150" time elapsed: 00:00:35
+----------------------------------------------------------
+
+13/45 Testing: gui_dynamic_layout_150
+13/45 Test: gui_dynamic_layout_150
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--dynamic-layout-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/dynamic-layout-150"
+Directory: C:/spdeps/guibuild
+"gui_dynamic_layout_150" start time: Nov 04 09:53 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+<end of output>
+Test time =   9.20 sec
+----------------------------------------------------------
+Test Passed.
+"gui_dynamic_layout_150" end time: Nov 04 09:53 Mitteleuropäische Zeit
+"gui_dynamic_layout_150" time elapsed: 00:00:09
+----------------------------------------------------------
+
+14/45 Testing: gui_boat_inspection_150
+14/45 Test: gui_boat_inspection_150
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--inspection-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/boat-inspection-150"
+Directory: C:/spdeps/guibuild
+"gui_boat_inspection_150" start time: Nov 04 09:53 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  19.20 sec
+----------------------------------------------------------
+Test Passed.
+"gui_boat_inspection_150" end time: Nov 04 09:53 Mitteleuropäische Zeit
+"gui_boat_inspection_150" time elapsed: 00:00:19
+----------------------------------------------------------
+
+15/45 Testing: gui_graphics_render_200
+15/45 Test: gui_graphics_render_200
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/200"
+Directory: C:/spdeps/guibuild
+"gui_graphics_render_200" start time: Nov 04 09:53 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+<end of output>
+Test time =  78.25 sec
+----------------------------------------------------------
+Test Passed.
+"gui_graphics_render_200" end time: Nov 04 09:54 Mitteleuropäische Zeit
+"gui_graphics_render_200" time elapsed: 00:01:18
+----------------------------------------------------------
+
+16/45 Testing: gui_workspace_tabs_200
+16/45 Test: gui_workspace_tabs_200
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--main-window-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/workspace-tabs-200"
+Directory: C:/spdeps/guibuild
+"gui_workspace_tabs_200" start time: Nov 04 09:54 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "devicePixelRatio": 2,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  35.46 sec
+----------------------------------------------------------
+Test Passed.
+"gui_workspace_tabs_200" end time: Nov 04 09:55 Mitteleuropäische Zeit
+"gui_workspace_tabs_200" time elapsed: 00:00:35
+----------------------------------------------------------
+
+17/45 Testing: gui_dynamic_layout_200
+17/45 Test: gui_dynamic_layout_200
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--dynamic-layout-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/dynamic-layout-200"
+Directory: C:/spdeps/guibuild
+"gui_dynamic_layout_200" start time: Nov 04 09:55 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+<end of output>
+Test time =   9.36 sec
+----------------------------------------------------------
+Test Passed.
+"gui_dynamic_layout_200" end time: Nov 04 09:55 Mitteleuropäische Zeit
+"gui_dynamic_layout_200" time elapsed: 00:00:09
+----------------------------------------------------------
+
+18/45 Testing: gui_boat_inspection_200
+18/45 Test: gui_boat_inspection_200
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_render_tests.exe" "--inspection-only" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/graphics-evidence/boat-inspection-200"
+Directory: C:/spdeps/guibuild
+"gui_boat_inspection_200" start time: Nov 04 09:55 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+<end of output>
+Test time =  18.39 sec
+----------------------------------------------------------
+Test Passed.
+"gui_boat_inspection_200" end time: Nov 04 09:55 Mitteleuropäische Zeit
+"gui_boat_inspection_200" time elapsed: 00:00:18
+----------------------------------------------------------
+
+19/45 Testing: gui_graphics_dialog
+19/45 Test: gui_graphics_dialog
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_graphics_dialog_tests.exe"
+Directory: C:/spdeps/guibuild
+"gui_graphics_dialog" start time: Nov 04 09:55 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Static table, immediate persistence, dependencies and rollback passed
+<end of output>
+Test time =   0.13 sec
+----------------------------------------------------------
+Test Passed.
+"gui_graphics_dialog" end time: Nov 04 09:55 Mitteleuropäische Zeit
+"gui_graphics_dialog" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/45 Testing: gui_core_integration
+20/45 Test: gui_core_integration
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_core_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/testdata/stationaere_referenz/modell.json"
+Directory: C:/spdeps/guibuild
+"gui_core_integration" start time: Nov 04 09:55 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Stationary zero-load evidence: {"abdriftwinkel_rad":null,"aeussere_kraft_welt_n":[0,0,-1.4551915228366852e-11],"aeusseres_moment_modell_nm":[0,0,0],"aktiv":false,"angriffspunkt_modell_m":[0,0,0],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":0,"geschwindigkeit_relativ_wasser_m_s":[0,0,0],"iterationen":0,"konvergiert":true,"kraft_bezugssystem":"welt","kraft_n":[0,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":false,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[0,0,-1.4551915228366852e-11],"residuum_kraft_welt_n":[0,0,-1.4551915228366852e-11],"residuum_moment_bewegung_modell_nm":[0,0,0],"residuum_moment_modell_nm":[0,0,0],"status":"konvergiert","stellungen":[]}
+420 reference active=0 runtime=1.15341 status=konvergiert error= result={"abdriftwinkel_rad":null,"aeussere_kraft_welt_n":[0,0,0.0001441570927909197],"aeusseres_moment_modell_nm":[1.1561247752034376e-05,0.00013466613044954556,1.3545914145929316e-07],"aktiv":false,"angriffspunkt_modell_m":[1,0,0],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":0,"geschwindigkeit_relativ_wasser_m_s":[0,0,0],"iterationen":0,"konvergiert":true,"kraft_bezugssystem":"modell","kraft_n":[100,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":true,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[0,0,0.0001441570927909197],"residuum_kraft_welt_n":[0,0,0.0001441570927909197],"residuum_moment_bewegung_modell_nm":[1.1561247752034376e-05,0.00013466613044954556,1.3545914145929316e-07],"residuum_moment_modell_nm":[1.1561247752034376e-05,0.00013466613044954556,1.3545914145929316e-07],"status":"konvergiert","stellungen":[{"element_id":"Ruder","wert":0},{"element_id":"Schwert","wert":100}]}
+420 reference active=1 runtime=1.45118 status=nicht_konvergiert error= result={"abdriftwinkel_rad":-0.00017939153536254636,"aeussere_kraft_welt_n":[-0.0003452449920331446,0.102321153959226,2.7371389300423488e-05],"aeusseres_moment_modell_nm":[-0.000362724854698019,-0.00036076441266885695,0.12837747608759442],"aktiv":true,"angriffspunkt_modell_m":[1,0,0],"diagnose":"CORE-SIM-0004: Liniensuche stagniert.","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":1.987110110923482,"geschwindigkeit_relativ_wasser_m_s":[1.987110078949566,-0.00035647073182105325,0],"iterationen":6,"konvergiert":false,"kraft_bezugssystem":"modell","kraft_n":[100,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":true,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[-0.0003452449920331446,0.102321153959226,2.7371389300423488e-05],"residuum_kraft_welt_n":[-0.0003452449920331446,0.102321153959226,2.7371389300423488e-05],"residuum_moment_bewegung_modell_nm":[-0.000362724854698019,-0.00036076441266885695,0.12837747608759442],"residuum_moment_modell_nm":[-0.000362724854698019,-0.00036076441266885695,0.12837747608759442],"status":"nicht_konvergiert","stellungen":[{"element_id":"Ruder","wert":0},{"element_id":"Schwert","wert":100}]}
+420 steering diagnostic 0.0114: {"abdriftwinkel_rad":-3.0399002066304787e-05,"aeussere_kraft_welt_n":[-1.0251940722127983e-05,0.00042906302018020065,1.2716092863129802e-06],"aeusseres_moment_modell_nm":[-1.1497568392498936e-07,-2.2283940168676963e-06,0.0005382329631613558],"aktiv":true,"angriffspunkt_modell_m":[1,0,0],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":1.9871095118404243,"geschwindigkeit_relativ_wasser_m_s":[1.987109510922281,-6.040614614710741e-05,0],"iterationen":6,"konvergiert":true,"kraft_bezugssystem":"modell","kraft_n":[100,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":true,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[-1.0251940722127983e-05,0.00042906302018020065,1.2716092863129802e-06],"residuum_kraft_welt_n":[-1.0251940722127983e-05,0.00042906302018020065,1.2716092863129802e-06],"residuum_moment_bewegung_modell_nm":[-1.1497568392498936e-07,-2.2283940168676963e-06,0.0005382329631613558],"residuum_moment_modell_nm":[-1.1497568392498936e-07,-2.2283940168676963e-06,0.0005382329631613558],"status":"konvergiert","stellungen":[{"element_id":"Ruder","wert":0.0114},{"element_id":"Schwert","wert":100}]}
+420 turning from rest rudder=0 rate_rad_s=0.000125892 runtime=2.2691 iterations=2
+420 turning from rest rudder=1 rate_rad_s=-0.010865 runtime=2.413 iterations=2
+420 turning from rest rudder=-1 rate_rad_s=0.0111172 runtime=2.61099 iterations=2
+420 turning from rest rudder=24 rate_rad_s=-0.301538 runtime=3.33647 iterations=4
+420 turning from rest rudder=-24 rate_rad_s=0.305284 runtime=2.70539 iterations=4
+Unbalanced load status: rangdefizit; diagnostic: ; states: 1
+Analytical stationary adapter evidence: {"abdriftwinkel_rad":-1.4303179604503466e-29,"aeussere_kraft_welt_n":[-0.0034430454804805777,-4.586258571628973e-27,8.526512829121243e-14],"aeusseres_moment_modell_nm":[-2.714004450138345e-13,-0.0010329136442805975,-3.865722193614384e-17],"aktiv":true,"angriffspunkt_modell_m":[0,0,-0.4],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":1.118035271896449,"geschwindigkeit_relativ_wasser_m_s":[1.118035271896449,-1.5991459298104777e-29,0],"iterationen":9,"konvergiert":true,"kraft_bezugssystem":"welt","kraft_n":[1500,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":false,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":false,"residuum_kraft_bewegung_welt_n":[-0.0034430454804805777,-4.586258571628973e-27,8.526512829121243e-14],"residuum_kraft_welt_n":[-0.0034430454804805777,-4.586258571628973e-27,8.526512829121243e-14],"residuum_moment_bewegung_modell_nm":[-2.714004450138345e-13,-0.0010329136442805975,-3.865722193614384e-17],"residuum_moment_modell_nm":[-2.714004450138345e-13,-0.0010329136442805975,-3.865722193614384e-17],"status":"konvergiert","stellungen":[]}
+Core circle adapter status=konvergiert error=
+Shared Core circle adapter evidence: {"abdriftwinkel_rad":0,"aeussere_kraft_welt_n":[0,3199.9999999999995,-1.1368683772161603e-13],"aeusseres_moment_modell_nm":[62.30693476939268,0,0],"aktiv":true,"angriffspunkt_modell_m":[0,0.07348285550726323,0.36250230691770285],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":2,"geschwindigkeit_relativ_wasser_m_s":[2,0,0],"iterationen":0,"konvergiert":true,"kraft_bezugssystem":"modell","kraft_n":[0,3136.213049091973,-635.7418585441958],"krafttoleranz_n":0.05,"kurvenfahrt":true,"loesungstyp":"kurvenfahrt","modellfest":true,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0.07946773231802445,0.3920266311364966],"radius_m":5,"radius_status":"gueltig","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[0,0,-1.1368683772161603e-13],"residuum_kraft_welt_n":[0,0,-1.1368683772161603e-13],"residuum_moment_bewegung_modell_nm":[8.640199666842818e-12,0,0],"residuum_moment_modell_nm":[8.640199666842818e-12,0,0],"status":"konvergiert","stellungen":[]}
+Core adapter validation, static hydrostatics and dynamic run passed.
+<end of output>
+Test time =  30.58 sec
+----------------------------------------------------------
+Test Passed.
+"gui_core_integration" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"gui_core_integration" time elapsed: 00:00:30
+----------------------------------------------------------
+
+21/45 Testing: gui_model_catalog
+21/45 Test: gui_model_catalog
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_catalog_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle"
+Directory: C:/spdeps/guibuild
+"gui_model_catalog" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Model catalog via core passed.
+<end of output>
+Test time =  25.12 sec
+----------------------------------------------------------
+Test Passed.
+"gui_model_catalog" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"gui_model_catalog" time elapsed: 00:00:25
+----------------------------------------------------------
+
+22/45 Testing: gui_display_mesh
+22/45 Test: gui_display_mesh
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_mesh_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle"
+Directory: C:/spdeps/guibuild
+"gui_display_mesh" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Display geometry via core passed.
+<end of output>
+Test time =   1.60 sec
+----------------------------------------------------------
+Test Passed.
+"gui_display_mesh" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"gui_display_mesh" time elapsed: 00:00:01
+----------------------------------------------------------
+
+23/45 Testing: gui_force_display
+23/45 Test: gui_force_display
+Command: "C:/spdeps/guibuild/Release/segelphysik_gui_force_display_tests.exe"
+Directory: C:/spdeps/guibuild
+"gui_force_display" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Force display logic passed (731 checks).
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gui_force_display" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"gui_force_display" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/45 Testing: modellaufbereitung
+24/45 Test: modellaufbereitung
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/aufbereitung_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/folkeboot/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"modellaufbereitung" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Modellaufbereitung: alle Referenzen bestanden
+<end of output>
+Test time =   2.40 sec
+----------------------------------------------------------
+Test Passed.
+"modellaufbereitung" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"modellaufbereitung" time elapsed: 00:00:02
+----------------------------------------------------------
+
+25/45 Testing: pose_transformations
+25/45 Test: pose_transformations
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/pose_tests.exe"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"pose_transformations" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"pose_transformations" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"pose_transformations" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/45 Testing: hydrostatik_referenzen
+26/45 Test: hydrostatik_referenzen
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/physik_tests.exe"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"hydrostatik_referenzen" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Stationaere Flutung: repeats=1, geflutet=Rumpf
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"hydrostatik_referenzen" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"hydrostatik_referenzen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+27/45 Testing: hydrodynamik_referenzen
+27/45 Test: hydrodynamik_referenzen
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/hydrodynamik_tests.exe"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"hydrodynamik_referenzen" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Hydrodynamiktests bestanden
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"hydrodynamik_referenzen" end time: Nov 04 09:56 Mitteleuropäische Zeit
+"hydrodynamik_referenzen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/45 Testing: hydrodynamik_referenzmodelle
+28/45 Test: hydrodynamik_referenzmodelle
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/hydrodynamik_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/optimist/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/folkeboot/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/bleistift/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/kegel/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/kugel/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/platte/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/pyramide/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/rolle/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/unregelmaessig/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"hydrodynamik_referenzmodelle" start time: Nov 04 09:56 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Hydrodynamiktests bestanden
+<end of output>
+Test time =   2.81 sec
+----------------------------------------------------------
+Test Passed.
+"hydrodynamik_referenzmodelle" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"hydrodynamik_referenzmodelle" time elapsed: 00:00:02
+----------------------------------------------------------
+
+29/45 Testing: lateraldruckpunkt
+29/45 Test: lateraldruckpunkt
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/lateraldruckpunkt_tests.exe"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"lateraldruckpunkt" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Lateraldruckpunkttests bestanden
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"lateraldruckpunkt" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"lateraldruckpunkt" time elapsed: 00:00:00
+----------------------------------------------------------
+
+30/45 Testing: hydrodynamik_traegheit
+30/45 Test: hydrodynamik_traegheit
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/traegheit_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/kugel/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/optimist/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/folkeboot/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"hydrodynamik_traegheit" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Traegheitstests bestanden
+<end of output>
+Test time =   1.89 sec
+----------------------------------------------------------
+Test Passed.
+"hydrodynamik_traegheit" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"hydrodynamik_traegheit" time elapsed: 00:00:01
+----------------------------------------------------------
+
+31/45 Testing: temporaerer_testantrieb
+31/45 Test: temporaerer_testantrieb
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/testantrieb_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"temporaerer_testantrieb" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Testantrieb: Geometrie, Kraft/Moment, Integration, Grenze, Ereignisse, V2/V3, Batch und 420 bestanden.
+<end of output>
+Test time =   1.20 sec
+----------------------------------------------------------
+Test Passed.
+"temporaerer_testantrieb" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"temporaerer_testantrieb" time elapsed: 00:00:01
+----------------------------------------------------------
+
+32/45 Testing: simulation_gesamtlauf
+32/45 Test: simulation_gesamtlauf
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/simulation_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/testdata/stationaere_referenz/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"simulation_gesamtlauf" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Stationaer analytisch: v=1.118035272 m/s, max|F|=0.00344304548 N, max|M|=0.001032913644 Nm, ftol=0.05 N, mtol=0.05 Nm
+Exzentrische Kraft: Moment um S=[6.074006715e-10,450,0] Nm
+Galilei: delta Relativgeschwindigkeit=1.281878563e-06 m/s
+Mehrfachstellungen 420: status=konvergiert, iter=0
+<end of output>
+Test time =   1.30 sec
+----------------------------------------------------------
+Test Passed.
+"simulation_gesamtlauf" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"simulation_gesamtlauf" time elapsed: 00:00:01
+----------------------------------------------------------
+
+33/45 Testing: stationaere_kurvenfahrt
+33/45 Test: stationaere_kurvenfahrt
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/stationaere_kurvenfahrt_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/testdata/stationaere_kurvenreferenz/modell.json" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/420/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"stationaere_kurvenfahrt" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+420 0 deg: konvergiert, r=0.000125892 rad/s, iterations=2, seconds=1.61818, F=0.000124304,-6.6533e-06,1.34089e-05, M=4.74069e-06,-7.01489e-05,8.33111e-05, 
+420 1 deg: konvergiert, r=-0.010865 rad/s, iterations=2, seconds=1.81302, F=0.000164649,5.01914e-05,4.52377e-05, M=1.43374e-05,-0.000119522,0.000189722, 
+420 -1 deg: konvergiert, r=0.0111172 rad/s, iterations=2, seconds=2.07357, F=-0.00012214,-7.69421e-05,2.45391e-05, M=-1.23954e-05,2.05982e-05,-2.01869e-05, 
+420 12 deg: konvergiert, r=-0.179273 rad/s, iterations=3, seconds=2.22271, F=-0.00250876,-0.00380587,0.00128035, M=-0.00317244,-0.00169538,-0.00353405, 
+420 -12 deg: konvergiert, r=0.181387 rad/s, iterations=3, seconds=2.71957, F=-0.00270342,0.00365266,0.00170046, M=0.00139339,-0.000528963,0.000897333, 
+420 24 deg: konvergiert, r=-0.301538 rad/s, iterations=4, seconds=2.82096, F=-0.0160358,-1.05843e-05,0.00568496, M=-0.00211987,0.0060477,-0.00461406, 
+420 -24 deg: konvergiert, r=0.305284 rad/s, iterations=4, seconds=1.91366, F=-0.00117913,-0.00059618,0.000983243, M=0.000281722,-0.000530183,0.000380897, 
+420 36 deg: konvergiert, r=-0.374608 rad/s, iterations=7, seconds=2.77721, F=-0.00102293,0.000864748,0.000198798, M=0.000176022,-9.47567e-07,-0.000650044, 
+420 -36 deg: konvergiert, r=0.379516 rad/s, iterations=7, seconds=2.87464, F=-0.000103198,-0.00016833,6.84479e-05, M=-3.46096e-05,-1.62964e-07,7.63974e-05, 
+<end of output>
+Test time =  21.93 sec
+----------------------------------------------------------
+Test Passed.
+"stationaere_kurvenfahrt" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"stationaere_kurvenfahrt" time elapsed: 00:00:21
+----------------------------------------------------------
+
+34/45 Testing: modell_import
+34/45 Test: modell_import
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/modell_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"modell_import" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Modellimport: alle Pruefungen bestanden.
+<end of output>
+Test time =   0.26 sec
+----------------------------------------------------------
+Test Passed.
+"modell_import" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"modell_import" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/45 Testing: core_build_configuration
+35/45 Test: core_build_configuration
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/core_tests.exe"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"core_build_configuration" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"core_build_configuration" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"core_build_configuration" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/45 Testing: kraft_momentenbilanz
+36/45 Test: kraft_momentenbilanz
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/bilanz_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle/quader/modell.json"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"kraft_momentenbilanz" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"kraft_momentenbilanz" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"kraft_momentenbilanz" time elapsed: 00:00:00
+----------------------------------------------------------
+
+37/45 Testing: modellkatalog_schnittstelle
+37/45 Test: modellkatalog_schnittstelle
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/katalog_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"modellkatalog_schnittstelle" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   4.57 sec
+----------------------------------------------------------
+Test Passed.
+"modellkatalog_schnittstelle" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"modellkatalog_schnittstelle" time elapsed: 00:00:04
+----------------------------------------------------------
+
+38/45 Testing: modellinspektion_c08
+38/45 Test: modellinspektion_c08
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/inspektion_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/segelphysik-core"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"modellinspektion_c08" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+Core inspection contracts passed
+<end of output>
+Test time =   7.28 sec
+----------------------------------------------------------
+Test Passed.
+"modellinspektion_c08" end time: Nov 04 09:57 Mitteleuropäische Zeit
+"modellinspektion_c08" time elapsed: 00:00:07
+----------------------------------------------------------
+
+39/45 Testing: modell_geometrie_v2
+39/45 Test: modell_geometrie_v2
+Command: "C:/spdeps/guibuild/segelphysik-core/Release/modell_v2_tests.exe" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/Modelle" "C:/spdeps/guibuild/segelphysik-core"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"modell_geometrie_v2" start time: Nov 04 09:57 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+optimist: exact physics/display/movement equivalence
+420: exact physics/display/movement equivalence
+folkeboot: exact physics/display/movement equivalence
+bleistift: exact physics/display/movement equivalence
+kegel: exact physics/display/movement equivalence
+kugel: exact physics/display/movement equivalence
+platte: exact physics/display/movement equivalence
+pyramide: exact physics/display/movement equivalence
+quader: exact physics/display/movement equivalence
+rolle: exact physics/display/movement equivalence
+unregelmaessig: exact physics/display/movement equivalence
+420: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+folkeboot: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+optimist: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+<end of output>
+Test time =  52.71 sec
+----------------------------------------------------------
+Test Passed.
+"modell_geometrie_v2" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"modell_geometrie_v2" time elapsed: 00:00:52
+----------------------------------------------------------
+
+40/45 Testing: cli_help
+40/45 Test: cli_help
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=help" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_help" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"cli_help" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_help" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/45 Testing: cli_build_info
+41/45 Test: cli_build_info
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=build_info" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_build_info" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"cli_build_info" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_build_info" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/45 Testing: cli_error_catalog
+42/45 Test: cli_error_catalog
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=error_catalog" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_error_catalog" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"cli_error_catalog" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_error_catalog" time elapsed: 00:00:00
+----------------------------------------------------------
+
+43/45 Testing: cli_no_arguments
+43/45 Test: cli_no_arguments
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=no_arguments" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_no_arguments" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"cli_no_arguments" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_no_arguments" time elapsed: 00:00:00
+----------------------------------------------------------
+
+44/45 Testing: cli_invalid_argument
+44/45 Test: cli_invalid_argument
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=invalid_argument" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_invalid_argument" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"cli_invalid_argument" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_invalid_argument" time elapsed: 00:00:00
+----------------------------------------------------------
+
+45/45 Testing: cli_extra_argument
+45/45 Test: cli_extra_argument
+Command: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" "-DCLI=C:/spdeps/guibuild/segelphysik-core/Release/segelphysik_cli.exe" "-DSCENARIO=extra_argument" "-DINSTRUMENTATION=OFF" "-DCATALOG=C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/ressourcen/fehlerkatalog.json" "-P" "C:/_DATEN/Code/Python/Organisierter Code/Segelphysik/CORE/Code/tests/cli_test.cmake"
+Directory: C:/spdeps/guibuild/segelphysik-core
+"cli_extra_argument" start time: Nov 04 09:58 Mitteleuropäische Zeit
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"cli_extra_argument" end time: Nov 04 09:58 Mitteleuropäische Zeit
+"cli_extra_argument" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 04 09:58 Mitteleuropäische Zeit

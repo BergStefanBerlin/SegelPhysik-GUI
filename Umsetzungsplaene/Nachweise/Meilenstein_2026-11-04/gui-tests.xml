@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="Win32-MSBuild"
+	tests="45"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname="KleinerSchwarzer"
+	time="606"
+	timestamp="2026-11-04T09:48:26"
+	>
+	<testcase name="gui_water_motion" classname="gui_water_motion" time="0.0226194" status="run">
+		<properties/>
+		<system-out>Water history: spatial interpolation, rotation/heave, reference breaks, age/budget, rewind and contact direction passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_navigation" classname="gui_navigation" time="0.084076" status="run">
+		<properties/>
+		<system-out>Navigation: math, SVG bindings, singularities and draggable/resizable overlay passed
+</system-out>
+	</testcase>
+	<testcase name="gui_graphics_settings" classname="gui_graphics_settings" time="0.447661" status="run">
+		<properties/>
+		<system-out>28 defaults/toggles, independent profiles, migration, subprocess restart and error cases passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_performance_regression" classname="gui_performance_regression" time="16.9992" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="gui_water_motion_render" classname="gui_water_motion_render" time="19.6978" status="run">
+		<properties/>
+		<system-out>{
+    "420": {
+        "cameraAndPhysicsInvariant": true,
+        "capExercised": true,
+        "contactAndNoContact": true,
+        "modelFingerprint": "fnv1a64:5cc5842cbbd3001c",
+        "replayInvariant": true,
+        "states": 101,
+        "supports": 20,
+        "syntheticMotionImageIsNotPhysicsEvidence": true,
+        "trackLines": 23,
+        "wakeLines": 38
+    },
+    "folkeboot": {
+        "cameraAndPhysicsInvariant": true,
+        "capExercised": true,
+        "contactAndNoContact": true,
+        "modelFingerprint": "fnv1a64:a2edc6b0146bcd48",
+        "replayInvariant": true,
+        "states": 101,
+        "supports": 12,
+        "syntheticMotionImageIsNotPhysicsEvidence": true,
+        "trackLines": 13,
+        "wakeLines": 22
+    },
+    "sharedDynamicForceEditableAndRewind": true,
+    "simpleBodyFixedCOMRotationDriftAndReverse": true,
+    "unrepresentableMarksIsolatedWithDiagnostic": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_navigation_camera" classname="gui_navigation_camera" time="8.26993" status="run">
+		<properties/>
+		<system-out>Body-fixed camera: short real 420 run, translation, roll/pitch/yaw, 14 presets, free edit, rewind and clear-state passed
+</system-out>
+	</testcase>
+	<testcase name="gui_graphics_render_100" classname="gui_graphics_render_100" time="67.0733" status="run">
+		<properties/>
+		<system-out>Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+</system-out>
+	</testcase>
+	<testcase name="gui_workspace_tabs_100" classname="gui_workspace_tabs_100" time="34.3305" status="run">
+		<properties/>
+		<system-out>{
+    "devicePixelRatio": 1,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_dynamic_layout_100" classname="gui_dynamic_layout_100" time="8.83733" status="run">
+		<properties/>
+		<system-out>Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_boat_inspection_100" classname="gui_boat_inspection_100" time="18.2081" status="run">
+		<properties/>
+		<system-out>{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_graphics_render_150" classname="gui_graphics_render_150" time="73.319" status="run">
+		<properties/>
+		<system-out>Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+</system-out>
+	</testcase>
+	<testcase name="gui_workspace_tabs_150" classname="gui_workspace_tabs_150" time="35.3388" status="run">
+		<properties/>
+		<system-out>{
+    "devicePixelRatio": 1.5,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_dynamic_layout_150" classname="gui_dynamic_layout_150" time="9.19935" status="run">
+		<properties/>
+		<system-out>Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_boat_inspection_150" classname="gui_boat_inspection_150" time="19.1979" status="run">
+		<properties/>
+		<system-out>{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_graphics_render_200" classname="gui_graphics_render_200" time="78.2504" status="run">
+		<properties/>
+		<system-out>Feature off: water
+Feature off: fresnel
+Feature off: depth
+Feature off: waterNormals
+Feature off: animation
+Feature off: waterIBL
+Feature off: reflection
+Feature off: sky
+Feature off: haze
+Feature off: modelIBL
+Feature off: lights
+Feature off: shadows
+Feature off: pbr
+Feature off: coat
+Feature off: colorTexture
+Feature off: orm
+Feature off: normalTexture
+Feature off: anisotropy
+Feature off: cloth
+Feature off: fxaa
+Feature off: ssao
+Feature off: peeling
+Feature off: smooth
+Feature off: waterline
+Feature off: grid
+Feature off: axes
+Feature off: trail
+Feature off: bodyTransparency
+Feature off: wake
+Feature off: waterTrack
+Feature off: distanceMarks
+Folkeboot profiles, 31 feature-off cases and all-off rendered; evidence saved.
+</system-out>
+	</testcase>
+	<testcase name="gui_workspace_tabs_200" classname="gui_workspace_tabs_200" time="35.4622" status="run">
+		<properties/>
+		<system-out>{
+    "devicePixelRatio": 2,
+    "liveMovementOverlay": true,
+    "mainWindowIntegration": true,
+    "navigationOverlayAnd14CameraPresets": true,
+    "stationaryTurningAndSignedCourseRate": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_dynamic_layout_200" classname="gui_dynamic_layout_200" time="9.35649" status="run">
+		<properties/>
+		<system-out>Dynamic layout, live Core snapshots, table, view swaps and body/world camera passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_boat_inspection_200" classname="gui_boat_inspection_200" time="18.3861" status="run">
+		<properties/>
+		<system-out>{
+    "boatInspectionTreesMeshesValuesFixedSnapshotAndLayout": true,
+    "unifiedModelFormatRendered": true,
+    "workspaceTabsIsolatedInspectionAndFixedInactiveColors": true
+}
+</system-out>
+	</testcase>
+	<testcase name="gui_graphics_dialog" classname="gui_graphics_dialog" time="0.12774" status="run">
+		<properties/>
+		<system-out>Static table, immediate persistence, dependencies and rollback passed
+</system-out>
+	</testcase>
+	<testcase name="gui_core_integration" classname="gui_core_integration" time="30.5785" status="run">
+		<properties/>
+		<system-out>Stationary zero-load evidence: {"abdriftwinkel_rad":null,"aeussere_kraft_welt_n":[0,0,-1.4551915228366852e-11],"aeusseres_moment_modell_nm":[0,0,0],"aktiv":false,"angriffspunkt_modell_m":[0,0,0],"diagnose":"","flutungswiederholungen":0,"geschwindigkeit_relativ_wasser_betrag_m_s":0,"geschwindigkeit_relativ_wasser_m_s":[0,0,0],"iterationen":0,"konvergiert":true,"kraft_bezugssystem":"welt","kraft_n":[0,0,0],"krafttoleranz_n":0.05,"kurvenfahrt":false,"loesungstyp":"geradeaus","modellfest":false,"momenttoleranz_nm":0.05,"omega_modell_rad_s":[0,0,0],"radius_m":null,"radius_status":"geradeaus","referenzkurs_verwendet":true,"residuum_kraft_bewegung_welt_n":[0,0,-1.4551915228366852e-11],"residuum_kraft_welt_n":[0,0,-1.4551915228366852e-11],"residuum_moment_bewegung_modell_nm":[0,0,0],"residuum_moment_modell_nm":[0,0,0],"status":"konvergiert","stellungen":[]}
+420 reference active=0 runtime=1.15341 status=konvergiert error= result={"abdriftwinkel_rad":null,"aeussere_kraft_welt_n":[0,0,0.0001441570927909197],"aeusseres_m...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="gui_model_catalog" classname="gui_model_catalog" time="25.1188" status="run">
+		<properties/>
+		<system-out>Model catalog via core passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_display_mesh" classname="gui_display_mesh" time="1.59974" status="run">
+		<properties/>
+		<system-out>Display geometry via core passed.
+</system-out>
+	</testcase>
+	<testcase name="gui_force_display" classname="gui_force_display" time="0.0242468" status="run">
+		<properties/>
+		<system-out>Force display logic passed (731 checks).
+</system-out>
+	</testcase>
+	<testcase name="modellaufbereitung" classname="modellaufbereitung" time="2.40439" status="run">
+		<properties/>
+		<system-out>Modellaufbereitung: alle Referenzen bestanden
+</system-out>
+	</testcase>
+	<testcase name="pose_transformations" classname="pose_transformations" time="0.0117415" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="hydrostatik_referenzen" classname="hydrostatik_referenzen" time="0.0161492" status="run">
+		<properties/>
+		<system-out>Stationaere Flutung: repeats=1, geflutet=Rumpf
+</system-out>
+	</testcase>
+	<testcase name="hydrodynamik_referenzen" classname="hydrodynamik_referenzen" time="0.0237315" status="run">
+		<properties/>
+		<system-out>Hydrodynamiktests bestanden
+</system-out>
+	</testcase>
+	<testcase name="hydrodynamik_referenzmodelle" classname="hydrodynamik_referenzmodelle" time="2.8059" status="run">
+		<properties/>
+		<system-out>Hydrodynamiktests bestanden
+</system-out>
+	</testcase>
+	<testcase name="lateraldruckpunkt" classname="lateraldruckpunkt" time="0.0140996" status="run">
+		<properties/>
+		<system-out>Lateraldruckpunkttests bestanden
+</system-out>
+	</testcase>
+	<testcase name="hydrodynamik_traegheit" classname="hydrodynamik_traegheit" time="1.88732" status="run">
+		<properties/>
+		<system-out>Traegheitstests bestanden
+</system-out>
+	</testcase>
+	<testcase name="temporaerer_testantrieb" classname="temporaerer_testantrieb" time="1.1954" status="run">
+		<properties/>
+		<system-out>Testantrieb: Geometrie, Kraft/Moment, Integration, Grenze, Ereignisse, V2/V3, Batch und 420 bestanden.
+</system-out>
+	</testcase>
+	<testcase name="simulation_gesamtlauf" classname="simulation_gesamtlauf" time="1.30089" status="run">
+		<properties/>
+		<system-out>Stationaer analytisch: v=1.118035272 m/s, max|F|=0.00344304548 N, max|M|=0.001032913644 Nm, ftol=0.05 N, mtol=0.05 Nm
+Exzentrische Kraft: Moment um S=[6.074006715e-10,450,0] Nm
+Galilei: delta Relativgeschwindigkeit=1.281878563e-06 m/s
+Mehrfachstellungen 420: status=konvergiert, iter=0
+</system-out>
+	</testcase>
+	<testcase name="stationaere_kurvenfahrt" classname="stationaere_kurvenfahrt" time="21.9304" status="run">
+		<properties/>
+		<system-out>420 0 deg: konvergiert, r=0.000125892 rad/s, iterations=2, seconds=1.61818, F=0.000124304,-6.6533e-06,1.34089e-05, M=4.74069e-06,-7.01489e-05,8.33111e-05, 
+420 1 deg: konvergiert, r=-0.010865 rad/s, iterations=2, seconds=1.81302, F=0.000164649,5.01914e-05,4.52377e-05, M=1.43374e-05,-0.000119522,0.000189722, 
+420 -1 deg: konvergiert, r=0.0111172 rad/s, iterations=2, seconds=2.07357, F=-0.00012214,-7.69421e-05,2.45391e-05, M=-1.23954e-05,2.05982e-05,-2.01869e-05, 
+420 12 deg: konvergiert, r=-0.179273 rad/s, iterations=3, seconds=2.22271, F=-0.00250876,-0.00380587,0.00128035, M=-0.00317244,-0.00169538,-0.00353405, 
+420 -12 deg: konvergiert, r=0.181387 rad/s, iterations=3, seconds=2.71957, F=-0.00270342,0.00365266,0.00170046, M=0.00139339,-0.000528963,0.000897333, 
+420 24 deg: konvergiert, r=-0.301538 rad/s, iterations=4, seconds=2.82096, F=-0.0160358,-1.05843e-05,0.00568496, M=-0.00211987,0.0060477,-0.00461406, 
+420 -24 deg: konvergiert, r=0.305284 rad/s, iterations=4, seconds=1.91366, F=-0.00117913,-0.00059618,...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="modell_import" classname="modell_import" time="0.263131" status="run">
+		<properties/>
+		<system-out>Modellimport: alle Pruefungen bestanden.
+</system-out>
+	</testcase>
+	<testcase name="core_build_configuration" classname="core_build_configuration" time="0.0105082" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="kraft_momentenbilanz" classname="kraft_momentenbilanz" time="0.0118243" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="modellkatalog_schnittstelle" classname="modellkatalog_schnittstelle" time="4.56877" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="modellinspektion_c08" classname="modellinspektion_c08" time="7.2797" status="run">
+		<properties/>
+		<system-out>Core inspection contracts passed
+</system-out>
+	</testcase>
+	<testcase name="modell_geometrie_v2" classname="modell_geometrie_v2" time="52.7057" status="run">
+		<properties/>
+		<system-out>optimist: exact physics/display/movement equivalence
+420: exact physics/display/movement equivalence
+folkeboot: exact physics/display/movement equivalence
+bleistift: exact physics/display/movement equivalence
+kegel: exact physics/display/movement equivalence
+kugel: exact physics/display/movement equivalence
+platte: exact physics/display/movement equivalence
+pyramide: exact physics/display/movement equivalence
+quader: exact physics/display/movement equivalence
+rolle: exact physics/display/movement equivalence
+unregelmaessig: exact physics/display/movement equivalence
+420: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+folkeboot: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+optimist: derived source regression; maximum wet volume delta=0 m3, maximum state component delta=0
+</system-out>
+	</testcase>
+	<testcase name="cli_help" classname="cli_help" time="0.0395972" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="cli_build_info" classname="cli_build_info" time="0.0348425" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="cli_error_catalog" classname="cli_error_catalog" time="0.0367241" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="cli_no_arguments" classname="cli_no_arguments" time="0.0438599" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="cli_invalid_argument" classname="cli_invalid_argument" time="0.0438356" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="cli_extra_argument" classname="cli_extra_argument" time="0.0439001" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+</testsuite>

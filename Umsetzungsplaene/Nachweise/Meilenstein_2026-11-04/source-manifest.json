@@ -1,0 +1,270 @@
+﻿{
+    "generated":  "2026-11-04T10:00:39.2806369+01:00",
+    "repository":  "SegelPhysik-GUI",
+    "gitHead":  "14778a03cb5e2fe073ba3915c384d2dc6a4044a3",
+    "coreGitHead":  "a8c1ddcdab75366f6eed16b91e672fd4168273ef",
+    "workingTree":  "uncommitted",
+    "configuration":  "Release; BUILD_TESTING=ON; SEGELPHYSIK_GRAPHICS_GPU_TEST=ON; SEGELPHYSIK_TEST_INSTRUMENTATION=OFF",
+    "tests":  {
+                  "count":  45,
+                  "failures":  0,
+                  "skipped":  0,
+                  "disabled":  0
+              },
+    "binary":  {
+                   "path":  "C:\\spdeps\\guibuild\\Release\\segelphysik_gui.exe",
+                   "sha256":  "B2DE299C49DC1B88F322C15D1CE69ABBC196AC3C959ECAEC708B8CE2FFEA0A7E"
+               },
+    "sources":  [
+                    {
+                        "path":  "CMakeLists.txt",
+                        "sha256":  "C3B13E4BE208D6EDC66559174FA89B211D38CB9A57BB8F4D380FAEFECE8E4950"
+                    },
+                    {
+                        "path":  "Code\\resources\\checkmark.svg",
+                        "sha256":  "37822BA97063FD62E0A4AC7302CB2BD18BD080512EA5AB6B317365C9DE0E47C8"
+                    },
+                    {
+                        "path":  "Code\\resources\\navigation.qrc",
+                        "sha256":  "D2FD527B937ADF9280C8769E4D054803857C4A5AB3F21A2246B4DAB9EAEAD006"
+                    },
+                    {
+                        "path":  "Code\\resources\\navigation\\Widget_Kompass.svg",
+                        "sha256":  "19EE51F631317886ED0E10AD9FFDE4B36F5FB1EA65A74670A68F572E002FA318"
+                    },
+                    {
+                        "path":  "Code\\resources\\navigation\\Widget_Kraengung.svg",
+                        "sha256":  "74A32917516F67980B6AC242E7BD011F4F007FAC50E06F7DC31D8A27727EE49A"
+                    },
+                    {
+                        "path":  "Code\\resources\\navigation\\Widget_Stampfen.svg",
+                        "sha256":  "D6FF611A933E1E42B44A6AAA286D4FA3A5D5C1605E021121EB1240D52D39610A"
+                    },
+                    {
+                        "path":  "Code\\src\\boat_inspection.cpp",
+                        "sha256":  "0A9E21AB8D53D2F963D3072E4D15368A908F7EABF4CD3BB2EC8408356F5A70E1"
+                    },
+                    {
+                        "path":  "Code\\src\\boat_inspection.hpp",
+                        "sha256":  "FDE066028603586593538BAA71E84260FC56B66B1308DF11AD93C13B4C7465D4"
+                    },
+                    {
+                        "path":  "Code\\src\\core_adapter.cpp",
+                        "sha256":  "3C8EC2916B0D0682FA192A60B032B22A11A3880CD1050E5B30AE79D0171E57CA"
+                    },
+                    {
+                        "path":  "Code\\src\\core_adapter.hpp",
+                        "sha256":  "BF77D11DF6C3D25E13F97DE1D7AA7B5FB8A223082FAF5E6CD5CA4D449477118D"
+                    },
+                    {
+                        "path":  "Code\\src\\display_geometry.cpp",
+                        "sha256":  "901504480907277B63C5B38FA1C771595D6D10DCA01195EB3C4980DA114795F6"
+                    },
+                    {
+                        "path":  "Code\\src\\display_geometry.hpp",
+                        "sha256":  "1F818C2F04B4B531FFEC62654772CFDDC6BB62190967A7CCB27A6AF0F5A47D5E"
+                    },
+                    {
+                        "path":  "Code\\src\\filter_header.hpp",
+                        "sha256":  "45A8F50F9447F943A6DE74755D4292C5085DEB460542E312AEC9FE43CA8A6B4B"
+                    },
+                    {
+                        "path":  "Code\\src\\force_display.cpp",
+                        "sha256":  "04D52620E7C39CD5BDA8BEA696E19228531E5C350E4214FCA7258032A291FE5B"
+                    },
+                    {
+                        "path":  "Code\\src\\force_display.hpp",
+                        "sha256":  "072366219A2D47424CF5D8DAD9105B7E9B057D19C03919483951790EEA89039C"
+                    },
+                    {
+                        "path":  "Code\\src\\graphics_dialog.cpp",
+                        "sha256":  "C7ADBAE3E39D750748F6F7635CFF954E036208BEB9410564CD7453EDB157DD57"
+                    },
+                    {
+                        "path":  "Code\\src\\graphics_dialog.hpp",
+                        "sha256":  "EA08636CB72F101517A2D7DE0C200FC024204481C13853B19C8FEF19A100A052"
+                    },
+                    {
+                        "path":  "Code\\src\\graphics_settings.cpp",
+                        "sha256":  "0570484C1B2AE1F845B8756A7C877CFA0AE12EFD4928BC737EDCA5C477182215"
+                    },
+                    {
+                        "path":  "Code\\src\\graphics_settings.hpp",
+                        "sha256":  "445607B4A551D430D1A1BF1BF02B94F88B910E688A1E690F08238CD3A379CD75"
+                    },
+                    {
+                        "path":  "Code\\src\\main.cpp",
+                        "sha256":  "E8FE52547099DB3855CC6F733FF97878581AECA2328042CB100728BD2E6FFB9D"
+                    },
+                    {
+                        "path":  "Code\\src\\main_window.cpp",
+                        "sha256":  "5066AB79ECF66DBF94AF2305D6FE6E501EBAE70B1FFE0D0EB42A31778ECFFFCB"
+                    },
+                    {
+                        "path":  "Code\\src\\main_window.hpp",
+                        "sha256":  "55A2F9BC3BCF43FBD7E990D8770582C8C703EE03F244609A36FFA1BB629DC9CC"
+                    },
+                    {
+                        "path":  "Code\\src\\model_catalog.cpp",
+                        "sha256":  "B6638818843D1AEFB50DFE459D5CCEDA61FA26775F43914B09ACBE0D262B676B"
+                    },
+                    {
+                        "path":  "Code\\src\\model_catalog.hpp",
+                        "sha256":  "B0BAA8A9AD113CD71BB9240DCDD5F15B2890DFC381945E9B27D9A351DA7C7D0C"
+                    },
+                    {
+                        "path":  "Code\\src\\navigation.cpp",
+                        "sha256":  "290D33EB5FB3D11A0FEC28F1CE5409E122729A43F1A1B24F7A795B0897FEAF5C"
+                    },
+                    {
+                        "path":  "Code\\src\\navigation.hpp",
+                        "sha256":  "D5B7C1C4E1E0FF7C99A365DE91B0EF872947313E4C53535763F10DC400A95480"
+                    },
+                    {
+                        "path":  "Code\\src\\vtk_scene.cpp",
+                        "sha256":  "9415C459F42C234446DFEEBCBB22A2CC5FA66DBB819BE7B0E5050CD2A4FBE10C"
+                    },
+                    {
+                        "path":  "Code\\src\\vtk_scene.hpp",
+                        "sha256":  "0007DAD9F3566D8E302C30C20CF235932DA72D011ACC9C2009272211B74F11AA"
+                    },
+                    {
+                        "path":  "Code\\src\\water_motion.cpp",
+                        "sha256":  "F454231C317F61D3276E697D19A2B3F5137D10FAAEAA2381804D498D0CF893D1"
+                    },
+                    {
+                        "path":  "Code\\src\\water_motion.hpp",
+                        "sha256":  "A349F6C1A61114A24CD81C5B76A04A25A97768D76F506BAF42C7C065F4007BBC"
+                    },
+                    {
+                        "path":  "Code\\tests\\core_adapter_tests.cpp",
+                        "sha256":  "FEFF6F4B85FC043BFFF2341DCB6C6BF114E68EFDC72EA16F5D68C05197075BB8"
+                    },
+                    {
+                        "path":  "Code\\tests\\display_geometry_tests.cpp",
+                        "sha256":  "686601FBED6D9688A4DBF67C8EA303E91CF6D23C6EF42E66951A3CC06E68F757"
+                    },
+                    {
+                        "path":  "Code\\tests\\force_display_tests.cpp",
+                        "sha256":  "EFD9D0CFE1E1DE5D20F84882F3BD569F552521DAF9DAF5329F63F6F0AB377A30"
+                    },
+                    {
+                        "path":  "Code\\tests\\graphics_dialog_tests.cpp",
+                        "sha256":  "61B9DBBBE9A07CBBDEA7A45D37437F8E370160E969A8616A9F755634665A77BF"
+                    },
+                    {
+                        "path":  "Code\\tests\\graphics_render_tests.cpp",
+                        "sha256":  "3DFED349A49E41AF7AA4C91434E997C46815436BC735EBC1BAEC9C7D6140D33F"
+                    },
+                    {
+                        "path":  "Code\\tests\\graphics_settings_tests.cpp",
+                        "sha256":  "F21B3558B75385E27F65BF37777B074A164F07BC6E08CAA9849750246F732BDB"
+                    },
+                    {
+                        "path":  "Code\\tests\\model_catalog_tests.cpp",
+                        "sha256":  "E975D9A12520733386916FD04BCF0DB0C57E413F99FD9A5CEA12DFC121ADB6C3"
+                    },
+                    {
+                        "path":  "Code\\tests\\navigation_tests.cpp",
+                        "sha256":  "0B01238FAD1B10A90F21DD5085DDB6594D5105FBA4FE8FFF814859F76CA9D869"
+                    },
+                    {
+                        "path":  "Code\\tests\\water_motion_tests.cpp",
+                        "sha256":  "09A41DD1B77E47806541F698776F52CCA52CC279CC424B1794CB60A7319A14C1"
+                    },
+                    {
+                        "path":  "vcpkg.json",
+                        "sha256":  "EB436A808493B05A1FD2A5EFCECAFBF562DDAB7064CE56DA9426ECEDD9EBC402"
+                    }
+                ],
+    "models":  [
+                   {
+                       "path":  "420\\modell.json",
+                       "sha256":  "90383A6BC04305453598BCFA5207EC63CB35DD838E137849056044D01717914A"
+                   },
+                   {
+                       "path":  "420\\boot.obj",
+                       "sha256":  "306AF3F86C16EFE0D5308116F30125D70FC70C6A2F4D314CBCAF6123F5CA01F3"
+                   },
+                   {
+                       "path":  "bleistift\\modell.json",
+                       "sha256":  "B271374D548B8F5CC954C4CFF493AD250C9B168E1980C2153BD8C91D174BAD07"
+                   },
+                   {
+                       "path":  "bleistift\\boot.obj",
+                       "sha256":  "DE05384B9E2B1657530654453325C2E3408B8A2985D3D2EC789D330C32B08E0F"
+                   },
+                   {
+                       "path":  "folkeboot\\modell.json",
+                       "sha256":  "0A6314B9AB321796DB5E393FDCC29BEC0082DD269B86F4F932D12734CEC16C2D"
+                   },
+                   {
+                       "path":  "folkeboot\\boot.obj",
+                       "sha256":  "8BDE5FA509461379AEB4BB7C49C797B4828431B9CC2FCF6BCCF955C9B07F131B"
+                   },
+                   {
+                       "path":  "kegel\\modell.json",
+                       "sha256":  "88E5DD434D60E2841524D9B2B841F7DD050BF9127998A9BCB68B7F4A2A6935CD"
+                   },
+                   {
+                       "path":  "kegel\\boot.obj",
+                       "sha256":  "A88D950F9BFA4AF0093CEB5940A0625C6927225CBB55F6D407AFB60CC409FC03"
+                   },
+                   {
+                       "path":  "kugel\\modell.json",
+                       "sha256":  "9B73143938D3EEB062CF73EBB4DEEA566DA9EAFD39C3EF3D02FE7A14C3AE5276"
+                   },
+                   {
+                       "path":  "kugel\\boot.obj",
+                       "sha256":  "E17C5A1EEDE6288DA630CAAD57D5FF69C7384A3FAA67C011D35BD013BD4E4351"
+                   },
+                   {
+                       "path":  "optimist\\modell.json",
+                       "sha256":  "0E4B0E11882C49BC677245F928BDE18B04664833DEDCE85C4F5DDABB3DEB093A"
+                   },
+                   {
+                       "path":  "optimist\\boot.obj",
+                       "sha256":  "B5B5897E013A89D0EFAB93C100968D014A0ABB90B6465D4CD0FB1A2F8557546C"
+                   },
+                   {
+                       "path":  "platte\\modell.json",
+                       "sha256":  "34ABF7F2B319DB2F940D6FBA29BEB6D0AA82D5BC1F8236ECAB80CF0EF9B80523"
+                   },
+                   {
+                       "path":  "platte\\boot.obj",
+                       "sha256":  "E6A77CDE24D782C988BB3A24A717C3533B2877E991E037C25FB2F3312861F49B"
+                   },
+                   {
+                       "path":  "pyramide\\modell.json",
+                       "sha256":  "48AA32E34B33F2904955CB7364919BBDE52AD74B06BE579A925B109ACAE6E578"
+                   },
+                   {
+                       "path":  "pyramide\\boot.obj",
+                       "sha256":  "2EBE23CE1CBCB0FD2463EB6765847A51D3A60F65CC65D2631D676963B2B65FA6"
+                   },
+                   {
+                       "path":  "quader\\modell.json",
+                       "sha256":  "524ADF020C197C310F0747F45E44732B85A1B861971FDC15F15B7D2B4EB7732A"
+                   },
+                   {
+                       "path":  "quader\\boot.obj",
+                       "sha256":  "DDED2A31AC2A2622349E175ECCDB521625BBA5E33A18A98B55666E087CDF8578"
+                   },
+                   {
+                       "path":  "rolle\\modell.json",
+                       "sha256":  "96423E5CCEA09429AE4738E8E44A82E5D14202CA47A87DD1590A3B2ABA03E157"
+                   },
+                   {
+                       "path":  "rolle\\boot.obj",
+                       "sha256":  "A30719ACA62E01EE6D7AD3D5CFEC106B0D3F391150272A557FE3716DF0F42A21"
+                   },
+                   {
+                       "path":  "unregelmaessig\\modell.json",
+                       "sha256":  "0AB3AA24A81974C8E1C2A7699F94AD05BEBF77BA649B4DF1263577F7306D9CBC"
+                   },
+                   {
+                       "path":  "unregelmaessig\\boot.obj",
+                       "sha256":  "DA04020127C46ACC3205E77920DF4E40BC9DB44B71D0EA61E0510E925C58AD2D"
+                   }
+               ]
+}

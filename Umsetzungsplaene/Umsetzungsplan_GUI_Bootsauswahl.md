@@ -1,5 +1,14 @@
 # Umsetzungsplan G-0.8: Bootsauswahl und Objektinspektion
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr fuer den gelieferten Stand. Dieser datierte Abschluss ersetzt
+alle aelteren offenen Nutzerabnahmestaende in diesem Plan; historische
+Nachweise bleiben erhalten. Technische Testluecken und nicht finalisierte
+Zusatzumfaenge werden dadurch nicht als nachgewiesen ausgegeben.
+Kein Commit, Tag oder Push beauftragt.
+
 **Status:** Technisch umgesetzt und integriert am 01.11.2026;
 persönliche Sichtabnahme offen, bekannter Grafik-Baselinefehler separat.
 **Stand:** 02.11.2026; Erweiterung und Ableitungsmigration aller elf Modelle technisch umgesetzt und getestet; persönliche Sichtabnahme separat offen.  

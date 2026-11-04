@@ -1,5 +1,51 @@
 # Umsetzungsplan G-0.10: Statische Anzeige und Dreifachansicht
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr: alle Nutzerabnahmen des gelieferten Stands abschliessen.
+Dies schliesst Sicht-/Bedienabnahme, Kameraauslegung und die laufenden
+Eingaben U-G-000145 ein und ersetzt alle aelteren offenen
+Nutzerabnahmestaende in diesem Plan. Historische Nachweise bleiben erhalten.
+Technische Testluecken und nicht finalisierte Zusatzumfaenge werden dadurch
+nicht als nachgewiesen ausgegeben. Kein Commit, Tag oder Push beauftragt.
+
+**Aktueller technischer Abschluss 04.11.2026:** Vollstaendiger
+Release-Neubau und ungefilterter GUI-Gesamtlauf **45/45 bestanden**,
+einschliesslich aller drei DPI-Stufen und laufender Eingaben.
+Startuebergang/Live-Eingaben zusaetzlich dreifach wiederholt, **12/12
+Ausfuehrungen bestanden**. Die aelteren offenen technischen Testfehler
+weiter unten sind durch die Korrekturen und neueren Nachweise geschlossen,
+nicht die nicht finalisierte erweiterte Physikmatrix.
+[Massgeblicher aktueller Testnachweis](Umsetzungsplan_G-0.11.md#revisionsvorbereitung-04112026-vollstaendige-regression).
+
+## Datierter fachlicher Nachtrag 04.11.2026: laufende Eingaben
+
+Dieser Nachtrag fuehrt die weitere Arbeit am bestehenden Dynamikthema,
+nicht eine nachtraegliche Aenderung historischer Abschlussnachweise oder
+eine Erweiterung des separaten Performanceplans.
+
+**U-G-000145 / A-G-00134:** Nach Nutzerfreigabe 08:52 Uhr:
+1. Core-Vertrag CPPI-0119 stabilisieren (Abhaengigkeit U-C-000121).
+2. Fremdkraft/Ansatzpunkt puffern und vor dem naechsten unberechneten
+   Schritt uebernehmen; historische Zustaende unangetastet lassen.
+3. Bestehende numerische Ruder-/Schwerteingaben im dynamischen Lauf
+   freigeben und mit den vorhandenen Bewegungsereignissen verbinden.
+4. Bestaetigte Core-Transformationen ueber die vorhandenen selektiven
+   Modell-/Meshpfade darstellen; Fehler/Restanforderungen sichtbar melden.
+5. Reale Eingabe im laufenden GUI-Versuch, Adapter-/Historien-/Geometrietest.
+
+Technisch umgesetzt. Nachweise: `gui_core_integration` (29,92 s) prueft
+laufende Kraft-/Ansatzpunkt-/Ruder-/Schwertwechsel, unveraenderte alte
+JSON-Zustaende, neue Meshtransformationen und Abschaltung der Kraft.
+`gui_dynamic_layout_100` (8,78 s) bestaetigt bedienbare Eingaben waehrend
+eines realen Laufs sowie weitere Workspacewechsel. Performance-Regression
+(17,76 s) bestaetigt die erhaltene Szenen-/Meshstilllegung.
+Die Defaultpruefung des Layouttests wurde auf den separat am selben
+Morgen beauftragten Zustand Analyseansichten AUS angepasst.
+Normaler Release-Build erfolgreich. Fachliche Nutzerpruefung offen,
+alle Aenderungen uncommittiert; kein Git-/Release-Auftrag.
+
 **Stand:** 03.11.2026.
 **Nachtrag Dynamik:** Abschnitt 12 erweitert den Anzeigeumfang nach
 ausdruecklichem „go“ auf das Dynamische Modell; kein Core-Eingriff.

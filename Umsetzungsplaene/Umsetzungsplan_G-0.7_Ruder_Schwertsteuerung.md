@@ -1,5 +1,14 @@
 # Umsetzungsplan G-0.7: Dynamische Ruder- und Schwertsteuerung
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr fuer den gelieferten Stand. Dieser datierte Abschluss ersetzt
+alle aelteren offenen Nutzerabnahmestaende in diesem Plan; historische
+Nachweise bleiben erhalten. Technische Testluecken und nicht finalisierte
+Zusatzumfaenge werden dadurch nicht als nachgewiesen ausgegeben.
+Kein Commit, Tag oder Push beauftragt.
+
 **Status:** Umsetzung teilweise abgeschlossen; technische und fachliche Abnahmen offen.  
 **Stand:** 28.10.2026 · **Zielversion:** G-0.7 (nach vorhandenem Tag G-0.6)
 
@@ -219,4 +228,3 @@ ist ausgeschlossen.
 | U-G-000052 | umgesetzt | `parseForceState` liest `druckpunkte.lateral` (`ForceState::lateral`); Test `testLateralCenter` |
 | U-G-000053 | umgesetzt (Sichtprüfung offen) | Marker (senkrechte Linie, „LDP“) in `vtk_scene.cpp`, Schaltfläche „Lateraldruckpunkt (LDP)“, Standard an; magenta = kraftgewichtet, gedämpft = geometrisch |
 | U-G-000054 | teilweise | Adaptertest ok; Testfixtures `graphics_render_tests` für Folkeboot-Bewegung angepasst; 3 Render-Tests schlagen aus nicht LDP-bedingtem Grund fehl |
-

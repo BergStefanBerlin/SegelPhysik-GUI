@@ -1,0 +1,109 @@
+[OUTPUT] 
+Internal ctest changing into directory: C:/spdeps/guibuild
+
+[HANDLER_OUTPUT] 
+Test project C:/spdeps/guibuild
+
+      Start  1: gui_water_motion
+ 1/45 Test  #1: gui_water_motion .................   Passed    0.04 sec
+      Start  2: gui_navigation
+ 2/45 Test  #2: gui_navigation ...................   Passed    0.10 sec
+      Start  3: gui_graphics_settings
+ 3/45 Test  #3: gui_graphics_settings ............   Passed    0.60 sec
+      Start  4: gui_performance_regression
+ 4/45 Test  #4: gui_performance_regression .......   Passed   18.67 sec
+      Start  5: gui_water_motion_render
+ 5/45 Test  #5: gui_water_motion_render ..........   Passed   21.05 sec
+      Start  6: gui_navigation_camera
+ 6/45 Test  #6: gui_navigation_camera ............   Passed    8.30 sec
+      Start  7: gui_graphics_render_100
+ 7/45 Test  #7: gui_graphics_render_100 ..........   Passed   78.56 sec
+      Start  8: gui_workspace_tabs_100
+ 8/45 Test  #8: gui_workspace_tabs_100 ...........   Passed   41.26 sec
+      Start  9: gui_dynamic_layout_100
+ 9/45 Test  #9: gui_dynamic_layout_100 ...........   Passed   10.70 sec
+      Start 10: gui_boat_inspection_100
+10/45 Test #10: gui_boat_inspection_100 ..........   Passed   20.56 sec
+      Start 11: gui_graphics_render_150
+11/45 Test #11: gui_graphics_render_150 ..........   Passed   97.61 sec
+      Start 12: gui_workspace_tabs_150
+12/45 Test #12: gui_workspace_tabs_150 ...........   Passed   45.03 sec
+      Start 13: gui_dynamic_layout_150
+13/45 Test #13: gui_dynamic_layout_150 ...........   Passed   10.10 sec
+      Start 14: gui_boat_inspection_150
+14/45 Test #14: gui_boat_inspection_150 ..........   Passed   20.08 sec
+      Start 15: gui_graphics_render_200
+15/45 Test #15: gui_graphics_render_200 ..........   Passed   91.16 sec
+      Start 16: gui_workspace_tabs_200
+16/45 Test #16: gui_workspace_tabs_200 ...........   Passed   41.29 sec
+      Start 17: gui_dynamic_layout_200
+17/45 Test #17: gui_dynamic_layout_200 ...........***Failed    4.79 sec
+Keine laufende dynamische Simulation.
+Actual dynamic simulation must populate the shared force/moment table.
+
+      Start 18: gui_boat_inspection_200
+18/45 Test #18: gui_boat_inspection_200 ..........   Passed   19.18 sec
+      Start 19: gui_graphics_dialog
+19/45 Test #19: gui_graphics_dialog ..............   Passed    0.15 sec
+      Start 20: gui_core_integration
+20/45 Test #20: gui_core_integration .............   Passed   32.17 sec
+      Start 21: gui_model_catalog
+21/45 Test #21: gui_model_catalog ................   Passed   25.44 sec
+      Start 22: gui_display_mesh
+22/45 Test #22: gui_display_mesh .................   Passed    1.64 sec
+      Start 23: gui_force_display
+23/45 Test #23: gui_force_display ................   Passed    0.04 sec
+      Start 24: modellaufbereitung
+24/45 Test #24: modellaufbereitung ...............   Passed    2.43 sec
+      Start 25: pose_transformations
+25/45 Test #25: pose_transformations .............   Passed    0.05 sec
+      Start 26: hydrostatik_referenzen
+26/45 Test #26: hydrostatik_referenzen ...........   Passed    0.05 sec
+      Start 27: hydrodynamik_referenzen
+27/45 Test #27: hydrodynamik_referenzen ..........   Passed    0.05 sec
+      Start 28: hydrodynamik_referenzmodelle
+28/45 Test #28: hydrodynamik_referenzmodelle .....   Passed    2.78 sec
+      Start 29: lateraldruckpunkt
+29/45 Test #29: lateraldruckpunkt ................   Passed    0.05 sec
+      Start 30: hydrodynamik_traegheit
+30/45 Test #30: hydrodynamik_traegheit ...........   Passed    1.95 sec
+      Start 31: temporaerer_testantrieb
+31/45 Test #31: temporaerer_testantrieb ..........   Passed    1.24 sec
+      Start 32: simulation_gesamtlauf
+32/45 Test #32: simulation_gesamtlauf ............   Passed    1.35 sec
+      Start 33: stationaere_kurvenfahrt
+33/45 Test #33: stationaere_kurvenfahrt ..........   Passed   21.22 sec
+      Start 34: modell_import
+34/45 Test #34: modell_import ....................   Passed    0.31 sec
+      Start 35: core_build_configuration
+35/45 Test #35: core_build_configuration .........   Passed    0.04 sec
+      Start 36: kraft_momentenbilanz
+36/45 Test #36: kraft_momentenbilanz .............   Passed    0.04 sec
+      Start 37: modellkatalog_schnittstelle
+37/45 Test #37: modellkatalog_schnittstelle ......   Passed    4.79 sec
+      Start 38: modellinspektion_c08
+38/45 Test #38: modellinspektion_c08 .............   Passed    8.85 sec
+      Start 39: modell_geometrie_v2
+39/45 Test #39: modell_geometrie_v2 ..............   Passed   51.11 sec
+      Start 40: cli_help
+40/45 Test #40: cli_help .........................   Passed    0.08 sec
+      Start 41: cli_build_info
+41/45 Test #41: cli_build_info ...................   Passed    0.04 sec
+      Start 42: cli_error_catalog
+42/45 Test #42: cli_error_catalog ................   Passed    0.04 sec
+      Start 43: cli_no_arguments
+43/45 Test #43: cli_no_arguments .................   Passed    0.05 sec
+      Start 44: cli_invalid_argument
+44/45 Test #44: cli_invalid_argument .............   Passed    0.05 sec
+      Start 45: cli_extra_argument
+45/45 Test #45: cli_extra_argument ...............   Passed    0.05 sec
+
+98% tests passed, 1 tests failed out of 45
+
+Total Test time (real) = 685.20 sec
+
+The following tests FAILED:
+	 17 - gui_dynamic_layout_200 (Failed)
+[ERROR_MESSAGE] 
+Errors while running CTest
+

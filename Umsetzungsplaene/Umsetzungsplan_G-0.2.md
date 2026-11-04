@@ -1,5 +1,14 @@
 # Umsetzungsplan G-0.2: Kraft- und Momentendarstellung und Modellkatalog-Anbindung
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr fuer den gelieferten Stand. Dieser datierte Abschluss ersetzt
+alle aelteren offenen Nutzerabnahmestaende in diesem Plan; historische
+Nachweise bleiben erhalten. Technische Testluecken und nicht finalisierte
+Zusatzumfaenge werden dadurch nicht als nachgewiesen ausgegeben.
+Kein Commit, Tag oder Push beauftragt.
+
 **Status: umgesetzt, Abnahme offen** (ctest 17/17 grün; DPI-Prüfung, Laufzeitgrenzen und Nutzerabnahme stehen aus).
 
 **Stand:** 26.10.2026 · **Version:** G-0.2

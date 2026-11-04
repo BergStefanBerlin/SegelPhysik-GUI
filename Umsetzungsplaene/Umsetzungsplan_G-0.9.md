@@ -1,5 +1,14 @@
 # Umsetzungsplan G-0.9: Statisches Modell und stationaere Fahrt
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr fuer den gelieferten Stand. Dieser datierte Abschluss ersetzt
+alle aelteren offenen Nutzerabnahmestaende in diesem Plan; historische
+Nachweise bleiben erhalten. Technische Testluecken und nicht finalisierte
+Zusatzumfaenge werden dadurch nicht als nachgewiesen ausgegeben.
+Kein Commit, Tag oder Push beauftragt.
+
 **Stand:** 02.11.2026.
 **Status:** Geradliniger Umfang, Kurvenfahrt, Druckpunkte und integrierte Grafikkonfiguration implementiert und gezielt integrationsgeprueft. Persoenliche Nutzerabnahme offen. Bekannte unabhaengige Bestandsfehler siehe Abschnitt 5.
 **Ziel:** G-0.9; der veroeffentlichte Tag G-0.8 bleibt unveraendert.

@@ -1,5 +1,70 @@
 # GUI-Umsetzungsplan: ausschliesslich Performance der Darstellung
 
+## Nutzerabnahme 04.11.2026
+
+**Nutzerabnahmen: done.** Ausdruecklicher Nutzerauftrag vom 04.11.2026,
+09:16 Uhr fuer den gelieferten Stand einschliesslich Performance und
+Nutzerinteraktion. Dieser datierte Abschluss ersetzt alle aelteren offenen
+Nutzerabnahmestaende in diesem Plan; historische Nachweise bleiben erhalten.
+Technische Testluecken und nicht finalisierte Zusatzumfaenge werden dadurch
+nicht als nachgewiesen ausgegeben. Kein Commit, Tag oder Push beauftragt.
+
+## Revisionsvorbereitung 04.11.2026: vollstaendige Regression
+
+Der Nutzer hat den gelieferten Hydrostatik-/Hydrodynamik-/Bedienstand
+als Major-Meilenstein abgenommen und eine vollstaendige fehlerfreie
+Testpruefung beauftragt, ausdruecklich **ohne Commit, Tag oder Push**.
+Es wird damit keine neue Versionsnummer vergeben.
+
+| Abschlusspruefung | Ergebnis | Laufzeit | Nachweis |
+|---|---|---|---|
+| Vollstaendiger GUI-Release-Build und ungefilterter CTest-Lauf | **45/45 bestanden**, 0 Fehler, 0 uebersprungen | 606,67 s | [Build](Nachweise/Meilenstein_2026-11-04/gui-build.log), [CTest](Nachweise/Meilenstein_2026-11-04/gui-tests.log), [Detailprotokoll](Nachweise/Meilenstein_2026-11-04/gui-tests-detail.log), [JUnit](Nachweise/Meilenstein_2026-11-04/gui-tests.xml) |
+| Startuebergang/Live-Eingaben: Dynamiklayout 100/150/200 % und Core-Integration, je drei Wiederholungen mit `--repeat until-fail:3` | **12/12 Ausfuehrungen bestanden**, kein Wiederholen bis zum Erfolg | 173,06 s | [Wiederholungsprotokoll](Nachweise/Meilenstein_2026-11-04/gui-startup-regression.log) |
+| Produktions-EXE `C:\spdeps\guibuild\Release\segelphysik_gui.exe` | Fenster gestartet, reaktionsfaehig, regulaer geschlossen, **Exitcode 0** | separater Start nach den Grafiktests | [Smokecheck](Nachweise/Meilenstein_2026-11-04/gui-smoke.json) |
+
+Die 45 Tests umfassen 23 GUI-/Integrationspruefungen und 22 eingebundene
+Core-Tests. Aktiv: `BUILD_TESTING=ON`, `SEGELPHYSIK_GRAPHICS_GPU_TEST=ON`.
+Grafik, Workspaces, dynamisches Layout und Bootinspektion wurden jeweils
+bei `QT_SCALE_FACTOR=1/1.5/2` mit echtem Windows/OpenGL geprueft.
+GUI-Instrumentierung AUS; Standard-Core und instrumentierter Core
+zusaetzlich separat **je 22/22 bestanden**:
+[Core-Nachweis](../../CORE/Umsetzungsplaene/Umsetzungsplan_C-0.10.md#revisionsvorbereitung-04112026-vollstaendige-regression).
+
+Aufruf: `cmake --build C:\spdeps\guibuild --config Release --parallel 3`,
+danach `ctest --test-dir C:\spdeps\guibuild -C Release --output-on-failure`.
+Laufzeitpfade: `C:\spdeps\installed\x64-windows\bin` auf `PATH`,
+`QT_PLUGIN_PATH=C:\spdeps\installed\x64-windows\Qt6\plugins`.
+Keine Tests ausgeblendet, keine Bildtoleranzen vergroessert und keine
+Zeitlimits angehoben.
+
+### Geschlossene Befunde und erhaltene Pruefvertraege
+
+| Befund | Korrektur / Nachweis |
+|---|---|
+| `gui_graphics_render_*`: Kursspur AUS stellte das Bild nicht exakt wieder her | Neu geladene Modelle bekamen das bereits aktive Defaultprofil nicht, weil der idempotente Profilsetter korrekt abbrach. `setModel` wendet jetzt das aktive Profil einschliesslich Materialdeckkraft und Texturen auf die neuen Actors an. Pixelgenaue Rueckkehr des Bildes bleibt verlangt und besteht bei allen drei DPI-Stufen. |
+| Bootinspektion: Filter schmaler und seitlich versetzt | Filtergeometrie stimmt wieder exakt mit Spaltenbreite und gescrollter Position ueberein. Resize-/Scrollpruefung besteht bei allen drei DPI-Stufen. |
+| Veraltete Erwartungen an V4, feste Dynamikeingaben und optische Defaults | Erwartungen auf den bestehenden V6-Livevertrag und die ausdruecklich beauftragten Defaults/Live-Eingaben umgestellt. Sichtbarkeit, Ein-/Ausschalten, Persistenz und Deckkraftstatus bleiben tatsaechlich geprueft. |
+| Zeitabhaengige Ablehnung einer Stelleingabe beim Start | Der Adapter verlangte faelschlich bereits einen veroeffentlichten Zustand. Eingaben nach erfolgreicher Kontexterzeugung werden jetzt auch vor dem ersten Snapshot fuer den naechsten Schritt gepuffert. Initialzustand und Historie bleiben unveraendert; abgeschlossene Laeufe weisen Eingaben weiterhin explizit ab. Neuer deterministischer Adaptertest plus zwoelf wiederholte Ausfuehrungen und anschliessender ungefilterter Gesamtlauf bestanden. |
+| Zwei bekannte Core-Altfehler | Katalogfixtures aktualisiert und Schema-3-Ableitungen beim Schema-2-Export exakt materialisiert; beide vollstaendigen Core-Konfigurationen gruen, siehe Core-Nachweis. |
+
+Der erste Gesamtlauf nach den uebrigen Korrekturen entdeckte den
+Startuebergangsfehler bei 200 %:
+[historisches Fehlerprotokoll](Nachweise/Meilenstein_2026-11-04/gui-before-startup-fix.log).
+Er ist durch die obigen Korrekturen und neueren Abschlussnachweise
+geschlossen; die aelteren Fehlerangaben weiter unten sind nicht der
+aktuelle Teststatus.
+
+Gepruefte Git-Basis: GUI `14778a03cb5e2fe073ba3915c384d2dc6a4044a3`,
+Core `a8c1ddcdab75366f6eed16b91e672fd4168273ef`, jeweils `main`
+mit den uncommittierten Aenderungen vom 04.11.2026.
+[GUI-Quell-/Binaerhashes](Nachweise/Meilenstein_2026-11-04/source-manifest.json)
+und [Core-Quell-/Binaerhashes](../../CORE/Umsetzungsplaene/Nachweise/Meilenstein_2026-11-04/source-manifest.json)
+binden die Nachweise an diesen Arbeitsstand.
+Nutzerabnahmen sind `done`. Nicht finalisierte erweiterte Physikmatrizen
+und externe Messreferenzen werden nicht als durch diese Regression
+nachgewiesen ausgegeben. Windphysik ist nicht Teil dieses Revisionspunkts.
+Alle Aenderungen bleiben uncommittiert; keine Git-Veroeffentlichung.
+
 **Stand:** 03.11.2026, Dokumentationsauftrag 20:40 Uhr.
 **Status:** Finalisiert und zur Umsetzung freigegeben am 03.11.2026, 20:45 Uhr.
 **Arbeitszielversion:** G-0.11; kein Tag-/Release-Auftrag.

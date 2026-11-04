@@ -1,0 +1,34 @@
+[OUTPUT] 
+Internal ctest changing into directory: C:/spdeps/guibuild
+
+[HANDLER_OUTPUT] 
+Test project C:/spdeps/guibuild
+
+    Start  9: gui_dynamic_layout_100
+    Test  #9: gui_dynamic_layout_100 ...........   Passed    8.94 sec
+    Start  9: gui_dynamic_layout_100
+    Test  #9: gui_dynamic_layout_100 ...........   Passed    8.92 sec
+    Start  9: gui_dynamic_layout_100
+1/4 Test  #9: gui_dynamic_layout_100 ...........   Passed    8.81 sec
+    Start 13: gui_dynamic_layout_150
+    Test #13: gui_dynamic_layout_150 ...........   Passed    9.18 sec
+    Start 13: gui_dynamic_layout_150
+    Test #13: gui_dynamic_layout_150 ...........   Passed    9.09 sec
+    Start 13: gui_dynamic_layout_150
+2/4 Test #13: gui_dynamic_layout_150 ...........   Passed    9.16 sec
+    Start 17: gui_dynamic_layout_200
+    Test #17: gui_dynamic_layout_200 ...........   Passed    9.52 sec
+    Start 17: gui_dynamic_layout_200
+    Test #17: gui_dynamic_layout_200 ...........   Passed    9.30 sec
+    Start 17: gui_dynamic_layout_200
+3/4 Test #17: gui_dynamic_layout_200 ...........   Passed    9.30 sec
+    Start 20: gui_core_integration
+    Test #20: gui_core_integration .............   Passed   30.07 sec
+    Start 20: gui_core_integration
+    Test #20: gui_core_integration .............   Passed   29.92 sec
+    Start 20: gui_core_integration
+4/4 Test #20: gui_core_integration .............   Passed   30.81 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) = 173.06 sec
