@@ -5,6 +5,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 
@@ -75,6 +76,8 @@ public:
     QVector<QJsonObject> motionStates(qsizetype begin, qsizetype end, QString* error) const;
     bool setTestDriveActive(bool active, QString* error);
     bool setMovementValue(const QString& elementId, double value, QString* error);
+    bool setDynamicForce(bool active, const std::array<double, 3>& force,
+        const std::array<double, 3>& point, QString* error);
 
     static constexpr qsizetype maximumStates = 2'000'000;
 

@@ -5,6 +5,11 @@ the Core library; model validation and simulation are started by the GUI and
 run off the interface thread. Qt 6 Widgets provides the desktop controls and
 VTK renders the model, water surface, waterline and force vectors.
 
+User acceptance of the delivered hydrostatics, hydrodynamics and interaction
+milestone was explicitly completed (`done`) on 2026-11-04.
+The [implementation plan](Umsetzungsplaene/Umsetzungsplan_G-0.11.md)
+records the current regression evidence separately from historical results.
+
 ## Requirements
 
 - Windows x64, Visual Studio 2022 C++ build tools and CMake 3.25 or newer.
@@ -72,6 +77,43 @@ data without sharing mutable state between the GUI and worker threads.
 Replacing the model creates new contexts. Batch simulation uses the Core's
 internal context; no solver settings or integration steps are reduced.
 See the [performance plan and evidence](Umsetzungsplaene/Umsetzungsplan_G-0.11.md).
+
+The dynamic camera reference is located in the right-hand display panel.
+The auxiliary side/rear/top views are labelled "Analyseansichten".
+Without saved mode-specific settings, the static workspace starts with
+compass/attitude instruments off and analysis views on; the dynamic workspace
+starts with instruments on and analysis views off. Saved choices are preserved.
+
+Static display settings omit motion/wake/track controls. Their own technical
+default matches the static choices saved on 2026-11-04: opaque material surfaces
+with color/ORM/normal textures, SSAO, grid, axes, waterline, sky and haze;
+calm water at 18% opacity, without sun lighting, sun shadows or reflections.
+Water animation is selected but has no effect while water normals are disabled.
+"Auf Default setzen" immediately applies
+and persists this static default; later custom choices also persist. Existing
+saved static settings are retained until explicitly reset. Dynamic defaults
+and saved dynamic settings are independent and unchanged.
+
+Dynamic motion visualization switches are in the display sidebar, between
+"Darstellung" and the simple force arrows. The dynamic default uses the full
+optical profile at maximum quality; only the bow/stern wave motion effect is
+enabled by default (no technical tracks, distance marks or course trail).
+The dynamic settings page also offers "Auf Default setzen"; saved user choices
+remain independent of the static workspace.
+
+Loading or replacing a model applies the current graphics profile immediately,
+including material opacity and textures. Toggling course trails therefore does
+not incidentally change the model's material appearance.
+
+During a dynamic run, foreign-force activation, XYZ force, its application
+point and rudder/sword values remain editable. Confirmed numeric edits take
+effect at the next uncomputed integration step, never retrospectively.
+Movement edits during startup are queued even before the first published
+snapshot; the original initial state is retained.
+Historical frames retain their original force contexts and mesh transforms.
+The existing movement-event path updates physical preparation and display
+geometry consistently; no model files are rewritten. The status area reports
+applied changes or changes that could no longer be applied before the run ended.
 
 ## Use
 

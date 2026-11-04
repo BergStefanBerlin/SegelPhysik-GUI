@@ -1380,7 +1380,7 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
         pressurePoints_ = {};
         updateWaterPlane();
         frameBodies();
-        if (inspectionMode_ || orthographicView_ != OrthographicView::Free) applyBodyStyle();
+        applyGraphicsProfile();
         renderScene();
         return true;
     } catch (const std::exception& exception) {

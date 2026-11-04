@@ -47,6 +47,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyleOptionTab>
 #include <QStackedWidget>
 #include <QTabBar>
@@ -60,6 +61,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 using forcedisplay::Contribution;
 
@@ -487,6 +489,7 @@ MainWindow::MainWindow(QWidget* parent)
         force->setObjectName(QStringLiteral("stationaryForce%1").arg(axisName));
         force->setRange(-1e8,1e8);
         force->setDecimals(3);
+        force->setKeyboardTracking(false);
         force->setSuffix(QStringLiteral(" N"));
         stationaryForce_[axis] = force;
         forceVectorForm->addRow(axisName, force);
@@ -494,6 +497,7 @@ MainWindow::MainWindow(QWidget* parent)
         point->setObjectName(QStringLiteral("stationaryPoint%1").arg(axisName));
         point->setRange(-1e6,1e6);
         point->setDecimals(4);
+        point->setKeyboardTracking(false);
         point->setSuffix(QStringLiteral(" m"));
         stationaryPoint_[axis] = point;
         applicationPointForm->addRow(axisName, point);
@@ -536,7 +540,6 @@ MainWindow::MainWindow(QWidget* parent)
     auto* frameLayout = new QFormLayout(cameraFramePanel_);
     frameLayout->setContentsMargins(0, 0, 0, 0);
     frameLayout->addRow(QStringLiteral("Kamerabezug"), cameraFrameCombo_);
-    panelLayout->addWidget(cameraFramePanel_);
     connect(cameraFrameCombo_, &QComboBox::currentIndexChanged, this, [this] {
         scene_->setBodyFixedCamera(workspaceIndex_ != 2 || cameraFrameCombo_->currentData().toBool());
     });
@@ -575,6 +578,20 @@ MainWindow::MainWindow(QWidget* parent)
     panelLayout->addWidget(statusLabel_);
     panelLayout->addWidget(timeLabel_);
     const auto stationaryInputChanged = [this] {
+        if (live_ && simulationThread_ && lastRunDynamic_.value_or(false)) {
+            std::array<double, 3> force{}, point{};
+            for (std::size_t axis = 0; axis < force.size(); ++axis) {
+                force[axis] = stationaryForce_[axis]->value();
+                point[axis] = stationaryPoint_[axis]->value();
+            }
+            QString error;
+            if (!live_->setDynamicForce(stationaryForceActive_->isChecked(), force, point, &error))
+                showError(QStringLiteral("Fremdkraft"), error);
+            else
+                statusLabel_->setText(QStringLiteral(
+                    "Fremdkraft angefordert: gilt ab dem nächsten Simulationsschritt; Historie unverändert."));
+            return;
+        }
         if (lastRunDynamic_ && !*lastRunDynamic_ && displayedIndex_ >= 0)
             statusLabel_->setText(QStringLiteral(
                 "Eingaben geändert – angezeigtes Ergebnis gehört zum vorherigen Rechenfall."));
@@ -743,6 +760,7 @@ void MainWindow::updateWorkspace(int index)
     attitudeViewsCheck_->setVisible(simulation);
     for (auto* control : vectorControls_) control->setVisible(!simulation);
     staticForceMenu_->setVisible(simulation);
+    dynamicMotionPanel_->setVisible(index == 2);
     graphicsStatus_->setVisible(!simulation);
     pressureStatus_->setVisible(!simulation);
     legacyValues_->setVisible(!simulation);
@@ -881,6 +899,7 @@ QWidget* MainWindow::buildDisplayPanel()
     auto* caption = new QLabel(QStringLiteral("DARSTELLUNG"));
     caption->setObjectName(QStringLiteral("caption"));
     layout->addWidget(caption);
+    layout->addWidget(cameraFramePanel_);
 
     forcesCheck_ = new QCheckBox(QStringLiteral("Vektoren anzeigen"));
     forcesCheck_->setObjectName(QStringLiteral("displayVectors"));
@@ -918,7 +937,7 @@ QWidget* MainWindow::buildDisplayPanel()
         saveDisplaySettings();
     });
     layout->addWidget(navigationCheck_);
-    attitudeViewsCheck_ = new QCheckBox(QStringLiteral("Lageansichten"));
+    attitudeViewsCheck_ = new QCheckBox(QStringLiteral("Analyseansichten"));
     attitudeViewsCheck_->setObjectName(QStringLiteral("displayAttitudeViews"));
     attitudeViewsCheck_->setChecked(true);
     attitudeViewsCheck_->setToolTip(QStringLiteral("Rechte Spalte mit Seite, Heck und Draufsicht anzeigen."));
@@ -941,6 +960,85 @@ QWidget* MainWindow::buildDisplayPanel()
     graphicsButton_->setObjectName(QStringLiteral("configureGraphics"));
     connect(graphicsButton_, &QPushButton::clicked, this, &MainWindow::setupGraphics);
     layout->addWidget(graphicsButton_);
+    dynamicMotionPanel_ = new QGroupBox(QStringLiteral("Fahrdynamikdarstellung"));
+    dynamicMotionPanel_->setObjectName(QStringLiteral("dynamicMotionPanel"));
+    auto* motionLayout = new QVBoxLayout(dynamicMotionPanel_);
+    const std::array<graphics::Feature, 4> motionFeatures{graphics::Feature::Wake,
+        graphics::Feature::WaterTrack, graphics::Feature::DistanceMarks, graphics::Feature::Trail};
+    for (std::size_t i = 0; i < motionFeatures.size(); ++i) {
+        const auto feature = motionFeatures[i];
+        const auto& info = graphics::features()[static_cast<std::size_t>(feature)];
+        auto* check = new QCheckBox(feature == graphics::Feature::Wake
+            ? QStringLiteral("Bug-/Heckwelle") : QString::fromUtf8(info.label));
+        check->setObjectName(QStringLiteral("dynamicMotion_%1").arg(QString::fromLatin1(info.key)));
+        check->setToolTip(QString::fromUtf8(info.explanation));
+        dynamicMotionChecks_[i] = check;
+        motionLayout->addWidget(check);
+        connect(check, &QCheckBox::toggled, this, [this, feature](bool enabled) {
+            auto next = graphics_;
+            next.profiles[0].enabled[static_cast<std::size_t>(feature)] = enabled;
+            QSettings storage;
+            QString error;
+            if (!graphics::save(storage, next, &error)) {
+                showError(QStringLiteral("Fahrdynamikdarstellung"), error);
+                applyGraphicsProfile(false);
+                return;
+            }
+            graphics_ = next;
+            applyGraphicsProfile(false);
+        });
+    }
+    auto* motionParameters = new QFormLayout;
+    const auto motionNumber = [this, motionParameters](const QString& name, const QString& label,
+        double graphics::Profile::* member, double minimum, double maximum) {
+        auto* field = new QDoubleSpinBox;
+        field->setObjectName(name);
+        field->setDecimals(5);
+        field->setRange(minimum, maximum);
+        field->setKeyboardTracking(false);
+        motionParameters->addRow(label, field);
+        connect(field, &QDoubleSpinBox::valueChanged, this, [this, field, member](double value) {
+            auto next = graphics_;
+            next.profiles[0].*member = value;
+            QSettings storage;
+            QString error;
+            if (!graphics::save(storage, next, &error)) {
+                showError(QStringLiteral("Fahrdynamikdarstellung"), error);
+                const QSignalBlocker blocker(field);
+                field->setValue(graphics_.profiles[0].*member);
+                return;
+            }
+            graphics_ = next;
+            applyGraphicsProfile(false);
+        });
+    };
+    motionNumber(QStringLiteral("dynamicTrackAge"), QStringLiteral("Spuralter [s]"),
+        &graphics::Profile::trackAge, .001, 86400);
+    motionNumber(QStringLiteral("dynamicTrackSpacing"), QStringLiteral("Spurabtastung [m]"),
+        &graphics::Profile::trackSpacing, .00001, 10000);
+    motionNumber(QStringLiteral("dynamicMarkSpacing"), QStringLiteral("Distanzmarken [m]"),
+        &graphics::Profile::markSpacing, .001, 10000);
+    auto* motionBudget = new QSpinBox;
+    motionBudget->setObjectName(QStringLiteral("dynamicTrackBudget"));
+    motionBudget->setRange(2, 65536);
+    motionBudget->setKeyboardTracking(false);
+    motionParameters->addRow(QStringLiteral("Max. Spurpunkte"), motionBudget);
+    connect(motionBudget, &QSpinBox::valueChanged, this, [this, motionBudget](int value) {
+        auto next = graphics_;
+        next.profiles[0].trackBudget = value;
+        QSettings storage;
+        QString error;
+        if (!graphics::save(storage, next, &error)) {
+            showError(QStringLiteral("Fahrdynamikdarstellung"), error);
+            const QSignalBlocker blocker(motionBudget);
+            motionBudget->setValue(graphics_.profiles[0].trackBudget);
+            return;
+        }
+        graphics_ = next;
+        applyGraphicsProfile(false);
+    });
+    motionLayout->addLayout(motionParameters);
+    layout->addWidget(dynamicMotionPanel_);
     auto* vectorScales = new QWidget;
     auto* scaleForm = new QFormLayout(vectorScales);
     scaleForm->setContentsMargins(0, 0, 0, 0);
@@ -959,6 +1057,8 @@ QWidget* MainWindow::buildDisplayPanel()
     staticMenuLayout->setContentsMargins(0, 0, 0, 0);
     for (std::size_t rowIndex = 0; rowIndex < staticForceStyles_.size(); ++rowIndex) {
         const auto i = rowIndex < 2 ? 1 - rowIndex : rowIndex;
+        if (rowIndex == 5)
+            staticMenuLayout->addSpacing(fontMetrics().lineSpacing() / 2);
         if (rowIndex == 0 || rowIndex == 5)
             staticMenuLayout->addWidget(new QLabel(rowIndex == 0
                 ? QStringLiteral("<b>Kraftpfeile (einfach)</b>")
@@ -1322,6 +1422,12 @@ void MainWindow::loadSettings()
     restoreCombo(forceScaleCombo_, QStringLiteral("darstellung/skala_kraft"));
     restoreCombo(momentScaleCombo_, QStringLiteral("darstellung/skala_moment"));
     QString graphicsError;
+    if (!settings.contains(QStringLiteral("grafik/profile_v1"))
+        && !graphics::save(settings, graphics::dynamicDefaults(), &graphicsError)) {
+        QTimer::singleShot(0, this, [this, graphicsError] {
+            showError(QStringLiteral("Grafikeinstellungen"), graphicsError);
+        });
+    }
     if (!graphics::load(settings, &graphics_, &graphicsError)) {
         QTimer::singleShot(0, this, [this, graphicsError] {
             showError(QStringLiteral("Grafikeinstellungen"), graphicsError);
@@ -1329,8 +1435,7 @@ void MainWindow::loadSettings()
     }
     settings.beginGroup(QStringLiteral("statisch"));
     if (!settings.contains(QStringLiteral("grafik/profile_v1"))) {
-        staticGraphics_ = graphics_;
-        staticGraphics_.active = 0;
+        staticGraphics_ = graphics::staticDefaults();
         if (!graphics::save(settings, staticGraphics_, &graphicsError)) {
             QTimer::singleShot(0, this, [this, graphicsError] {
                 showError(QStringLiteral("Statische Grafikeinstellungen"), graphicsError);
@@ -1382,8 +1487,9 @@ void MainWindow::restoreModeDisplaySettings()
     {
         const QSignalBlocker navigation(navigationCheck_), attitude(attitudeViewsCheck_);
         navigationCheck_->setChecked(settings.value(mode + QStringLiteral("navigation"),
-            settings.value(QStringLiteral("darstellung/navigation"), true)).toBool());
-        attitudeViewsCheck_->setChecked(settings.value(mode + QStringLiteral("lageansichten"), true).toBool());
+            workspaceIndex_ == 2).toBool());
+        attitudeViewsCheck_->setChecked(settings.value(mode + QStringLiteral("lageansichten"),
+            workspaceIndex_ == 1).toBool());
     }
     staticForceStyles_ = forcedisplay::staticForceDefaults();
     for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
@@ -1422,7 +1528,7 @@ void MainWindow::setupGraphics()
             applyDisplayOptions();
             return true;
         }, [this] { closeGraphics(); },
-        [this](graphics::Feature feature) { return scene_->graphicsFeatureStatus(feature); });
+        [this](graphics::Feature feature) { return scene_->graphicsFeatureStatus(feature); }, !dynamic);
     sceneStack_->addWidget(graphicsPage_);
     sceneStack_->setCurrentWidget(graphicsPage_);
 }
@@ -1470,6 +1576,25 @@ void MainWindow::setupMaterialPreview()
 
 void MainWindow::applyGraphicsProfile(bool restoreHistory)
 {
+    const auto& dynamicProfile = graphics_.profiles[0];
+    for (const auto& entry : {std::make_pair("dynamicTrackAge", dynamicProfile.trackAge),
+             std::make_pair("dynamicTrackSpacing", dynamicProfile.trackSpacing),
+             std::make_pair("dynamicMarkSpacing", dynamicProfile.markSpacing)}) {
+        auto* field = dynamicMotionPanel_->findChild<QDoubleSpinBox*>(QString::fromLatin1(entry.first));
+        const QSignalBlocker blocker(field);
+        field->setValue(entry.second);
+    }
+    auto* motionBudget = dynamicMotionPanel_->findChild<QSpinBox*>(QStringLiteral("dynamicTrackBudget"));
+    const QSignalBlocker blockBudget(motionBudget);
+    motionBudget->setValue(dynamicProfile.trackBudget);
+    const std::array<graphics::Feature, 4> motionFeatures{graphics::Feature::Wake,
+        graphics::Feature::WaterTrack, graphics::Feature::DistanceMarks, graphics::Feature::Trail};
+    for (std::size_t i = 0; i < motionFeatures.size(); ++i) {
+        const QSignalBlocker blocker(dynamicMotionChecks_[i]);
+        dynamicMotionChecks_[i]->setChecked(graphics_.profiles[0].on(motionFeatures[i]));
+        dynamicMotionChecks_[i]->setEnabled(motionFeatures[i] != graphics::Feature::DistanceMarks
+            || graphics_.profiles[0].on(graphics::Feature::WaterTrack));
+    }
     auto profile = workspaceIndex_ == 1 ? staticGraphics_.profiles[0]
         : graphics_.profiles[0];
     const bool reduced = profile.liveReduction && live_ && !live_->progress().finished;
@@ -2060,6 +2185,7 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
         auto* fixed = new QDoubleSpinBox(movementPanel_);
         fixed->setObjectName(QStringLiteral("stationaryMovement_%1").arg(id));
         fixed->setDecimals(3);
+        fixed->setKeyboardTracking(false);
         const auto preview = displayData.inspection
             ? segelphysik::getMovementPreview(*displayData.inspection, id.toStdString())
             : std::nullopt;
@@ -2082,9 +2208,19 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
             + (bounded
                 ? QStringLiteral(" Grenzen aus der Core-Bewegungsdefinition.")
                 : QStringLiteral(" Fehlende physikalische Grenzen werden nicht erfunden; Core validiert.")));
-        movementLayout_->addRow(id + QStringLiteral(" (fest)"), fixed);
+        movementLayout_->addRow(id, fixed);
         stationaryMovements_.insert(id, fixed);
-        connect(fixed, &QDoubleSpinBox::valueChanged, this, [this] {
+        connect(fixed, &QDoubleSpinBox::valueChanged, this, [this, id, fixed] {
+            if (live_ && simulationThread_ && lastRunDynamic_.value_or(false)) {
+                QString error;
+                if (!live_->setMovementValue(id, fixed->value(), &error)) {
+                    showError(QStringLiteral("Ruder-/Schwertstellung"), error);
+                    return;
+                }
+                statusLabel_->setText(QStringLiteral(
+                    "Stellung angefordert: gilt ab dem nächsten Simulationsschritt; Historie unverändert."));
+                return;
+            }
             if (lastRunDynamic_ && !*lastRunDynamic_ && displayedIndex_ >= 0)
                 statusLabel_->setText(QStringLiteral(
                     "Stellung geändert – angezeigtes Ergebnis gehört zum vorherigen Rechenfall."));
@@ -2327,7 +2463,10 @@ void MainWindow::updateLiveProgress()
         return;
     }
     const auto progress = live_->progress();
-    if (!progress.testDriveStatus.isEmpty()) testDriveStatus_->setText(progress.testDriveStatus);
+    if (!progress.testDriveStatus.isEmpty()) {
+        testDriveStatus_->setText(progress.testDriveStatus);
+        statusLabel_->setText(progress.testDriveStatus);
+    }
     applyGraphicsProfile();
     const double load =
         progress.wallSeconds > 0.0 ? 100.0 * progress.coreSeconds / progress.wallSeconds : 0.0;
@@ -2359,7 +2498,9 @@ void MainWindow::finishLiveSimulation()
     const QString diagnosis =
         progress.diagnostic.isEmpty() ? QString() : QStringLiteral(" · %1").arg(progress.diagnostic);
     statusLabel_->setText(
-        QStringLiteral("%1 · %2 Zustände%3").arg(progress.status).arg(progress.states).arg(diagnosis));
+        QStringLiteral("%1 · %2 Zustände%3%4").arg(progress.status).arg(progress.states).arg(diagnosis)
+            .arg(progress.testDriveStatus.isEmpty() ? QString()
+                : QStringLiteral("\n") + progress.testDriveStatus));
     statusLabel_->setToolTip(progress.diagnostic);
     const bool completed = progress.status == QStringLiteral("abgeschlossen")
         || (progress.status == QStringLiteral("abgebrochen") && progress.diagnostic.isEmpty());
@@ -2446,7 +2587,7 @@ void MainWindow::displaySimulationResult(const SimulationResult& result)
                 "\nRestmoment Modell (Bewegungsresiduum X; Y; Z): [%2] Nm"
                 "\nToleranzen je Komponente: %3 N / %4 Nm."
                 "\nEine nahezu unveränderte Fahrt allein genügt nicht."
-                "\nFeste Ruder-/Schwertstellungen werden nicht automatisch verändert.")
+                "\nFremdkraft und Ruder-/Schwertstellungen sind während des Laufs änderbar.")
                 .arg(components(QStringLiteral("residuum_kraft_welt_n")),
                     components(QStringLiteral("residuum_moment_modell_nm")))
                 .arg(stationary.value(QStringLiteral("krafttoleranz_n")).toDouble(), 0, 'g', 4)
@@ -2553,11 +2694,12 @@ void MainWindow::setBusy(bool busy)
     testDrivePanel_->hide();
     cameraFramePanel_->setVisible(dynamic);
     stationaryForcePanel_->setVisible(true);
-    stationaryForcePanel_->setEnabled(!busy && hasModel);
+    stationaryForcePanel_->setEnabled(hasModel && (!busy || (dynamic && running)));
     movementPanel_->setVisible(!movementSliders_.isEmpty());
     for (auto* fixed : stationaryMovements_) {
         movementLayout_->setRowVisible(fixed, true);
-        fixed->setEnabled(!busy && hasModel && fixed->property("coreMovementAvailable").toBool());
+        fixed->setEnabled(hasModel && (!busy || (dynamic && running))
+            && fixed->property("coreMovementAvailable").toBool());
     }
     for (auto* slider : movementSliders_)
         movementLayout_->setRowVisible(slider->parentWidget(), false);

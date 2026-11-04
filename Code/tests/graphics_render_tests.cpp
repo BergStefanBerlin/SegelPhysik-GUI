@@ -444,6 +444,11 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
                     "420 dynamic image");
                 if (i == 50) {
                     const auto withoutTrail = scene.captureImage();
+                    auto* renderer = scene.findChild<QVTKOpenGLNativeWidget*>()
+                        ->renderWindow()->GetRenderers()->GetFirstRenderer();
+                    const std::array<double, 2> clippingBefore{
+                        renderer->GetActiveCamera()->GetClippingRange()[0],
+                        renderer->GetActiveCamera()->GetClippingRange()[1]};
                     auto withTrail = graphics::defaults(profileIndex);
                     require(!withTrail.on(graphics::Feature::Trail), "course trail must default off");
                     withTrail.enabled[static_cast<std::size_t>(graphics::Feature::Trail)] = true;
@@ -471,7 +476,17 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
                     require(trail && trail->GetVisibility(), "420 actual course-trail actor absent");
                     scene.setGraphicsProfile(graphics::defaults(profileIndex));
                     require(!trail->GetVisibility(), "420 course trail remains visible when disabled");
-                    require(digest(scene.captureImage()) == digest(withoutTrail),
+                    const auto restored = scene.captureImage();
+                    if (digest(restored) != digest(withoutTrail)) {
+                        withoutTrail.save(evidence.filePath(prefix + QStringLiteral("_trail_before.bmp")), "BMP");
+                        restored.save(evidence.filePath(prefix + QStringLiteral("_trail_restored.bmp")), "BMP");
+                        std::cerr << "Trail restore profile " << profileIndex << ": "
+                            << differingPixels(withoutTrail, restored) << " differing pixels; clipping "
+                            << clippingBefore[0] << ',' << clippingBefore[1] << " -> "
+                            << renderer->GetActiveCamera()->GetClippingRange()[0] << ','
+                            << renderer->GetActiveCamera()->GetClippingRange()[1] << '\n';
+                    }
+                    require(digest(restored) == digest(withoutTrail),
                         "420 disabling course trail must restore the exact image");
                 }
             }
@@ -691,12 +706,12 @@ void testStaticForceMenu(MainWindow& window, VtkSceneWidget& freeScene, const QD
     QApplication::processEvents();
     auto* attitudeViews = window.findChild<QCheckBox*>(QStringLiteral("displayAttitudeViews"));
     auto* boundViews = window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"));
-    require(attitudeViews->isVisible() && attitudeViews->text() == QStringLiteral("Lageansichten"),
+    require(attitudeViews->isVisible() && attitudeViews->text() == QStringLiteral("Analyseansichten"),
         "Static view-column checkbox must be available under navigation.");
     attitudeViews->setChecked(false);
-    require(!boundViews->isVisible(), "Lageansichten must hide the complete right-hand view column.");
+    require(!boundViews->isVisible(), "Analyseansichten must hide the complete right-hand view column.");
     attitudeViews->setChecked(true);
-    require(boundViews->isVisible(), "Lageansichten must restore the right-hand view column.");
+    require(boundViews->isVisible(), "Analyseansichten must restore the right-hand view column.");
     for (auto* label : window.findChildren<QLabel*>())
         if (label->text() == QStringLiteral("WIEDERGABE"))
             require(!label->isVisible(), "Static model must not show the playback row.");
@@ -1131,6 +1146,12 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
             "moving display controls preserves vector visibility selection");
         if (selected == 1) {
             auto* navigationColumn = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
+            auto* navigationToggle = window.findChild<QCheckBox*>(QStringLiteral("displayNavigation"));
+            require(navigationToggle && !navigationToggle->isChecked()
+                    && navigationColumn && !navigationColumn->isVisible(),
+                "Static navigation defaults off.");
+            navigationToggle->setChecked(true);
+            QApplication::processEvents();
             require(navigationColumn && navigationColumn->isVisible()
                     && navigationColumn->widget()
                     && navigationColumn->widget()->objectName() == QStringLiteral("navigationOverlay")
@@ -1184,9 +1205,10 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
             require(!window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"))->isVisible(),
                 "auxiliary views must not appear in boat selection");
         } else {
-            require(window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"))->isVisible()
+            require(!window.findChild<QWidget*>(QStringLiteral("staticViewsColumn"))->isVisible()
+                    && window.findChild<QCheckBox*>(QStringLiteral("displayNavigation"))->isChecked()
                     && !vectors->isVisible() && scene.options().staticForces,
-                "dynamic workspace shares the static views and resultant controls");
+                "dynamic workspace defaults to navigation on and analysis views off");
         }
         const auto* mode = window.findChild<QComboBox*>(QStringLiteral("simulationMode"));
         require(!mode->isVisible() && (selected == 0 || mode->currentData().toBool() == (selected == 2)),
@@ -2159,9 +2181,9 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
         "fixed-movement run did not publish its first Core states");
     require(!unexpectedDialog, "unexpected movement initialization error");
     require(!rudder->isVisible() && !sword->isVisible()
-            && !fixedRudderInput->isEnabled() && !fixedSwordInput->isEnabled()
+            && fixedRudderInput->isEnabled() && fixedSwordInput->isEnabled()
             && fixedRudderInput->value() == 20. && fixedSwordInput->value() == 50.,
-        "dynamic fixed settings must stay frozen and legacy live sliders hidden");
+        "dynamic numeric settings must remain editable and legacy live sliders hidden");
     movementStop->click();
     waitUntil([&] { return !movementStop->isEnabled() || unexpectedDialog; },
         "live movement simulation cancellation timeout");
@@ -2207,8 +2229,8 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
             const auto priorValues = readValues();
             const auto priorRate = turningRate->text();
             const auto bodyStatus = movementScene->graphicsFeatureStatus(graphics::Feature::BodyTransparency);
-            require(bodyStatus.contains(QStringLiteral("Körperdeckkraft")),
-                "Analysis transparency must explicitly report its applied opacity.");
+            require(bodyStatus == QStringLiteral("Ausgeschaltet."),
+                "The opaque static default must report analysis transparency as off.");
             require(movementScene->graphicsFeatureStatus(graphics::Feature::Reflection)
                     == QStringLiteral("Ausgeschaltet."),
                 "Disabled effects must be reported as off, not active.");
@@ -2218,6 +2240,14 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
             auto* page = stack->currentWidget();
             require(!page->findChild<QCheckBox*>(QStringLiteral("profile0_throughBody")),
                 "static graphics page must not retain hidden force/vector configuration");
+            auto* transparency = page->findChild<QCheckBox*>(QStringLiteral("profile0_bodyTransparency"));
+            require(transparency && !transparency->isChecked(),
+                "The static default must not enable analysis transparency.");
+            transparency->setChecked(true);
+            require(movementScene->graphicsFeatureStatus(graphics::Feature::BodyTransparency)
+                    .contains(QStringLiteral("Körperdeckkraft")),
+                "Enabled analysis transparency must explicitly report its applied opacity.");
+            transparency->setChecked(false);
             auto* grid = page->findChild<QCheckBox*>(QStringLiteral("profile0_grid"));
             const bool wasGrid = grid->isChecked();
             grid->toggle();
@@ -2602,15 +2632,10 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
         require(progress.status == QStringLiteral("abgeschlossen"), "real test-drive run failed");
         const auto last = live->stateJson(progress.states - 1, &error);
         const auto force = parseForceState(last);
-        if (id == QStringLiteral("420") || id == QStringLiteral("folkeboot")) {
-            require(force.contract == QStringLiteral("4"), "movement model not V4");
-            require(force.contract == QStringLiteral("4"), "movement model not V4");
-            require(!last.value(QStringLiteral("bewegungen")).toArray().isEmpty()
-                    && !last.value(QStringLiteral("elementtransformationen_modell")).toArray().isEmpty(),
-                "movement result omitted confirmed settings or element poses");
-        } else {
-            require(force.contract == QStringLiteral("3"), "static model test-drive contract changed");
-        }
+        require(force.contract == QStringLiteral("6"), "live result must use the V6 contract");
+        require(!last.value(QStringLiteral("bewegungen")).toArray().isEmpty()
+                && !last.value(QStringLiteral("elementtransformationen_modell")).toArray().isEmpty(),
+            "movement result omitted confirmed settings or element poses");
         bool capped = false;
         for (qsizetype i = 1; i < progress.states; ++i) {
             const auto s = live->stateJson(i, &error);
@@ -2843,13 +2868,13 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
     run->click();
     waitUntil([&] { return slider->maximum() >= 4 || unexpectedDialog; }, "UI live history");
     require(!unexpectedDialog && !active->isVisible() && !force->isVisible() && !speed->isVisible()
-            && !sharedForce->isEnabled(),
-        "legacy drive stays hidden and the shared dynamic force is frozen");
+            && sharedForce->isEnabled(),
+        "legacy drive stays hidden and the shared dynamic force remains editable");
     slider->setValue(0);
     waitUntil([&] { return !stop->isEnabled() || unexpectedDialog; }, "UI live completion");
     require(!unexpectedDialog && sharedForce->isEnabled(), "UI force completion");
     window.close();
-    report.insert(QStringLiteral("sharedDynamicForceLocksAndRewind"), true);
+    report.insert(QStringLiteral("sharedDynamicForceEditableAndRewind"), true);
     QFile file(evidence.filePath(QStringLiteral("report.json")));
     require(file.open(QIODevice::WriteOnly), "motion evidence file");
     const auto bytes = QJsonDocument(report).toJson();
@@ -3320,7 +3345,7 @@ int main(int argc, char** argv)
                 window.findChild<QWidget*>(QStringLiteral("simulationScene")));
             require(sidebar && navigation && views && table && frame && drive && duration
                     && step && realtime && scene, "Shared dynamic layout and parameters required.");
-            require(sidebar->isVisible() && navigation->isVisible() && views->isVisible()
+            require(sidebar->isVisible() && navigation->isVisible() && !views->isVisible()
                     && table->isVisible() && frame->isVisible() && !duration->isVisible()
                     && !step->isVisible() && !realtime->isVisible() && !drive->isVisible()
                     && activeForce->isVisible() && fixedInputs.front()->isVisible()
@@ -3362,7 +3387,7 @@ int main(int argc, char** argv)
                     require(dialog, "Start must open the dynamic run dialog.");
                     dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runDuration"))->setValue(seconds);
                     dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runStep"))->setValue(.01);
-                    dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(false);
+                    dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(true);
                     if (accept)
                         dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
                     else dialog->reject();
@@ -3373,9 +3398,17 @@ int main(int argc, char** argv)
             require(duration->value() == 10. && table->topLevelItemCount() == 0,
                 "Cancelled start must preserve parameters and not run.");
             answerRunDialog(true, .2);
+            bool liveInputsEnabled = false;
+            QTimer::singleShot(70, &window, [&] {
+                liveInputsEnabled = activeForce->isEnabled() && fixedInputs.front()->isEnabled();
+                if (!liveInputsEnabled) return;
+                window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(175.);
+                window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointZ"))->setValue(2.);
+                fixedInputs.front()->setValue(fixedValue + 1.);
+            });
             run->click();
             waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Short dynamic run timeout.");
-            require(!unexpectedDialog && scene->statePose() && table->topLevelItemCount() > 0,
+            require(!unexpectedDialog && liveInputsEnabled && scene->statePose() && table->topLevelItemCount() > 0,
                 "Actual dynamic simulation must populate the shared force/moment table.");
             const auto rowCount = table->topLevelItemCount();
             auto* weight = window.findChild<QCheckBox*>(QStringLiteral("staticForce_weight"));
@@ -3450,8 +3483,8 @@ int main(int argc, char** argv)
             require(duration->value() == .2 && frame->currentIndex() == 0 && table->isVisible(),
                 "Dynamic inputs must survive workspace switches.");
             require(activeForce->isChecked()
-                    && window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->value() == 150.
-                    && fixedInputs.front()->value() == fixedValue,
+                    && window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->value() == 175.
+                    && fixedInputs.front()->value() == fixedValue + 1.,
                 "Shared physical inputs survive both workspace directions.");
             require(!unexpectedDialog && renderErrors->count == 0, "Dynamic layout must not raise errors.");
             window.close();

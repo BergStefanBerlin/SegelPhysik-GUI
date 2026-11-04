@@ -189,6 +189,8 @@ private:
     QComboBox* forceScaleCombo_ = nullptr;
     QComboBox* momentScaleCombo_ = nullptr;
     QPushButton* graphicsButton_ = nullptr;
+    QWidget* dynamicMotionPanel_ = nullptr;
+    std::array<QCheckBox*, 4> dynamicMotionChecks_{};
     QComboBox* cameraCombo_ = nullptr;
     QCheckBox* navigationCheck_ = nullptr;
     QCheckBox* attitudeViewsCheck_ = nullptr;

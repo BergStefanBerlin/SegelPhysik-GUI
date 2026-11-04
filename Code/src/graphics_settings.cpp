@@ -101,6 +101,30 @@ Settings defaults()
     return {{defaults(0), defaults(1)}, 0};
 }
 
+Settings staticDefaults()
+{
+    auto result = defaults();
+    auto& profile = result.profiles[0];
+    profile.enabled.fill(false);
+    for (const auto feature : {Feature::Water, Feature::PBR, Feature::ColorTexture,
+             Feature::ORM, Feature::NormalTexture, Feature::FXAA, Feature::SSAO,
+             Feature::Peeling, Feature::Smooth, Feature::Waterline, Feature::Axes,
+             Feature::Grid, Feature::Haze, Feature::Sky, Feature::Animation})
+        profile.enabled[static_cast<std::size_t>(feature)] = true;
+    profile.bodyOpacity = 1.0;
+    profile.waterOpacity = 0.18;
+    profile.normalScale = 0.0;
+    profile.throughBody = false;
+    return result;
+}
+
+Settings dynamicDefaults()
+{
+    auto result = defaults();
+    result.profiles[0] = defaults(1);
+    return result;
+}
+
 bool validate(const Settings& settings, QString* error)
 {
     if (settings.active < 0 || settings.active > 1) {

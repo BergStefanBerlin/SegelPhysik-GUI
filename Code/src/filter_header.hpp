@@ -93,8 +93,8 @@ private:
     {
         for (int i = 0; i < filters_.size(); ++i)
             if (filters_[i])
-                filters_[i]->setGeometry(sectionViewportPosition(i) + 4,
-                    height() - filterHeight(), std::max(0, sectionSize(i) - 8), filterHeight());
+                filters_[i]->setGeometry(sectionViewportPosition(i),
+                    height() - filterHeight(), sectionSize(i), filterHeight());
     }
     QVector<QLineEdit*> filters_;
 };

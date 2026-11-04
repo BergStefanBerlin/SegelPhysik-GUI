@@ -1,5 +1,22 @@
 # Spezifikation GUI G-0.10: Statische Anzeige und Dreifachansicht
 
+## Freigegebener Dynamik-Nachtrag 04.11.2026: laufende Eingaben
+
+**A-G-00134:** Nutzerfreigabe 08:52 Uhr: Fremdkraft EIN/AUS,
+XYZ-Komponenten, Ansatzpunkt und Core-Ruder-/Schwertstellungen bleiben
+im dynamischen Lauf bedienbar. Numerische Eingaben erst nach bestaetigter
+Zahleingabe senden. Aenderungen gelten ab dem naechsten noch nicht
+berechneten Schritt, auch wenn gerade ein historischer Zustand
+betrachtet wird. Die Historie wird nie nachgerechnet oder ueberschrieben.
+Eingabefelder zeigen angeforderte Werte; Darstellung, Kraefte, Druckpunkte
+und bewegte Meshes zeigen ausschliesslich den ausgewaehlten bestaetigten
+Core-Zustand. Statische Rechnungen behalten ihre bisherige Eingabesperre.
+Fehler und vor Laufende nicht mehr uebernommene Eingaben sichtbar melden.
+Abnahme: echte Eingabe waehrend eines laufenden GUI-Versuchs, bestaetigte
+Folgezustaende, veraenderte Elementtransformationen und unveraenderter
+Rueckblick. Keine neuen Modell-/Meshdaten erfinden, vorhandene
+stellungsabhaengige Aufbereitung verwenden. Kein Git-/Release-Auftrag.
+
 **Status:** Durch Umsetzungsauftrag vom 03.11.2026 finalisiert und zur Umsetzung freigegeben.
 **Nachtrag:** Abschnitt 6 durch Umsetzungsauftrag vom 03.11.2026,
 13:42 Uhr finalisiert und zur Implementierung freigegeben.

@@ -137,9 +137,56 @@ int main(int argc, char** argv)
             "Immediate static settings must survive storage reload.");
         require(reloaded.profiles[1].enabled == graphics::defaults(1).enabled
             && reloaded.active == 1, "Optical profile and previous active profile must be retained.");
+        require(table->isRowHidden(static_cast<int>(graphics::Feature::Wake))
+                && table->isRowHidden(static_cast<int>(graphics::Feature::WaterTrack))
+                && table->isRowHidden(static_cast<int>(graphics::Feature::DistanceMarks))
+                && table->isRowHidden(static_cast<int>(graphics::Feature::Trail)),
+            "Static settings must omit motion and speed visualization choices.");
+        auto* reset = page->findChild<QPushButton*>(QStringLiteral("resetGraphicsDefaults"));
+        require(reset, "Static settings need a default reset button.");
+        const auto beforeReset = committed;
+        saveAllowed = false;
+        reset->click();
+        require(committed.profiles[0].enabled == beforeReset.profiles[0].enabled
+                && opacity->value() == .65,
+            "Failed reset must preserve both applied settings and controls.");
+        saveAllowed = true;
+        reset->click();
+        const auto technical = graphics::staticDefaults().profiles[0];
+        require(graphics::load(storage, &reloaded, &error)
+                && reloaded.profiles[0].enabled == technical.enabled
+                && reloaded.profiles[0].waterOpacity == technical.waterOpacity
+                && reloaded.profiles[0].bodyOpacity == 1.
+                && opacity->value() == 1.
+                && pbr->isChecked() && texture->isChecked()
+                && !reloaded.profiles[0].on(graphics::Feature::Shadows)
+                && !reloaded.profiles[0].on(graphics::Feature::Reflection)
+                && !reloaded.profiles[0].on(graphics::Feature::Lights)
+                && reloaded.profiles[0].on(graphics::Feature::Water),
+            "Reset must persist the calm material-visible technical default and synchronize controls.");
+        opacity->setValue(.8);
+        require(graphics::load(storage, &reloaded, &error)
+                && reloaded.profiles[0].bodyOpacity == .8,
+            "User changes after reset must still persist.");
         storage.endGroup();
         require(storage.value(QStringLiteral("grafik/profile_v1")) == dynamicData,
             "Static settings must not modify existing dynamic settings.");
+        auto dynamic = graphics::defaults();
+        std::unique_ptr<QWidget> dynamicPage(createGraphicsSettingsPage(&host, dynamic, {},
+            [&](const graphics::Settings& proposed) { dynamic = proposed; return true; },
+            [] {}, {}, false));
+        auto* dynamicTable = dynamicPage->findChild<QTableWidget*>(QStringLiteral("staticGraphicsTable"));
+        require(dynamicTable->isRowHidden(static_cast<int>(graphics::Feature::Wake)),
+            "Dynamic motion switches must be outside the graphics settings page.");
+        dynamicPage->findChild<QPushButton*>(QStringLiteral("resetGraphicsDefaults"))->click();
+        require(dynamic.profiles[0].quality == 2
+                && dynamic.profiles[0].on(graphics::Feature::Wake)
+                && dynamic.profiles[0].on(graphics::Feature::Shadows)
+                && dynamic.profiles[0].on(graphics::Feature::Reflection)
+                && !dynamic.profiles[0].on(graphics::Feature::WaterTrack)
+                && !dynamic.profiles[0].on(graphics::Feature::DistanceMarks)
+                && !dynamic.profiles[0].on(graphics::Feature::Trail),
+            "Dynamic default must use maximum optical quality and bow/stern waves only.");
         std::cout << "Static table, immediate persistence, dependencies and rollback passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

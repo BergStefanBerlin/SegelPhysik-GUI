@@ -381,6 +381,7 @@ struct LiveSimulation::Impl {
     std::size_t nextTestEvent = 1;
     std::vector<segelphysik::Bewegungsereignis> pendingMovementEvents;
     std::size_t nextMovementEvent = 1;
+    std::optional<segelphysik::DynamischeFremdkraftKonfiguration> pendingForce;
     QString testDriveStatus;
 
     mutable std::mutex mutex;
@@ -412,6 +413,10 @@ struct LiveSimulation::Impl {
             testDriveStatus = QStringLiteral("Lauf beendet: %1 Stellereignisse wurden nicht mehr angewandt.")
                 .arg(static_cast<qulonglong>(pendingMovementEvents.size()));
             pendingMovementEvents.clear();
+        }
+        if (pendingForce) {
+            testDriveStatus += QStringLiteral("\nLauf beendet: Fremdkraftaenderung wurde nicht mehr angewandt.");
+            pendingForce.reset();
         }
         status = finalStatus;
         diagnostic = detail;
@@ -554,13 +559,24 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
             const auto computeStart = clock::now();
             std::vector<segelphysik::TestantriebEreignis> events;
             std::vector<segelphysik::Bewegungsereignis> movementEvents;
+            std::optional<segelphysik::DynamischeFremdkraftKonfiguration> forceChange;
             {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 events.swap(d.pendingTestEvents);
                 movementEvents.swap(d.pendingMovementEvents);
+                forceChange.swap(d.pendingForce);
             }
-            auto next = d.workerPreparation->schritt(state,
+            const auto stepStart = forceChange
+                ? segelphysik::dynamische_fremdkraft_aendern(
+                    d.workerPreparation->modell(), state, *forceChange) : state;
+            auto next = d.workerPreparation->schritt(stepStart,
                 target - state.zeit_s, events, movementEvents);
+            if (forceChange) {
+                const std::lock_guard<std::mutex> lock(d.mutex);
+                d.testDriveStatus = QStringLiteral("Fremdkraft am Uebergang %1 → %2 uebernommen.")
+                    .arg(static_cast<qulonglong>(state.schritt))
+                    .arg(static_cast<qulonglong>(next.schritt));
+            }
             if (!events.empty()) {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 d.testDriveStatus = QStringLiteral("Testantrieb %1: Ereignis %2 am Uebergang %3 → %4 uebernommen.")
@@ -625,11 +641,33 @@ bool LiveSimulation::setTestDriveActive(bool active, QString* error)
     return true;
 }
 
+bool LiveSimulation::setDynamicForce(bool active, const std::array<double, 3>& force,
+    const std::array<double, 3>& point, QString* error)
+{
+    auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (d.finished || !d.start.dynamische_fremdkraft) {
+        if (error) *error = QStringLiteral("Keine laufende Simulation mit dynamischer Fremdkraft.");
+        return false;
+    }
+    if (!std::all_of(force.begin(), force.end(), [](double v) { return std::isfinite(v); })
+        || !std::all_of(point.begin(), point.end(), [](double v) { return std::isfinite(v); })) {
+        if (error) *error = QStringLiteral("Fremdkraft und Ansatzpunkt muessen endlich sein.");
+        return false;
+    }
+    if (active && d.hasTestDrive) {
+        if (error) *error = QStringLiteral("Fremdkraft und Testantrieb duerfen nicht gleichzeitig aktiv sein.");
+        return false;
+    }
+    d.pendingForce = segelphysik::DynamischeFremdkraftKonfiguration{active, force, point};
+    return true;
+}
+
 bool LiveSimulation::setMovementValue(const QString& elementId, double value, QString* error)
 {
     auto& d = *impl_;
     const std::lock_guard<std::mutex> lock(d.mutex);
-    if (d.finished || d.states.empty()) {
+    if (d.finished) {
         if (error) *error = QStringLiteral("Keine laufende dynamische Simulation.");
         return false;
     }

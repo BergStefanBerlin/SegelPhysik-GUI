@@ -816,6 +816,76 @@ void testDynamicForce(const QString& referenceModelPath)
     }
     require(live->stateJson(0, &error) == frozen,
         "Inactive or zero-force runs changed an active historical force snapshot.");
+    auto changing = LiveSimulation::create(modelPath, validation, 0., .01, true, &error, start);
+    require(changing != nullptr, "Changing force live run rejected.");
+    require(changing->progress().states == 0
+            && changing->setMovementValue(QStringLiteral("Ruder"), -5., &error)
+            && changing->setMovementValue(QStringLiteral("Schwert"), 75., &error),
+        "Edits before the worker publishes its first state must queue for the first step.");
+    std::atomic_bool stopChanges{false};
+    std::thread changesWorker([&] { changing->run(stopChanges); });
+    const auto waitStates = [&](qsizetype count) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (changing->progress().states < count && !changing->progress().finished
+            && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        return changing->progress().states >= count;
+    };
+    const bool ready = waitStates(3);
+    const auto oldIndex = changing->progress().states - 1;
+    const auto oldState = ready ? changing->stateJson(oldIndex, &error) : QJsonObject{};
+    const auto initialState = ready ? changing->stateJson(0, &error) : QJsonObject{};
+    const bool changedForce = ready && changing->setDynamicForce(true,
+        {50., -25., 3.}, {-.5, .2, 1.5}, &error);
+    const bool changedRudder = ready && changing->setMovementValue(QStringLiteral("Ruder"), -15., &error);
+    const bool changedSword = ready && changing->setMovementValue(QStringLiteral("Schwert"), 25., &error);
+    const bool advanced = waitStates(oldIndex + 5);
+    const auto changedIndex = changing->progress().states - 1;
+    const auto changedState = advanced ? changing->stateJson(changedIndex, &error) : QJsonObject{};
+    const bool disabled = advanced && changing->setDynamicForce(false,
+        {50., -25., 3.}, {-.5, .2, 1.5}, &error);
+    const bool advancedAgain = waitStates(changedIndex + 4);
+    stopChanges.store(true);
+    changesWorker.join();
+    require(ready && changedForce && changedRudder && changedSword && advanced
+            && disabled && advancedAgain, "Live force/movement updates did not advance.");
+    require(initialState.value(QStringLiteral("bewegungen"))
+                != oldState.value(QStringLiteral("bewegungen")),
+        "Queued startup edits must change subsequent movement states, not the initial snapshot.");
+    for (const auto& movement : oldState.value(QStringLiteral("bewegungen")).toArray()) {
+        const auto item = movement.toObject();
+        if (item.value(QStringLiteral("element_id")) == QJsonValue(QStringLiteral("Ruder")))
+            require(item.value(QStringLiteral("wert")).toDouble() == -5., "Queued startup rudder not confirmed.");
+        if (item.value(QStringLiteral("element_id")) == QJsonValue(QStringLiteral("Schwert")))
+            require(item.value(QStringLiteral("wert")).toDouble() == 75., "Queued startup sword not confirmed.");
+    }
+    require(changing->stateJson(oldIndex, &error) == oldState
+            && changing->stateJson(changedIndex, &error) == changedState,
+        "Live edits must never mutate historical snapshots.");
+    const auto updatedContext = changedState.value(QStringLiteral("dynamische_fremdkraft")).toObject();
+    require(updatedContext.value(QStringLiteral("kraft_modellfest_n")) == QJsonValue(QJsonArray{50., -25., 3.})
+            && updatedContext.value(QStringLiteral("angriffspunkt_modell_m"))
+                == QJsonValue(QJsonArray{-.5, .2, 1.5}),
+        "Updated force and application point must reach the next physical snapshots.");
+    for (const auto& movement : changedState.value(QStringLiteral("bewegungen")).toArray()) {
+        const auto item = movement.toObject();
+        if (item.value(QStringLiteral("element_id")) == QJsonValue(QStringLiteral("Ruder")))
+            require(item.value(QStringLiteral("wert")).toDouble() == -15., "Live rudder not confirmed.");
+        if (item.value(QStringLiteral("element_id")) == QJsonValue(QStringLiteral("Schwert")))
+            require(item.value(QStringLiteral("wert")).toDouble() == 25., "Live sword not confirmed.");
+    }
+    require(changedState.value(QStringLiteral("elementtransformationen_modell"))
+                != oldState.value(QStringLiteral("elementtransformationen_modell")),
+        "Live settings must update movement transforms for mesh rendering.");
+    const auto finalState = changing->stateJson(changing->progress().states - 1, &error);
+    require(finalState.value(QStringLiteral("druckpunkte")).toObject()
+                .value(QStringLiteral("ersatz_segel")).toObject()
+                .value(QStringLiteral("status")) == QJsonValue(QStringLiteral("inaktiv")),
+        "Disabling live force must remove its active sail point.");
+    require(!changing->setDynamicForce(true, {1., 0., 0.}, {}, &error) && !error.isEmpty(),
+        "Finished runs must reject late force edits explicitly.");
+    require(!changing->setMovementValue(QStringLiteral("Ruder"), 0., &error) && !error.isEmpty(),
+        "Finished runs must reject late movement edits explicitly.");
 }
 
 void testPreparedLiveParity(const QString& referencePath)

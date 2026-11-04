@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <memory>
+#include <vector>
 
 namespace {
 class SettingsTable : public QTableWidget {
@@ -50,12 +51,12 @@ protected:
 QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& initial,
     const QString& status, const std::function<bool(const graphics::Settings&)>& commit,
     const std::function<void()>& close,
-    const std::function<QString(graphics::Feature)>& featureStatus)
+    const std::function<QString(graphics::Feature)>& featureStatus, bool staticMode)
 {
     auto* page = new QWidget(parent);
     page->setObjectName(QStringLiteral("graphicsSettingsPage"));
     auto* layout = new QVBoxLayout(page);
-    auto* heading = new QLabel(QStringLiteral(
+    auto* heading = new QLabel(staticMode ? QStringLiteral(
         "<b>Darstellung – Frei im Statischen Modell (Technik)</b><br>"
         "Jede Änderung wird sofort auf Frei angewendet und dauerhaft gespeichert. "
         "Seite, Heck und Draufsicht bleiben fest schematisch und sind nicht konfigurierbar. "
@@ -64,7 +65,9 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
         "sie betreffen die Darstellung, nicht die Solvergenauigkeit.<br>"
         "<b>Haken = gespeicherte und angewendete Einstellung.</b> "
         "Körperdurchsicht macht das Boot transparent. Materialeffekte gelten für passende Teile; "
-        "andere Teile lassen sie ohne Fehler aus."));
+        "andere Teile lassen sie ohne Fehler aus.")
+        : QStringLiteral("<b>Darstellung – Dynamisches Modell</b><br>"
+            "Jede Änderung wird sofort angewendet und dauerhaft gespeichert."));
     heading->setWordWrap(true);
     layout->addWidget(heading);
     auto* table = new SettingsTable;
@@ -101,7 +104,7 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
         }
         table->adjustRows();
     };
-    const auto change = [saved, commit, diagnostic, refresh](const std::function<void(graphics::Profile&)>& edit) {
+    const auto change = [saved, commit, diagnostic, refresh, staticMode](const std::function<void(graphics::Profile&)>& edit) {
         auto next = *saved;
         edit(next.profiles[0]);
         QString error;
@@ -117,7 +120,9 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
         }
         *saved = next;
         refresh();
-        diagnostic->setText(QStringLiteral("Gespeichert und im statischen Modell angewendet."));
+        diagnostic->setText(staticMode
+            ? QStringLiteral("Gespeichert und im statischen Modell angewendet.")
+            : QStringLiteral("Gespeichert und im dynamischen Modell angewendet."));
         return true;
     };
     auto addRow = [table](QWidget* control, const QString& description,
@@ -182,6 +187,11 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
             + QString::fromUtf8(info.label) + QStringLiteral("\n")
             + explanation.left(explanation.indexOf(QStringLiteral("CPU"))).trimmed(),
             cost(QStringLiteral("CPU")), cost(QStringLiteral("GPU")));
+        if (static_cast<graphics::Feature>(i) == graphics::Feature::Trail
+                || static_cast<graphics::Feature>(i) == graphics::Feature::Wake
+                || static_cast<graphics::Feature>(i) == graphics::Feature::WaterTrack
+                || static_cast<graphics::Feature>(i) == graphics::Feature::DistanceMarks)
+            table->setRowHidden(table->rowCount() - 1, true);
         auto* description = qobject_cast<QLabel*>(table->cellWidget(static_cast<int>(i), 1));
         description->setObjectName(QStringLiteral("profile0_status_%1").arg(QString::fromLatin1(info.key)));
         (*descriptions)[i] = description;
@@ -196,6 +206,7 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
     }
     dependencies();
     refresh();
+    std::vector<std::function<void(const graphics::Profile&)>> synchronize;
     const auto numeric = [&](const char* key, const QString& description, double graphics::Profile::* member,
                              double minimum, double maximum, double step, const QString& cpu, const QString& gpu) {
         if (member == &graphics::Profile::trackAge || member == &graphics::Profile::trackSpacing
@@ -204,6 +215,11 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
             field->setObjectName(QStringLiteral("profile0_%1").arg(QString::fromLatin1(key)));
             addRow(nullptr, description, cpu, gpu);
             table->setCellWidget(table->rowCount() - 1, 0, field);
+            table->setRowHidden(table->rowCount() - 1, true);
+            synchronize.push_back([field, member](const graphics::Profile& profile) {
+                const QSignalBlocker blocker(field);
+                field->setText(QString::number(profile.*member, 'g', 17));
+            });
             QObject::connect(field, &QLineEdit::editingFinished, page,
                 [saved, change, diagnostic, member, field] {
                     bool ok = false;
@@ -224,6 +240,10 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
         field->setValue(initial.profiles[0].*member);
         addRow(nullptr, description, cpu, gpu);
         table->setCellWidget(table->rowCount() - 1, 0, field);
+        synchronize.push_back([field, member](const graphics::Profile& profile) {
+            const QSignalBlocker blocker(field);
+            field->setValue(profile.*member);
+        });
         QObject::connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), page,
             [saved, change, member, field](double value) {
                 const double previous = saved->profiles[0].*member;
@@ -255,6 +275,7 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
     addRow(nullptr, QStringLiteral("Maximale Stützpunkte je Spur: begrenzt Geometrie und Speicher."),
         QStringLiteral("mit Budget steigend"), QStringLiteral("mit Budget steigend"));
     table->setCellWidget(table->rowCount() - 1, 0, budget);
+    table->setRowHidden(table->rowCount() - 1, true);
     QObject::connect(budget, qOverload<int>(&QSpinBox::valueChanged), page, [saved, change, budget](int value) {
         const int previous = saved->profiles[0].trackBudget;
         if (!change([value](graphics::Profile& p) { p.trackBudget = value; })) {
@@ -294,6 +315,27 @@ QWidget* createGraphicsSettingsPage(QWidget* parent, const graphics::Settings& i
     });
     table->horizontalHeader()->setMinimumSectionSize(40);
     table->adjustRows();
+    {
+        auto* reset = new QPushButton(QStringLiteral("Auf Default setzen"));
+        reset->setObjectName(QStringLiteral("resetGraphicsDefaults"));
+        layout->addWidget(reset, 0, Qt::AlignRight);
+        QObject::connect(reset, &QPushButton::clicked, page,
+            [change, checks, synchronize, budget, quality, environment, dependencies, staticMode] {
+                const auto profile = (staticMode ? graphics::staticDefaults()
+                    : graphics::dynamicDefaults()).profiles[0];
+                if (!change([profile](graphics::Profile& current) { current = profile; })) return;
+                for (std::size_t i = 0; i < graphics::featureCount; ++i) {
+                    const QSignalBlocker blocker((*checks)[i]);
+                    (*checks)[i]->setChecked(profile.enabled[i]);
+                }
+                for (const auto& sync : synchronize) sync(profile);
+                const QSignalBlocker blockBudget(budget), blockQuality(quality), blockEnvironment(environment);
+                budget->setValue(profile.trackBudget);
+                quality->setCurrentIndex(profile.quality);
+                environment->setText(profile.environmentPath);
+                dependencies();
+            });
+    }
     auto* back = new QPushButton(QStringLiteral("Zurück zum Boot"));
     back->setObjectName(QStringLiteral("closeGraphics"));
     layout->addWidget(back, 0, Qt::AlignRight);

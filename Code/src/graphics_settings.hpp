@@ -43,6 +43,8 @@ struct Settings {
 };
 Profile defaults(int profile);
 Settings defaults();
+Settings staticDefaults();
+Settings dynamicDefaults();
 bool validate(const Settings& settings, QString* error);
 bool load(QSettings& storage, Settings* settings, QString* error);
 bool save(QSettings& storage, const Settings& settings, QString* error);
