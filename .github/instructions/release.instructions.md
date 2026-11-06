@@ -54,9 +54,18 @@ ausdrücklich beauftragten Git-/Release-Aktionen.
 2. Commit-Nachricht kurz im Stil des Repos, am Ende immer:
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
    Inhalt der Einträge siehe „Aussagekräftige Einträge“.
-3. Vor jedem Commit Tests ausführen:
-   `.\.venv\Scripts\python.exe -m pytest -q`,
-   mit `QT_QPA_PLATFORM=offscreen`. Schlagen sie fehl: nicht committen.
+3. Vor jedem Commit den nativen C++-Build und CTest ausführen.
+   Den bestehenden, für Qt 6, VTK und den separaten Core konfigurierten
+   Buildordner verwenden (hier `C:\spdeps\guibuild`):
+   `cmake --build C:\spdeps\guibuild --config Release`,
+   `ctest --test-dir C:\spdeps\guibuild -C Release --output-on-failure`.
+   Konfiguration und Laufzeitumgebung richten sich nach
+   [README](../../README.md#configure-and-build).
+   Python, virtuelle Umgebungen und pytest sind kein GUI-Testpfad.
+   Schlagen Build oder Tests fehl: nicht committen.
+   Nur auf ausdrücklichen Nutzerauftrag darf für die jeweils beauftragte
+   Sicherung auf einen erneuten Build und Testlauf verzichtet werden;
+   den Verzicht und vorhandene bekannte Testfehler im Abschluss nennen.
    Bei Entwicklungsaufträgen Fehler im Auftragsumfang untersuchen und beheben.
 4. Nie `--force`, nie `--no-verify`, nie Verlauf umschreiben und nie
    Änderungen verwerfen.
@@ -71,7 +80,7 @@ ausdrücklich beauftragten Git-/Release-Aktionen.
 
 **„commit“**
 
-Status und Änderungen prüfen, Tests ausführen und nur die zum Auftrag
+Status und Änderungen prüfen, Tests nach Grundregel 3 ausführen und nur die zum Auftrag
 gehörenden, freigegebenen Dateien gezielt stagen und committen. Kein pauschales
 `git add -A` bei fremden oder nicht freigegebenen Änderungen. Gibt es nichts
 zu committen, melden und enden. Kein Push und kein Tag.
@@ -107,7 +116,8 @@ Nur auf ausdrücklichen Zuruf. Vor Beginn `main` prüfen. Auf einem anderen
 Branch den Release-Ablauf abbrechen und melden; keine Teilveröffentlichung
 und kein automatischer Branchwechsel.
 
-1. Offene freigegebene Änderungen committen, Tests ausführen und pushen.
+1. Offene freigegebene Änderungen committen, Tests nach Grundregel 3
+   ausführen und pushen.
 2. Neuen GUI-Tag `G-(X+1).0` setzen und pushen.
 3. Notizen aus
    `git log <letzter Release-Tag>..HEAD --format="- %s (%h)"` erstellen.
