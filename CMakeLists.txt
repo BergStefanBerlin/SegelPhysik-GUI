@@ -189,6 +189,23 @@ if(BUILD_TESTING)
             set_property(TEST gui_navigation_camera APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
         endif()
+        add_test(NAME gui_sail_configurator_420 COMMAND segelphysik_gui_graphics_render_tests
+            --sail-configurator-integration "${SEGELPHYSIK_MODELLE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/sail-configurator-420")
+        set_tests_properties(gui_sail_configurator_420 PROPERTIES
+            TIMEOUT 900 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        add_test(NAME gui_unified_montage COMMAND segelphysik_gui_graphics_render_tests
+            --unified-montage-integration "${SEGELPHYSIK_MODELLE_DIR}")
+        set_tests_properties(gui_unified_montage PROPERTIES
+            TIMEOUT 900 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+            set_property(TEST gui_sail_configurator_420 APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            set_property(TEST gui_unified_montage APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+        endif()
         foreach(scale IN ITEMS 100 150 200)
             if(scale EQUAL 100)
                 set(scale_factor "1")
@@ -208,6 +225,8 @@ if(BUILD_TESTING)
             add_test(NAME gui_boat_inspection_${scale} COMMAND segelphysik_gui_graphics_render_tests
                 --inspection-only "${SEGELPHYSIK_MODELLE_DIR}"
                 "${CMAKE_CURRENT_BINARY_DIR}/graphics-evidence/boat-inspection-${scale}")
+            add_test(NAME gui_inspection_pointer_${scale}
+                COMMAND segelphysik_gui_graphics_render_tests --inspection-pointer-only)
             set_tests_properties(gui_graphics_render_${scale} PROPERTIES
                 TIMEOUT 300 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
@@ -220,9 +239,12 @@ if(BUILD_TESTING)
             set_tests_properties(gui_boat_inspection_${scale} PROPERTIES
                 TIMEOUT 120 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
+            set_tests_properties(gui_inspection_pointer_${scale} PROPERTIES
+                TIMEOUT 60 RUN_SERIAL TRUE
+                ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
                 set_property(TEST gui_graphics_render_${scale} gui_workspace_tabs_${scale}
-                    gui_boat_inspection_${scale} gui_dynamic_layout_${scale}
+                    gui_boat_inspection_${scale} gui_inspection_pointer_${scale} gui_dynamic_layout_${scale}
                     APPEND PROPERTY ENVIRONMENT
                     "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
             endif()
@@ -253,8 +275,8 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_core_integration
         COMMAND segelphysik_gui_core_tests
-            "${SEGELPHYSIK_MODELLE_DIR}/quader/modell.json"
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/tests/testdata/stationaere_referenz/modell.json")
+            "${SEGELPHYSIK_MODELLE_DIR}/quader/bootsmodell.json"
+            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/tests/testdata/stationaere_referenz/bootsmodell.json")
 
     add_executable(segelphysik_gui_catalog_tests
         Code/src/model_catalog.cpp

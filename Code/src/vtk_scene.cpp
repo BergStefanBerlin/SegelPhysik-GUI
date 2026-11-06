@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QEvent>
 #include <QFileInfo>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QLabel>
@@ -14,6 +15,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
+#include <QCursor>
 #include <QVBoxLayout>
 
 #include <QVTKOpenGLNativeWidget.h>
@@ -26,6 +28,7 @@
 #include <vtkCaptionActor2D.h>
 #include <vtkBillboardTextActor3D.h>
 #include <vtkCellArray.h>
+#include <vtkCellPicker.h>
 #include <vtkClipPolyData.h>
 #include <vtkCommand.h>
 #include <vtkContourTriangulator.h>
@@ -56,6 +59,7 @@
 #include <vtkShadowMapPass.h>
 #include <vtkShaderProperty.h>
 #include <vtkSkybox.h>
+#include <vtkSphereSource.h>
 #include <vtkSSAOPass.h>
 #include <vtkStripper.h>
 #include <vtkTextProperty.h>
@@ -949,6 +953,8 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     renderWindow_->AddRenderer(overlay_);
     renderWindow_->SetMultiSamples(0);
     vtkWidget_->setRenderWindow(renderWindow_);
+    inspectionPicker_ = vtkSmartPointer<vtkCellPicker>::New();
+    inspectionPicker_->SetTolerance(0.0005);
     navigation_ = new navigation::Overlay(vtkWidget_);
     navigation_->installEventFilter(this);
     for (auto* child : navigation_->findChildren<QWidget*>())
@@ -1899,7 +1905,7 @@ void VtkSceneWidget::setGraphicsProfile(const graphics::Profile& profile)
 {
     if (!updatesActive_) return;
     auto effective = profile;
-    if (orthographicView_ != OrthographicView::Free) {
+    if (orthographicView_ != OrthographicView::Free && !inspectionMode_) {
         effective = graphics::Profile{};
         for (auto feature : {graphics::Feature::Water, graphics::Feature::Waterline, graphics::Feature::Smooth,
                  graphics::Feature::FXAA})
@@ -2037,6 +2043,8 @@ void VtkSceneWidget::resetOrthographicCamera()
 
 void VtkSceneWidget::setOrthographicView(OrthographicView view)
 {
+    cancelInspectionDrag();
+    inspectionPresetId_.clear();
     orthographicView_ = view;
     waterLevelActor_->VisibilityOff();
     defaultViewButton_->setVisible(view != OrthographicView::Free);
@@ -2059,6 +2067,54 @@ void VtkSceneWidget::updateOrthographicCamera()
     if (orthographicView_ == OrthographicView::Free) return;
     double bounds[6];
     if (!bodyBounds(bounds)) return;
+    if (inspectionMode_ && !inspectionPresetId_.isEmpty()) {
+        const auto& presets = navigation::cameraPresets();
+        const auto preset = std::find_if(presets.cbegin(), presets.cend(),
+            [this](const auto& value) {
+                return inspectionPresetId_ == QString::fromLatin1(value.id);
+            });
+        if (preset == presets.cend()) return;
+        const auto unit = [](const Vec3& value) {
+            const double length = forcedisplay::norm(value);
+            return length > 1e-12 ? forcedisplay::scale(value, 1.0 / length) : Vec3{};
+        };
+        const Vec3 direction = unit(forcedisplay::toWorldVector(cameraPose_, preset->direction));
+        const Vec3 up = unit(forcedisplay::toWorldVector(cameraPose_, preset->up));
+        const Vec3 right = unit(forcedisplay::cross(up, direction));
+        if (forcedisplay::norm(direction) < 1e-9 || forcedisplay::norm(up) < 1e-9
+            || forcedisplay::norm(right) < 1e-9)
+            return;
+        Vec3 center{0.5 * (bounds[0] + bounds[1]), 0.5 * (bounds[2] + bounds[3]),
+            0.5 * (bounds[4] + bounds[5])};
+        double halfHeight = 0.1, halfWidth = 0.1, radius = 0.1;
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3 offset = forcedisplay::sub(
+                {bounds[(corner & 1) ? 1 : 0], bounds[(corner & 2) ? 3 : 2],
+                    bounds[(corner & 4) ? 5 : 4]}, center);
+            const auto dot = [](const Vec3& a, const Vec3& b) {
+                return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+            };
+            halfHeight = std::max(halfHeight, std::abs(dot(offset, up)));
+            halfWidth = std::max(halfWidth, std::abs(dot(offset, right)));
+            radius = std::max(radius, forcedisplay::norm(offset));
+        }
+        const double aspect = static_cast<double>(std::max(1, vtkWidget_->width()))
+            / std::max(1, vtkWidget_->height());
+        if (orthographicScale_ <= 0.0)
+            orthographicScale_ = 1.12 * std::max(halfHeight, halfWidth / aspect);
+        center = forcedisplay::add(center,
+            forcedisplay::add(forcedisplay::scale(right, orthographicPan_.x()),
+                forcedisplay::scale(up, orthographicPan_.y())));
+        auto* camera = renderer_->GetActiveCamera();
+        camera->ParallelProjectionOn();
+        const auto position = forcedisplay::add(center, forcedisplay::scale(direction, 3.0 * radius));
+        camera->SetFocalPoint(center.data());
+        camera->SetPosition(position.data());
+        camera->SetViewUp(up.data());
+        camera->SetParallelScale(orthographicScale_);
+        waterLevelActor_->VisibilityOff();
+        return;
+    }
     Vec3 center{0.5 * (bounds[0] + bounds[1]), 0.5 * (bounds[2] + bounds[3]), 0.0};
     const auto longitudinal = forcedisplay::toWorldVector(cameraPose_, {1.0, 0.0, 0.0});
     const auto port = forcedisplay::toWorldVector(cameraPose_, {0.0, 1.0, 0.0});
@@ -2115,6 +2171,179 @@ void VtkSceneWidget::updateOrthographicCamera()
         waterLevelActor_->GetProperty()->SetLineWidth(
             static_cast<float>(vtkWidget_->devicePixelRatioF()));
     }
+}
+
+bool VtkSceneWidget::setInspectionCameraPreset(const QString& id, QString* error)
+{
+    if (!inspectionMode_) {
+        if (error) *error = QStringLiteral("Kameraauswahl ist nur in der Bootsauswahl verfügbar.");
+        return false;
+    }
+    cancelInspectionDrag();
+    inspectionPresetId_.clear();
+    if (id.isEmpty()) {
+        setOrthographicView(OrthographicView::Free);
+        inspectionEditTarget_.clear();
+        vtkWidget_->unsetCursor();
+        return true;
+    }
+    const auto& presets = navigation::cameraPresets();
+    const auto preset = std::find_if(presets.cbegin(), presets.cend(),
+        [&id](const auto& value) { return id == QString::fromLatin1(value.id); });
+    if (preset == presets.cend()) {
+        if (error) *error = QStringLiteral("Unbekannte Kameraansicht: %1").arg(id);
+        return false;
+    }
+    const bool axisView = id == QStringLiteral("backbord")
+        || id == QStringLiteral("steuerbord") || id == QStringLiteral("bug")
+        || id == QStringLiteral("heck") || id == QStringLiteral("oben")
+        || id == QStringLiteral("unten");
+    if (!axisView) {
+        setOrthographicView(OrthographicView::Free);
+        if (!setCameraPreset(id, error)) return false;
+        inspectionEditTarget_.clear();
+        vtkWidget_->unsetCursor();
+        return true;
+    }
+    double bounds[6];
+    if (!bodyBounds(bounds)) {
+        if (error) *error = QStringLiteral("Keine Modellgeometrie für die Kameraansicht vorhanden.");
+        return false;
+    }
+    setOrthographicView(OrthographicView::Top);
+    inspectionPresetId_ = id;
+    updateOrthographicCamera();
+    geometryDirty_ = true;
+    requestRender();
+    return true;
+}
+
+bool VtkSceneWidget::inspectionEditView() const
+{
+    return inspectionMode_ && (inspectionPresetId_ == QStringLiteral("backbord")
+        || inspectionPresetId_ == QStringLiteral("steuerbord")
+        || inspectionPresetId_ == QStringLiteral("bug")
+        || inspectionPresetId_ == QStringLiteral("heck")
+        || inspectionPresetId_ == QStringLiteral("oben")
+        || inspectionPresetId_ == QStringLiteral("unten"));
+}
+
+void VtkSceneWidget::setInspectionEditTarget(const QString& elementId)
+{
+    cancelInspectionDrag();
+    inspectionEditTarget_ = elementId;
+    if (inspectionEditTarget_.isEmpty()) vtkWidget_->unsetCursor();
+    else {
+        vtkWidget_->setCursor(Qt::OpenHandCursor);
+        vtkWidget_->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void VtkSceneWidget::setInspectionHandles(const QVector<InspectionHandle>& handles)
+{
+    for (const auto& actor : inspectionHandleActors_) renderer_->RemoveActor(actor);
+    inspectionHandleActors_.clear();
+    for (const auto& label : inspectionHandleLabels_) renderer_->RemoveActor(label);
+    inspectionHandleLabels_.clear();
+    inspectionHandles_ = handles;
+    double upRaw[3];
+    double directionRaw[3];
+    auto* camera = renderer_->GetActiveCamera();
+    camera->GetViewUp(upRaw);
+    camera->GetDirectionOfProjection(directionRaw);
+    const auto unit = [](const Vec3& value) {
+        const double length = forcedisplay::norm(value);
+        return length > 1e-12 ? forcedisplay::scale(value, 1.0 / length) : Vec3{};
+    };
+    const Vec3 up = unit({upRaw[0], upRaw[1], upRaw[2]});
+    const Vec3 direction = unit({directionRaw[0], directionRaw[1], directionRaw[2]});
+    const Vec3 right = unit(forcedisplay::cross(direction, up));
+    for (const auto& handle : handles) {
+        const double pixelSize = worldPerLogicalPixel(handle.position);
+        if (!(pixelSize > 0.0) || !std::isfinite(pixelSize)) continue;
+        auto sphere = vtkSmartPointer<vtkSphereSource>::New();
+        sphere->SetCenter(handle.position.data());
+        sphere->SetRadius(pixelSize * 6.0);
+        sphere->SetThetaResolution(16);
+        sphere->SetPhiResolution(12);
+        auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapper->SetInputConnection(sphere->GetOutputPort());
+        auto actor = vtkSmartPointer<vtkActor>::New();
+        actor->SetMapper(mapper);
+        actor->PickableOff();
+        actor->UseBoundsOff();
+        if (handle.key == QStringLiteral("hals"))
+            actor->GetProperty()->SetColor(1.0, 0.75, 0.2);
+        else if (handle.key == QStringLiteral("schothorn"))
+            actor->GetProperty()->SetColor(1.0, 0.35, 0.32);
+        else
+            actor->GetProperty()->SetColor(0.3, 0.85, 1.0);
+        renderer_->AddActor(actor);
+        inspectionHandleActors_.push_back(actor);
+
+        auto label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+        const QString labelText = handle.key == QStringLiteral("hals")
+            ? QStringLiteral("Hals") : handle.key == QStringLiteral("schothorn")
+            ? QStringLiteral("Schothorn") : handle.key == QStringLiteral("kopf_vorliek")
+            ? QStringLiteral("Kopf · Vorliek") : QStringLiteral("Kopf · Achterliek");
+        label->SetInput(labelText.toUtf8().constData());
+        auto labelPosition = forcedisplay::add(handle.position,
+            forcedisplay::add(forcedisplay::scale(right, pixelSize * 8.0),
+                forcedisplay::scale(up, pixelSize * 8.0)));
+        label->SetPosition(labelPosition.data());
+        label->PickableOff();
+        label->UseBoundsOff();
+        label->GetTextProperty()->SetFontSize(13);
+        label->GetTextProperty()->SetColor(0.95, 0.96, 1.0);
+        label->GetTextProperty()->SetBold(true);
+        renderer_->AddActor(label);
+        inspectionHandleLabels_.push_back(label);
+    }
+    requestRender();
+}
+
+Vec3 VtkSceneWidget::inspectionWorldPointAt(const QPointF& point) const
+{
+    const double ratio = vtkWidget_->devicePixelRatioF();
+    const int* size = renderWindow_->GetSize();
+    auto* camera = renderer_->GetActiveCamera();
+    double focal[3];
+    camera->GetFocalPoint(focal);
+    renderer_->SetWorldPoint(focal[0], focal[1], focal[2], 1.0);
+    renderer_->WorldToDisplay();
+    const double depth = renderer_->GetDisplayPoint()[2];
+    renderer_->SetDisplayPoint(point.x() * ratio, size[1] - point.y() * ratio, depth);
+    renderer_->DisplayToWorld();
+    const double* world = renderer_->GetWorldPoint();
+    if (std::abs(world[3]) < 1e-12) return {};
+    return {world[0] / world[3], world[1] / world[3], world[2] / world[3]};
+}
+
+QPointF VtkSceneWidget::inspectionScreenPointForWorld(const Vec3& point) const
+{
+    return toLogicalScreen(point);
+}
+
+Vec3 VtkSceneWidget::inspectionWorldVectorForScreenDelta(const QPointF& delta) const
+{
+    auto* camera = renderer_->GetActiveCamera();
+    double upRaw[3];
+    double directionRaw[3];
+    camera->GetViewUp(upRaw);
+    camera->GetDirectionOfProjection(directionRaw);
+    const auto unit = [](const Vec3& value) {
+        const double length = forcedisplay::norm(value);
+        return length > 1e-12 ? forcedisplay::scale(value, 1.0 / length) : Vec3{};
+    };
+    const Vec3 up = unit({upRaw[0], upRaw[1], upRaw[2]});
+    const Vec3 direction = unit({directionRaw[0], directionRaw[1], directionRaw[2]});
+    const Vec3 right = unit(forcedisplay::cross(direction, up));
+    double focalRaw[3];
+    camera->GetFocalPoint(focalRaw);
+    const Vec3 focal{focalRaw[0], focalRaw[1], focalRaw[2]};
+    const double scale = worldPerLogicalPixel(focal);
+    return forcedisplay::add(forcedisplay::scale(right, delta.x() * scale),
+        forcedisplay::scale(up, -delta.y() * scale));
 }
 
 bool VtkSceneWidget::setCameraView(const CameraView& view)
@@ -2696,7 +2925,7 @@ void VtkSceneWidget::applyBodyStyle()
             ? (inspectionElements_.contains(body.elementId) ? 1.0 : 0.15)
             : bodyTransparency ? std::min(surfaceOpacity, graphicsProfile_.bodyOpacity) : surfaceOpacity;
         property->SetOpacity(opacity);
-        if (orthographicView_ != OrthographicView::Free) {
+        if (orthographicView_ != OrthographicView::Free && !inspectionMode_) {
             property->SetColor(body.baseColor[0], body.baseColor[1], body.baseColor[2]);
             property->SetOpacity(1.0);
             property->SetAmbient(0.55);
@@ -3316,6 +3545,59 @@ void VtkSceneWidget::rebuildForceGeometry()
     }
 }
 
+QString VtkSceneWidget::pickInspectionElement(const QPoint& position) const
+{
+    const double ratio = vtkWidget_->devicePixelRatioF();
+    const int* size = renderWindow_->GetSize();
+    const int x = qRound(position.x() * ratio);
+    const int y = size[1] - qRound(position.y() * ratio) - 1;
+    if (!inspectionPicker_->Pick(x, y, 0.0, renderer_)) return {};
+    auto* actor = inspectionPicker_->GetActor();
+    for (const auto& body : bodies_)
+        if (body.body == actor && body.surface != DisplayPart::Surface::Invisible)
+            return body.elementId;
+    return {};
+}
+
+QString VtkSceneWidget::inspectionHandleAt(const QPoint& position, bool* ambiguous) const
+{
+    if (ambiguous) *ambiguous = false;
+    if (!inspectionEditView() || inspectionEditTarget_.isEmpty()) return {};
+    constexpr double radius = 12.0;
+    QString hit;
+    int hitCount = 0;
+    for (const auto& handle : inspectionHandles_) {
+        const auto projected = toLogicalScreen(handle.position);
+        const QPointF delta = projected - QPointF(position);
+        if (delta.x() * delta.x() + delta.y() * delta.y() <= radius * radius) {
+            hit = handle.key;
+            ++hitCount;
+        }
+    }
+    if (hitCount > 1) {
+        if (ambiguous) *ambiguous = true;
+        return {};
+    }
+    return hit;
+}
+
+void VtkSceneWidget::cancelInspectionDrag()
+{
+    if (!inspectionDragActive_) return;
+    const auto element = inspectionDragElement_;
+    const auto handle = inspectionDragHandle_;
+    const auto start = inspectionDragStart_;
+    inspectionDragActive_ = false;
+    inspectionDragElement_.clear();
+    inspectionDragHandle_.clear();
+    if (!inspectionEditTarget_.isEmpty()) vtkWidget_->setCursor(Qt::OpenHandCursor);
+    else vtkWidget_->unsetCursor();
+    if (onInspectionInteractionCancelled)
+        onInspectionInteractionCancelled();
+    else if (onInspectionDrag)
+        onInspectionDrag(element, handle, start, InspectionDragPhase::Cancel);
+}
+
 bool VtkSceneWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if ((watched == vtkWidget_ || (navigation_->parentWidget() == vtkWidget_
@@ -3330,6 +3612,100 @@ bool VtkSceneWidget::eventFilter(QObject* watched, QEvent* event)
         }
     }
     if (watched == vtkWidget_) {
+        if (inspectionMode_
+            && (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse)) {
+            pressActive_ = false;
+            inspectionRightPress_ = false;
+            cameraDragButton_ = Qt::NoButton;
+            cameraDragPan_ = false;
+            cancelInspectionDrag();
+        }
+        if (inspectionMode_ && event->type() == QEvent::KeyPress) {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Escape && inspectionDragActive_) {
+                cancelInspectionDrag();
+                return true;
+            }
+        }
+        if (inspectionMode_ && event->type() == QEvent::MouseButtonPress) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() == Qt::RightButton) {
+                inspectionRightPress_ = true;
+                pressPosition_ = mouse->position().toPoint();
+            } else if (mouse->button() == Qt::LeftButton) {
+                pressPosition_ = mouse->position().toPoint();
+                pressActive_ = true;
+            }
+            if (mouse->button() == Qt::LeftButton && inspectionEditView()
+                && !inspectionEditTarget_.isEmpty()) {
+                const QPoint position = mouse->position().toPoint();
+                bool ambiguousHandle = false;
+                const QString handle = inspectionHandleAt(position, &ambiguousHandle);
+                if (ambiguousHandle) {
+                    if (onInspectionInteractionHint)
+                        onInspectionInteractionHint(QStringLiteral(
+                            "Die Eckgriffe liegen in dieser Projektion zu dicht beieinander. "
+                            "Bitte eine andere Achsansicht wählen."));
+                    pressActive_ = false;
+                    return true;
+                }
+                const QString element = handle.isEmpty()
+                    ? pickInspectionElement(position) : inspectionEditTarget_;
+                if (!element.isEmpty() && element == inspectionEditTarget_) {
+                    inspectionDragActive_ = true;
+                    inspectionDragElement_ = element;
+                    inspectionDragHandle_ = handle;
+                    inspectionDragStart_ = mouse->position();
+                    vtkWidget_->setCursor(Qt::ClosedHandCursor);
+                    if (onInspectionDrag)
+                        onInspectionDrag(element, handle, inspectionDragStart_,
+                            InspectionDragPhase::Start);
+                    return true;
+                }
+            }
+        }
+        if (inspectionMode_ && event->type() == QEvent::MouseMove
+            && inspectionDragActive_) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (onInspectionDrag)
+                onInspectionDrag(inspectionDragElement_, inspectionDragHandle_,
+                    mouse->position(), InspectionDragPhase::Move);
+            return true;
+        }
+        if (inspectionMode_ && event->type() == QEvent::MouseButtonRelease) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (inspectionDragActive_ && mouse->button() == Qt::LeftButton) {
+                if (onInspectionDrag)
+                    onInspectionDrag(inspectionDragElement_, inspectionDragHandle_,
+                        mouse->position(), InspectionDragPhase::Finish);
+                inspectionDragActive_ = false;
+                pressActive_ = false;
+                inspectionDragElement_.clear();
+                inspectionDragHandle_.clear();
+                if (!inspectionEditTarget_.isEmpty()) vtkWidget_->setCursor(Qt::OpenHandCursor);
+                return true;
+            }
+            if (inspectionRightPress_ && mouse->button() == Qt::RightButton) {
+                const QPoint position = mouse->position().toPoint();
+                inspectionRightPress_ = false;
+                if ((position - pressPosition_).manhattanLength() <= 3) {
+                    const auto element = pickInspectionElement(position);
+                    if (!element.isEmpty() && onInspectionContextMenu)
+                        onInspectionContextMenu(element, vtkWidget_->mapToGlobal(position));
+                    return true;
+                }
+            }
+            if (mouse->button() == Qt::LeftButton && !inspectionDragActive_
+                && pressActive_
+                && (mouse->position().toPoint() - pressPosition_).manhattanLength() <= 3) {
+                const auto element = pickInspectionElement(mouse->position().toPoint());
+                if (!element.isEmpty() && onInspectionPicked)
+                    onInspectionPicked(element);
+                pressActive_ = false;
+                return !element.isEmpty();
+            }
+            if (mouse->button() == Qt::LeftButton) pressActive_ = false;
+        }
         if (event->type() == QEvent::Resize) {
             updateInspectionMask();
             layoutViewControls();

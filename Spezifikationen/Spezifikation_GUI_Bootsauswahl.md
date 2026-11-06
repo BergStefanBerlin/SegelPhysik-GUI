@@ -1,5 +1,14 @@
 # Spezifikation GUI: Bootsauswahl und Objektinspektion
 
+**Aktueller Nachfolgevertrag:** Die Nutzerkorrektur vom 06.11.2026,
+21:32 Uhr wird in der
+[Segelkonfigurator-Spezifikation](Spezifikation_GUI_Segelkonfigurator.md)
+und dem zugehoerigen G-0.13-Plan gefuehrt. Sie ersetzt die hier historisch
+beschriebene Auswahl zusaetzlicher Quell-/Ableitungsgeometrien im Objektbaum
+durch genau eine aktuelle Referenz je Objekt. Physische Quellen und ihre
+Metadaten bleiben erhalten. Die historischen Anforderungstexte und
+Nachweise unten werden nicht nachtraeglich umgeschrieben.
+
 **Status:** FINAL fachlich spezifiziert am 01.11.2026 auf Nutzerauftrag.
 Implementierung am 01.11.2026 beauftragt und technisch nachgewiesen;
 persönliche Abnahme offen. Keine Git-Freigabe.

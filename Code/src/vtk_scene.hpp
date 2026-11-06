@@ -7,6 +7,7 @@
 
 #include <QHash>
 #include <QImage>
+#include <QPointF>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -26,6 +27,7 @@ class QPushButton;
 class vtkActor;
 class vtkAxesActor;
 class vtkBillboardTextActor3D;
+class vtkCellPicker;
 class vtkCutter;
 class vtkClipPolyData;
 class vtkGenericOpenGLRenderWindow;
@@ -48,6 +50,11 @@ class VtkSceneWidget final : public QWidget {
 public:
     enum class Visibility { Spatial, ThroughBody };
     enum class OrthographicView { Free, Port, Stern, Top };
+    enum class InspectionDragPhase { Start, Move, Finish, Cancel };
+    struct InspectionHandle {
+        QString key;
+        forcedisplay::Vec3 position{};
+    };
 
     // Je Rubrik: Gewicht gesamt/Teile, Auftrieb gesamt/Teile, Summe.
     struct VectorSelection {
@@ -146,6 +153,14 @@ public:
     void setNavigationVisible(bool visible);
     void dockNavigation(QScrollArea* destination);
     void setInspectionMode();
+    bool setInspectionCameraPreset(const QString& id, QString* error);
+    bool inspectionEditView() const;
+    QString inspectionCameraPresetId() const { return inspectionPresetId_; }
+    void setInspectionEditTarget(const QString& elementId);
+    void setInspectionHandles(const QVector<InspectionHandle>& handles);
+    QPointF inspectionScreenPointForWorld(const forcedisplay::Vec3& point) const;
+    forcedisplay::Vec3 inspectionWorldPointAt(const QPointF& point) const;
+    forcedisplay::Vec3 inspectionWorldVectorForScreenDelta(const QPointF& delta) const;
     void setInspectionSelection(const QSet<QString>& elementIds, bool hasSelection = false);
     double inspectionOpacity(const QString& elementId) const;
     void setInspectionPreview(const QVector<DisplayPart>& parts,
@@ -165,6 +180,12 @@ public:
 
     // Auswahl per Klick in 3D (A-G-00014) und geänderte Referenzen.
     std::function<void(const QString&)> onPicked;
+    std::function<void(const QString&)> onInspectionPicked;
+    std::function<void(const QString&, const QPoint&)> onInspectionContextMenu;
+    std::function<void(const QString&)> onInspectionInteractionHint;
+    std::function<void(const QString&, const QString&, const QPointF&,
+        InspectionDragPhase)> onInspectionDrag;
+    std::function<void()> onInspectionInteractionCancelled;
     std::function<void()> onReferencesChanged;
     std::function<void()> onDoubleClicked;
 
@@ -216,6 +237,9 @@ private:
     double worldPerLogicalPixel(const forcedisplay::Vec3& point) const;
     QPointF toLogicalScreen(const forcedisplay::Vec3& point) const;
     void pickAt(const QPoint& position);
+    QString pickInspectionElement(const QPoint& position) const;
+    QString inspectionHandleAt(const QPoint& position, bool* ambiguous = nullptr) const;
+    void cancelInspectionDrag();
     void requestRender();
     void renderScene();
     std::shared_ptr<const DisplayMeshData> prepareMesh(
@@ -243,6 +267,17 @@ private:
     bool updatesActive_ = true;
     WorkCounters workCounters_;
     bool inspectionMode_ = false;
+    QString inspectionPresetId_;
+    QString inspectionEditTarget_;
+    QVector<InspectionHandle> inspectionHandles_;
+    std::vector<vtkSmartPointer<vtkActor>> inspectionHandleActors_;
+    std::vector<vtkSmartPointer<vtkBillboardTextActor3D>> inspectionHandleLabels_;
+    vtkSmartPointer<vtkCellPicker> inspectionPicker_;
+    bool inspectionDragActive_ = false;
+    QString inspectionDragElement_;
+    QString inspectionDragHandle_;
+    QPointF inspectionDragStart_;
+    bool inspectionRightPress_ = false;
     OrthographicView orthographicView_ = OrthographicView::Free;
     QLabel* viewName_ = nullptr;
     vtkSmartPointer<vtkBillboardTextActor3D> centerLabel_;

@@ -8,6 +8,7 @@
 
 #include <segelphysik/katalog.hpp>
 #include <segelphysik/modell.hpp>
+#include <segelphysik/segelkonfigurator.hpp>
 #include <QApplication>
 #include <QTabWidget>
 #include <QStackedWidget>
@@ -42,6 +43,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QContextMenuEvent>
+#include <QProcess>
 #include <QWheelEvent>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -53,6 +56,7 @@
 #include <QTimer>
 #include <QTabBar>
 #include <QTemporaryDir>
+#include <QMap>
 #include <QThread>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -82,11 +86,20 @@
 #include <future>
 #include <functional>
 #include <iostream>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
+#ifdef _WIN32
+#include <Windows.h>
+#undef small
+#endif
 
 namespace {
+int testInspectionCameraAndPointerRouting();
+
 class RenderErrors final : public vtkOutputWindow {
 public:
     static RenderErrors* New() { return new RenderErrors; }
@@ -101,6 +114,1256 @@ public:
 void require(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
+}
+void waitUntil(const std::function<bool()>& ready, const char* message);
+
+struct SailFixture {
+    CatalogSnapshot catalog;
+    ModelDisplayData model;
+    segelphysik::SegelKonfigurationSnapshot configuration;
+};
+
+SailFixture readSailFixture(const QString& modelFolder)
+{
+    SailFixture fixture;
+    fixture.catalog = loadCatalog(modelFolder);
+    require(fixture.catalog.catalog != nullptr, "420er catalog opens from isolated fixture");
+    const auto entry = std::find_if(fixture.catalog.entries.cbegin(),
+        fixture.catalog.entries.cend(), [](const auto& candidate) {
+            return candidate.id == QStringLiteral("420");
+        });
+    require(entry != fixture.catalog.entries.cend() && entry->usable,
+        "isolated model catalog contains usable 420er");
+    fixture.model = loadDisplayData(*fixture.catalog.catalog, entry->id, entry->version);
+    require(fixture.model.inspection != nullptr, "Core supplies 420er inspection snapshot");
+    fixture.configuration = segelphysik::leseSegelKonfiguration(
+        *fixture.catalog.catalog, *fixture.model.inspection);
+    return fixture;
+}
+
+QTreeWidgetItem* sailTreeItem(QTreeWidget* tree, const QString& id)
+{
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const auto ids = (*it)->data(0, Qt::UserRole + 1).toStringList();
+        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")
+            && ids.size() == 1 && ids.front() == id) return *it;
+    }
+    return nullptr;
+}
+
+QAction* menuAction(QMenu* menu, const QString& label)
+{
+    if (!menu) return nullptr;
+    for (auto* action : menu->actions()) {
+        if (action->text() == label) return action;
+        if (auto* found = menuAction(action->menu(), label)) return found;
+    }
+    return nullptr;
+}
+
+enum class SailDialogTestAction { Accept, Cancel, RejectInvalid };
+
+void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
+    const QString& actionText, const QString& dialogValue = {},
+    SailDialogTestAction dialogAction = SailDialogTestAction::Accept,
+    std::optional<bool> desiredChecked = std::nullopt)
+{
+    auto* item = sailTreeItem(tree, elementId);
+    require(item != nullptr, "420 sail has an exact element row in inspection tree");
+    tree->scrollToItem(item);
+    QApplication::processEvents();
+    const auto rect = tree->visualItemRect(item);
+    require(rect.isValid() && !rect.isEmpty(), "420 sail row is visible for context menu");
+    const QPoint local = rect.center();
+    const QPoint global = tree->viewport()->mapToGlobal(local);
+    bool actionTriggered = false;
+    bool dialogAccepted = dialogValue.isEmpty();
+    QTimer driver;
+    driver.setInterval(10);
+    QObject::connect(&driver, &QTimer::timeout, &driver, [&] {
+        if (!actionTriggered) {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                auto* menu = qobject_cast<QMenu*>(widget);
+                if (!menu || !menu->isVisible()) continue;
+                auto* action = menuAction(menu, actionText);
+                if (!action || !action->isEnabled()) continue;
+                actionTriggered = true;
+                if (!dialogValue.isEmpty()) {
+                    QTimer::singleShot(100, tree, [&] {
+                        for (auto* widget : QApplication::topLevelWidgets()) {
+                            auto* dialog = qobject_cast<QDialog*>(widget);
+                            if (!dialog || !dialog->isVisible()) continue;
+                            auto* input = dialog->findChild<QLineEdit*>(
+                                QStringLiteral("fockOffsetCm"));
+                            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                            if (!input || !buttons || !buttons->button(QDialogButtonBox::Ok))
+                                continue;
+                            if (dialogAction == SailDialogTestAction::Cancel) {
+                                buttons->button(QDialogButtonBox::Cancel)->click();
+                                dialogAccepted = true;
+                            } else if (dialogAction == SailDialogTestAction::RejectInvalid) {
+                                input->setText(QStringLiteral("not-a-number"));
+                                QTimer::singleShot(100, tree, [tree, &dialogAccepted] {
+                                    for (auto* warningWidget : QApplication::topLevelWidgets()) {
+                                        auto* warning = qobject_cast<QMessageBox*>(warningWidget);
+                                        if (warning && warning->isVisible()) {
+                                            warning->accept();
+                                            break;
+                                        }
+                                    }
+                                    QTimer::singleShot(100, tree, [tree, &dialogAccepted] {
+                                        for (auto* dialogWidget : QApplication::topLevelWidgets()) {
+                                            auto* dialog = qobject_cast<QDialog*>(dialogWidget);
+                                            if (!dialog || !dialog->isVisible()
+                                                || !dialog->findChild<QLineEdit*>(
+                                                    QStringLiteral("fockOffsetCm"))) continue;
+                                            auto* dialogButtons =
+                                                dialog->findChild<QDialogButtonBox*>();
+                                            if (!dialogButtons) continue;
+                                            dialogAccepted = true;
+                                            dialogButtons->button(QDialogButtonBox::Cancel)->click();
+                                            return;
+                                        }
+                                    });
+                                });
+                                buttons->button(QDialogButtonBox::Ok)->click();
+                            } else {
+                                input->setText(dialogValue);
+                                buttons->button(QDialogButtonBox::Ok)->click();
+                                dialogAccepted = true;
+                            }
+                            return;
+                        }
+                    });
+                }
+                if (!desiredChecked || action->isChecked() != *desiredChecked)
+                    action->trigger();
+                menu->close();
+                break;
+            }
+        }
+        if (!dialogValue.isEmpty() && actionTriggered && !dialogAccepted
+            && dialogAction != SailDialogTestAction::RejectInvalid) {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<QDialog*>(widget);
+                if (!dialog || !dialog->isVisible()) continue;
+                auto* input = dialog->findChild<QLineEdit*>(QStringLiteral("fockOffsetCm"));
+                if (!input) continue;
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                require(buttons && buttons->button(QDialogButtonBox::Cancel),
+                    "Fock offset dialog exposes its cancel action");
+                dialogAccepted = true;
+                buttons->button(QDialogButtonBox::Cancel)->click();
+                break;
+            }
+        }
+        if (actionTriggered && dialogAccepted) driver.stop();
+    });
+    driver.start();
+    QContextMenuEvent context(QContextMenuEvent::Mouse, local, global);
+    QApplication::sendEvent(tree->viewport(), &context);
+    try {
+        waitUntil([&] { return actionTriggered && dialogAccepted; },
+            "GUI context action or Fock dialog timed out");
+    } catch (const std::exception&) {
+        const auto* diagnostic = tree->window()->findChild<QLabel*>(
+            QStringLiteral("inspectionDiagnostics"));
+        throw std::runtime_error(("GUI context action timed out: "
+            + elementId.toStdString() + " / " + actionText.toStdString()
+            + (diagnostic ? " / " + diagnostic->text().toStdString() : "")).c_str());
+    }
+    driver.stop();
+    QApplication::processEvents();
+}
+
+std::optional<segelphysik::SegelLage> sailPose(
+    const segelphysik::SegelKonfigurationSnapshot& configuration, const QString& id)
+{
+    for (std::size_t i = 0; i < configuration.referenzen.size()
+        && i < configuration.lagen.size(); ++i)
+        if (QString::fromStdString(configuration.referenzen[i].element_id) == id)
+            return configuration.lagen[i];
+    return std::nullopt;
+}
+
+std::optional<segelphysik::SegelReferenz> sailReference(
+    const segelphysik::SegelKonfigurationSnapshot& configuration, const QString& id)
+{
+    for (const auto& reference : configuration.referenzen)
+        if (QString::fromStdString(reference.element_id) == id) return reference;
+    return std::nullopt;
+}
+
+forcedisplay::Vec3 rotateSailPoint(const std::array<double, 4>& q,
+    const forcedisplay::Vec3& point)
+{
+    const forcedisplay::Vec3 v{q[0], q[1], q[2]};
+    const auto cross1 = forcedisplay::cross(v, point);
+    const auto cross2 = forcedisplay::cross(v, cross1);
+    return forcedisplay::add(point, forcedisplay::add(
+        forcedisplay::scale(cross1, 2.0 * q[3]), forcedisplay::scale(cross2, 2.0)));
+}
+
+forcedisplay::Vec3 posedSailPoint(const segelphysik::SegelReferenz& reference,
+    const segelphysik::SegelLage& pose, const segelphysik::Vektor3& corner)
+{
+    Q_UNUSED(reference);
+    return forcedisplay::add(rotateSailPoint(pose.rotation_xyzw,
+        {corner[0], corner[1], corner[2]}),
+        {pose.translation_m[0], pose.translation_m[1], pose.translation_m[2]});
+}
+
+bool dragInspectionPoint(VtkSceneWidget* scene, const QPointF& from,
+    const QPointF& to, const std::function<void()>& afterMove = {})
+{
+    auto* viewport = scene->findChild<QVTKOpenGLNativeWidget*>();
+    if (!viewport) return false;
+    const auto global = [&](const QPointF& point) {
+        return QPointF(viewport->mapToGlobal(point.toPoint()));
+    };
+    const auto startGlobal = global(from);
+    QMouseEvent press(QEvent::MouseButtonPress, from, startGlobal,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent move(QEvent::MouseMove, to, global(to),
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, global(to),
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &press);
+    QApplication::sendEvent(viewport, &move);
+    QApplication::processEvents();
+    scene->renderNow();
+    if (afterMove) afterMove();
+    QApplication::sendEvent(viewport, &release);
+    QApplication::processEvents();
+    return true;
+}
+
+std::vector<std::array<double, 6>> inspectionGeometryBounds(VtkSceneWidget* scene)
+{
+    std::vector<std::array<double, 6>> result;
+    auto* viewport = scene->findChild<QVTKOpenGLNativeWidget*>();
+    if (!viewport || !viewport->renderWindow()) return result;
+    auto* renderer = viewport->renderWindow()->GetRenderers()->GetFirstRenderer();
+    if (!renderer) return result;
+    auto* props = renderer->GetViewProps();
+    props->InitTraversal();
+    while (auto* prop = props->GetNextProp()) {
+        auto* actor = vtkActor::SafeDownCast(prop);
+        if (!actor || !actor->GetVisibility() || !actor->GetUseBounds()) continue;
+        auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+        if (!mapper || !mapper->GetInput()) continue;
+        double bounds[6];
+        actor->GetBounds(bounds);
+        std::array<double, 6> entry{};
+        bool finite = true;
+        for (int i = 0; i < 6; ++i) {
+            entry[static_cast<std::size_t>(i)] = bounds[i];
+            finite = finite && std::isfinite(bounds[i]);
+        }
+        if (finite) result.push_back(entry);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+bool sameInspectionGeometry(const std::vector<std::array<double, 6>>& a,
+    const std::vector<std::array<double, 6>>& b, double tolerance = 1e-8)
+{
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        for (std::size_t axis = 0; axis < 6; ++axis)
+            if (std::abs(a[i][axis] - b[i][axis]) > tolerance) return false;
+    return true;
+}
+
+QJsonObject withoutComponentSettings(QJsonObject document, bool sailsOnly = false)
+{
+    document.remove(QStringLiteral("konfiguration"));
+    auto groups = document.value(QStringLiteral("gruppen")).toObject();
+    for (auto group = groups.begin(); group != groups.end(); ++group) {
+        auto object = group.value().toObject();
+        auto elements = object.value(QStringLiteral("elemente")).toArray();
+        for (qsizetype i = 0; i < elements.size(); ++i) {
+            auto element = elements[i].toObject();
+            const auto id = element.value(QStringLiteral("id")).toString();
+            if (!sailsOnly || id == QStringLiteral("Großsegel") || id == QStringLiteral("Fock"))
+                element.remove(QStringLiteral("setting"));
+            elements[i] = element;
+        }
+        object.insert(QStringLiteral("elemente"), elements);
+        group.value() = object;
+    }
+    document.insert(QStringLiteral("gruppen"), groups);
+    return document;
+}
+
+void copyClean420Fixture(const QString& modelRoot, const QString& fixtureRoot)
+{
+    const auto sourceCatalog = loadCatalog(modelRoot);
+    require(sourceCatalog.catalog != nullptr, "source 420er catalog opens");
+    const auto sourceEntry = std::find_if(sourceCatalog.entries.cbegin(),
+        sourceCatalog.entries.cend(), [](const auto& candidate) {
+            return candidate.id == QStringLiteral("420");
+        });
+    require(sourceEntry != sourceCatalog.entries.cend() && sourceEntry->usable,
+        "source catalog contains usable 420er");
+    const auto sourceModel = std::filesystem::path(sourceEntry->path.toStdWString()).parent_path();
+    const auto destinationRoot = std::filesystem::path(fixtureRoot.toStdWString());
+    std::filesystem::create_directories(destinationRoot);
+    const auto destinationModel = destinationRoot / L"420";
+    for (std::filesystem::recursive_directory_iterator it(sourceModel), end; it != end; ++it) {
+        const auto relative = it->path().lexically_relative(sourceModel);
+        const auto name = it->path().filename().wstring();
+        if (name == L"segelkonfiguration.json" || name == L"segelkonfiguration.lock"
+            || name == L"bootsmodell.lock") {
+            if (it->is_directory()) it.disable_recursion_pending();
+            continue;
+        }
+        const auto relativeText = relative.generic_wstring();
+        const bool lookupProduct = relativeText.find(L"LookUp/") != std::wstring::npos
+            || relativeText.find(L"LookUp\\") != std::wstring::npos;
+        if (it->is_regular_file() && lookupProduct && name != L"lookup.json") continue;
+        const auto destination = destinationModel / relative;
+        if (it->is_directory()) {
+            std::filesystem::create_directories(destination);
+        } else if (it->is_regular_file()) {
+            std::filesystem::create_directories(destination.parent_path());
+            std::filesystem::copy_file(it->path(), destination,
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
+    QFile model(QDir(fixtureRoot).filePath(QStringLiteral("420/bootsmodell.json")));
+    require(model.open(QIODevice::ReadOnly), "read copied boat model");
+    auto document = withoutComponentSettings(QJsonDocument::fromJson(model.readAll()).object(), true);
+    model.close();
+    require(model.open(QIODevice::WriteOnly | QIODevice::Truncate),
+        "clear configuration only in isolated boat model");
+    const auto bytes = QJsonDocument(document).toJson();
+    require(model.write(bytes) == bytes.size(), "write clean isolated boat model");
+}
+
+std::pair<int, int> compareCopied420Hashes(const QString& modelRoot, const QString& fixtureRoot)
+{
+    const auto sourceCatalog = loadCatalog(modelRoot);
+    const auto sourceEntry = std::find_if(sourceCatalog.entries.cbegin(),
+        sourceCatalog.entries.cend(), [](const auto& candidate) {
+            return candidate.id == QStringLiteral("420");
+        });
+    require(sourceEntry != sourceCatalog.entries.cend() && sourceEntry->usable,
+        "hash comparison finds original 420 fixture");
+    const auto sourceModel = std::filesystem::path(sourceEntry->path.toStdWString()).parent_path();
+    const auto copiedModel = std::filesystem::path(fixtureRoot.toStdWString()) / L"420";
+    int compared = 0;
+    int lookupFiles = 0;
+    for (std::filesystem::recursive_directory_iterator it(sourceModel), end; it != end; ++it) {
+        if (!it->is_regular_file()) continue;
+        const auto relative = it->path().lexically_relative(sourceModel);
+        const auto name = it->path().filename().wstring();
+        if (name == L"segelkonfiguration.json" || name == L"segelkonfiguration.lock"
+            || name == L"bootsmodell.lock") continue;
+        const auto relativeText = relative.generic_wstring();
+        const bool lookupProduct = relativeText.find(L"LookUp/") != std::wstring::npos
+            || relativeText.find(L"LookUp\\") != std::wstring::npos;
+        if (lookupProduct && name != L"lookup.json") {
+            ++lookupFiles;
+            continue;
+        }
+        std::ifstream source(it->path(), std::ios::binary);
+        const auto copiedPath = copiedModel / relative;
+        std::ifstream copied(copiedPath, std::ios::binary);
+        require(source.good() && copied.good(), "source and isolated fixture file are readable");
+        const std::string sourceBytes((std::istreambuf_iterator<char>(source)), {});
+        const std::string copiedBytes((std::istreambuf_iterator<char>(copied)), {});
+        if (name == L"bootsmodell.json") {
+            auto original = QJsonDocument::fromJson(QByteArray(sourceBytes.data(),
+                static_cast<qsizetype>(sourceBytes.size()))).object();
+            auto clean = QJsonDocument::fromJson(QByteArray(copiedBytes.data(),
+                static_cast<qsizetype>(copiedBytes.size()))).object();
+            require(withoutComponentSettings(original) == withoutComponentSettings(clean),
+                "boat model differs only by removed component settings and revision");
+            continue;
+        }
+        require(QCryptographicHash::hash(QByteArray(sourceBytes.data(),
+                    static_cast<qsizetype>(sourceBytes.size())), QCryptographicHash::Sha256)
+                == QCryptographicHash::hash(QByteArray(copiedBytes.data(),
+                    static_cast<qsizetype>(copiedBytes.size())), QCryptographicHash::Sha256),
+            "isolated GUI 420 fixture preserves copied source bytes");
+        ++compared;
+    }
+    return {compared, lookupFiles};
+}
+
+QJsonArray vecJson(const segelphysik::Vektor3& vector)
+{
+    return {vector[0], vector[1], vector[2]};
+}
+
+QJsonArray quatJson(const std::array<double, 4>& quaternion)
+{
+    return {quaternion[0], quaternion[1], quaternion[2], quaternion[3]};
+}
+
+void saveSailExpected(const QString& path,
+    const segelphysik::SegelKonfigurationSnapshot& configuration)
+{
+    const auto grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
+    const auto fockPose = sailPose(configuration, QStringLiteral("Fock"));
+    const auto grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
+    const auto fockReference = sailReference(configuration, QStringLiteral("Fock"));
+    require(grossPose && fockPose && grossReference && fockReference,
+        "expected snapshot contains both configured sails");
+    QJsonObject expected{
+        {QStringLiteral("revision"), QString::fromStdString(configuration.revision)},
+        {QStringLiteral("gross_translation"), vecJson(grossPose->translation_m)},
+        {QStringLiteral("gross_rotation"), quatJson(grossPose->rotation_xyzw)},
+        {QStringLiteral("gross_buglage"), static_cast<int>(grossPose->original_buglage)},
+        {QStringLiteral("fock_translation"), vecJson(fockPose->translation_m)},
+        {QStringLiteral("fock_rotation"), quatJson(fockPose->rotation_xyzw)},
+        {QStringLiteral("fock_offset_cm"), fockPose->fock_versatz_cm},
+        {QStringLiteral("fock_buglage"), static_cast<int>(fockPose->original_buglage)}};
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+        "write isolated GUI integration expectations");
+    require(file.write(QJsonDocument(expected).toJson(QJsonDocument::Compact)) > 0,
+        "persist isolated GUI integration expectations");
+}
+
+QJsonObject loadSailExpected(const QString& path)
+{
+    QFile file(path);
+    require(file.open(QIODevice::ReadOnly), "read isolated GUI integration expectations");
+    QJsonParseError error{};
+    const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+    require(error.error == QJsonParseError::NoError && document.isObject(),
+        "isolated GUI integration expectations are valid JSON");
+    return document.object();
+}
+
+void compareJsonVector(const QJsonArray& actual, const QJsonArray& expected,
+    const char* message, double tolerance = 1e-8)
+{
+    require(actual.size() == expected.size(), message);
+    for (qsizetype i = 0; i < actual.size(); ++i)
+        require(std::abs(actual[i].toDouble() - expected[i].toDouble()) <= tolerance, message);
+}
+
+void copyAndRunSailConfiguratorIntegration(const QString& modelRoot,
+    const QString& evidenceFolder)
+{
+    const int syntheticTranslationPlanes = testInspectionCameraAndPointerRouting();
+    require(syntheticTranslationPlanes == 3,
+        "synthetic 3D sail pointer mapping covers XY/XZ/YZ planes");
+    std::cout << "{\"syntheticPointerTranslationPlanes\":"
+              << syntheticTranslationPlanes << ",\"syntheticSemanticHandles\":4}\n";
+    const QString fixtureRoot = QDir(evidenceFolder)
+        .filePath(QStringLiteral("sail-configurator-420-fixture"));
+    QDir fixture(fixtureRoot);
+    if (fixture.exists()) require(fixture.removeRecursively(),
+        "remove prior isolated GUI 420er fixture");
+    require(QDir().mkpath(fixtureRoot), "create isolated GUI 420er fixture");
+    copyClean420Fixture(modelRoot, fixtureRoot);
+    const auto [copiedFiles, skippedLookupFiles] =
+        compareCopied420Hashes(modelRoot, fixtureRoot);
+    require(copiedFiles > 0, "source-copy fixture hash comparison covers copied files");
+    std::cout << "{\"420CopiedFilesSha256Matched\":" << copiedFiles
+              << ",\"lookupProductsSkipped\":" << skippedLookupFiles << "}\n";
+    const QString executable = QCoreApplication::applicationFilePath();
+    for (const auto& phase : {QStringLiteral("actions"), QStringLiteral("restart")}) {
+        QProcess child;
+        child.setProcessChannelMode(QProcess::MergedChannels);
+        child.start(executable, {QStringLiteral("--sail-configurator-phase"),
+            phase, fixtureRoot});
+        require(child.waitForStarted(10000), "start isolated GUI configurator phase");
+        if (!child.waitForFinished(180000))
+            throw std::runtime_error(("isolated GUI configurator phase timeout: "
+                + child.readAll().toStdString()).c_str());
+        if (child.exitStatus() != QProcess::NormalExit || child.exitCode() != 0) {
+            const auto output = QString::fromUtf8(child.readAll()).toStdString();
+            throw std::runtime_error(("GUI configurator " + phase.toStdString()
+                + " phase failed: " + output).c_str());
+        }
+        std::cout << child.readAllStandardOutput().toStdString();
+    }
+    require(fixture.removeRecursively(), "remove isolated GUI 420er fixture after verification");
+}
+
+void runUnifiedMontageIntegration(const QString& modelRoot)
+{
+    const auto sourceHashes = [&] {
+        QMap<QString, QByteArray> hashes;
+        for (const auto& file : std::filesystem::recursive_directory_iterator(
+                std::filesystem::path(modelRoot.toStdWString()))) {
+            if (!file.is_regular_file()) continue;
+            const auto path = QString::fromStdWString(file.path().wstring());
+            QFile input(path);
+            require(input.open(QIODevice::ReadOnly), "original model file readable for checksum");
+            hashes.insert(path, QCryptographicHash::hash(input.readAll(), QCryptographicHash::Sha256));
+        }
+        return hashes;
+    };
+    const auto originalHashes = sourceHashes();
+    QTemporaryDir copies;
+    require(copies.isValid(), "isolated montage catalog available");
+    const auto source = std::filesystem::path(modelRoot.toStdWString());
+    const auto destination = std::filesystem::path(copies.path().toStdWString());
+    for (const auto& folder : std::filesystem::directory_iterator(source)) {
+        if (!folder.is_directory()
+            || !std::filesystem::exists(folder.path() / L"bootsmodell.json")) continue;
+        std::filesystem::copy(folder.path(), destination / folder.path().filename(),
+            std::filesystem::copy_options::recursive);
+    }
+    auto catalog = std::make_shared<segelphysik::Modellkatalog>(
+        segelphysik::modellkatalog(destination));
+    int boats = 0;
+    int sails = 0;
+    for (const auto& entry : catalog->eintraege()) {
+        auto snapshot = segelphysik::readModelInspection(
+            *catalog, entry.modell_id, entry.modell_fassung);
+        auto configuration = segelphysik::leseSegelKonfiguration(*catalog, *snapshot);
+        if (configuration.status == segelphysik::SegelKonfigurationsStatus::Fehler) {
+            std::string diagnostics = entry.modell_id;
+            for (const auto& diagnostic : configuration.diagnosen)
+                diagnostics += " / " + diagnostic.code + ": " + diagnostic.nachricht;
+            throw std::runtime_error(diagnostics);
+        }
+        BoatInspection widget;
+        widget.setSnapshot(snapshot, catalog);
+        widget.resize(1400, 900);
+        widget.show();
+        auto* tree = widget.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+        require(tree != nullptr, "canonical object tree exists");
+        QSet<QString> ids;
+        for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+            const auto* item = *it;
+            require(!item->text(0).contains(QStringLiteral("Bestandsquellen"))
+                    && !item->text(0).startsWith(QStringLiteral("Quellmesh"))
+                    && item->text(0) != QStringLiteral("Abgeleitete Daten"),
+                "all models expose only current object references");
+            if (item->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")) continue;
+            const auto elementIds = item->data(0, Qt::UserRole + 1).toStringList();
+            require(elementIds.size() == 1 && !ids.contains(elementIds.front()),
+                "all models retain exactly one reference per object");
+            ids.insert(elementIds.front());
+        }
+        if (configuration.referenzen.empty()) {
+            widget.close();
+            continue;
+        }
+        QString cameraError;
+        require(widget.setCameraPreset(QStringLiteral("backbord"), &cameraError),
+            "all boats support axis-fixed manual editing");
+        ++boats;
+        const auto references = configuration.referenzen;
+        for (const auto& reference : references) {
+            const auto id = QString::fromStdString(reference.element_id);
+            invokeSailContextAction(tree, id, reference.art == segelphysik::SegelArt::Fock
+                ? QStringLiteral("Fock automatisch setzen")
+                : QStringLiteral("Großsegel automatisch setzen"));
+            invokeSailContextAction(tree, id, QStringLiteral("Manuelles Verschieben"), {},
+                SailDialogTestAction::Accept, true);
+            if (reference.art == segelphysik::SegelArt::Fock)
+                invokeSailContextAction(tree, id,
+                    QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("10"));
+            auto saved = segelphysik::leseSegelKonfiguration(*catalog, *snapshot);
+            require(saved.status == segelphysik::SegelKonfigurationsStatus::Bereit
+                    && saved.revision != configuration.revision,
+                "every boat GUI action persists through Core");
+            configuration = saved;
+            bool rotated = false;
+            for (const auto& view : {QStringLiteral("backbord"), QStringLiteral("steuerbord"),
+                    QStringLiteral("bug"), QStringLiteral("heck"),
+                    QStringLiteral("oben"), QStringLiteral("unten")}) {
+                require(widget.setCameraPreset(view, &cameraError), "manual axis view exists");
+                widget.scene()->renderNow();
+                const auto currentReference = sailReference(configuration, id);
+                const auto currentPose = sailPose(configuration, id);
+                require(currentReference && currentPose, "current object pose and corners retained");
+                const auto handle = widget.scene()->inspectionScreenPointForWorld(
+                    posedSailPoint(*currentReference, *currentPose, currentReference->ecken.schothorn_m));
+                const auto pivot = widget.scene()->inspectionScreenPointForWorld(
+                    posedSailPoint(*currentReference, *currentPose, currentReference->ecken.hals_m));
+                const auto lever = handle - pivot;
+                const auto length = std::hypot(lever.x(), lever.y());
+                if (length < 30 || !widget.scene()->rect().adjusted(10, 10, -10, -10)
+                        .contains(handle.toPoint())) continue;
+                const auto revision = configuration.revision;
+                dragInspectionPoint(widget.scene(), handle,
+                    handle + QPointF(-lever.y() / length * 12, lever.x() / length * 12));
+                saved = segelphysik::leseSegelKonfiguration(*catalog, *snapshot);
+                if (saved.revision == revision) continue;
+                const auto after = sailPose(saved, id);
+                require(after && after->rotation_xyzw != currentPose->rotation_xyzw,
+                    "each boat supports real pointer-driven rigid sail rotation");
+                configuration = saved;
+                rotated = true;
+                break;
+            }
+            require(rotated, "each sail has a usable semantic rotation handle in an axis view");
+            ++sails;
+        }
+        widget.close();
+        BoatInspection reopened;
+        reopened.setSnapshot(snapshot, catalog);
+        require(reopened.findChild<QLabel*>(QStringLiteral("inspectionDiagnostics"))->text()
+                != QStringLiteral("Core-Konfiguration fehlt oder ordnet dem Segel keine eindeutige Referenz zu."),
+            "every boat reopens its confirmed configuration");
+    }
+    require(boats == 3 && sails == 5, "all three current boats and five sails exercised");
+    require(sourceHashes() == originalHashes,
+        "original model directory remains byte-identical with no files added or removed");
+    std::cout << "Unified GUI montage: " << boats << " boats, " << sails << " sails\n";
+}
+
+void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
+{
+    QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikSailConfiguratorTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("SailConfiguratorIntegration"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+        QDir(fixtureRoot).filePath(QStringLiteral("test-settings")));
+
+    const auto initial = readSailFixture(fixtureRoot);
+    require(sailReference(initial.configuration, QStringLiteral("Großsegel"))
+            && sailReference(initial.configuration, QStringLiteral("Fock")),
+        "Core maps both 420er sail IDs exactly");
+    require(!initial.configuration.grundmeshes.empty(),
+        "Core exposes original 420er sail meshes");
+
+    MainWindow window;
+    window.setModelFolder(fixtureRoot);
+    window.selectInitialModel(QStringLiteral("420"));
+    window.resize(1400, 900);
+    window.show();
+    auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+    auto* scene = dynamic_cast<VtkSceneWidget*>(
+        window.findChild<QWidget*>(QStringLiteral("inspectionScene")));
+    auto* camera = window.findChild<QComboBox*>(QStringLiteral("inspectionCameraPreset"));
+    auto* diagnostic = window.findChild<QLabel*>(QStringLiteral("inspectionDiagnostics"));
+    require(tree && scene && camera && diagnostic,
+        "GUI exposes real inspection tree, scene, camera selector and diagnostics");
+    waitUntil([&] {
+        return camera->isEnabled()
+            && sailTreeItem(tree, QStringLiteral("Großsegel"))
+            && sailTreeItem(tree, QStringLiteral("Fock"));
+    }, "420er GUI model and exact sail rows did not load");
+    scene->renderNow();
+
+    if (phase == QStringLiteral("restart")) {
+        const auto expected = loadSailExpected(
+            QDir(fixtureRoot).filePath(QStringLiteral("sail-configurator-expected.json")));
+        const auto restored = readSailFixture(fixtureRoot);
+        require(QString::fromStdString(restored.configuration.revision)
+                == expected.value(QStringLiteral("revision")).toString(),
+            "new GUI process restores the persisted Core revision");
+        const auto grossPose = sailPose(restored.configuration, QStringLiteral("Großsegel"));
+        const auto fockPose = sailPose(restored.configuration, QStringLiteral("Fock"));
+        require(grossPose && fockPose, "restart restores complete poses for both sails");
+        compareJsonVector(vecJson(grossPose->translation_m),
+            expected.value(QStringLiteral("gross_translation")).toArray(),
+            "gross sail translation survives process restart");
+        compareJsonVector(quatJson(grossPose->rotation_xyzw),
+            expected.value(QStringLiteral("gross_rotation")).toArray(),
+            "gross sail rotation survives process restart");
+        compareJsonVector(vecJson(fockPose->translation_m),
+            expected.value(QStringLiteral("fock_translation")).toArray(),
+            "fock translation survives process restart");
+        compareJsonVector(quatJson(fockPose->rotation_xyzw),
+            expected.value(QStringLiteral("fock_rotation")).toArray(),
+            "fock rotation survives process restart");
+        require(std::abs(fockPose->fock_versatz_cm
+                - expected.value(QStringLiteral("fock_offset_cm")).toDouble()) < 1e-8,
+            "absolute Fock offset survives process restart");
+        require(static_cast<int>(grossPose->original_buglage)
+                == expected.value(QStringLiteral("gross_buglage")).toInt()
+            && static_cast<int>(fockPose->original_buglage)
+                == expected.value(QStringLiteral("fock_buglage")).toInt(),
+            "independent original tack selections survive process restart");
+        require(diagnostic->text().isEmpty(),
+            "reopened GUI loads saved sail geometry without diagnostics");
+        const auto beforeCorruptRead = inspectionGeometryBounds(scene);
+        invokeSailContextAction(tree, QStringLiteral("Fock"),
+            QStringLiteral("Manuelles Verschieben"));
+        const auto configPath = QDir(fixtureRoot).filePath(
+            QStringLiteral("420/bootsmodell.json"));
+        QFile corrupt(configPath);
+        require(corrupt.open(QIODevice::ReadOnly), "read isolated model before corrupting config");
+        auto corruptDocument = QJsonDocument::fromJson(corrupt.readAll()).object();
+        corrupt.close();
+        corruptDocument.insert(QStringLiteral("konfiguration"), QStringLiteral("invalid"));
+        require(corrupt.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "inject malformed config only into isolated 420er fixture");
+        const auto corruptBytes = QJsonDocument(corruptDocument).toJson();
+        require(corrupt.write(corruptBytes) == corruptBytes.size(),
+            "write malformed isolated config fixture");
+        corrupt.close();
+        invokeSailContextAction(tree, QStringLiteral("Fock"),
+            QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("20"));
+        scene->renderNow();
+        require(sameInspectionGeometry(beforeCorruptRead,
+                inspectionGeometryBounds(scene)),
+            "corrupt-config refresh retains last confirmed rendered sail geometry");
+        require(!diagnostic->text().isEmpty()
+                && (diagnostic->text().contains(QStringLiteral("CORE"))
+                    || diagnostic->text().contains(QStringLiteral("Konfiguration"))
+                    || diagnostic->text().contains(QStringLiteral("Geometrie"))),
+            "corrupt-config save attempt leaves an explicit GUI diagnostic");
+        window.close();
+        std::cout << "{\"restartRestores420Configuration\":true,"
+            "\"corruptConfigRetainsConfirmedGeometry\":true}\n";
+        return;
+    }
+
+    require(phase == QStringLiteral("actions"), "unknown sail configurator test phase");
+    auto configuration = readSailFixture(fixtureRoot).configuration;
+    require(configuration.revision == "0",
+        "copied 420er begins without a persisted sail configuration");
+
+    const auto initialRenderedGeometry = inspectionGeometryBounds(scene);
+    require(!initialRenderedGeometry.empty(),
+        "real 420er inspection starts with visible geometry actors");
+    invokeSailContextAction(tree, QStringLiteral("Großsegel"),
+        QStringLiteral("Großsegel automatisch setzen"));
+    auto after = readSailFixture(fixtureRoot).configuration;
+    if (after.revision == configuration.revision)
+        throw std::runtime_error(("GUI automatic Großsegel did not persist; diagnostic: "
+            + diagnostic->text().toStdString()).c_str());
+    scene->renderNow();
+    require(!sameInspectionGeometry(initialRenderedGeometry,
+            inspectionGeometryBounds(scene)),
+        "confirmed automatic placement replaces visible sail mesh geometry");
+    configuration = after;
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Fock automatisch setzen"));
+    after = readSailFixture(fixtureRoot).configuration;
+    require(after.revision != configuration.revision,
+        "GUI automatic Fock action persists through Core");
+    const auto automaticFock = sailPose(after, QStringLiteral("Fock"));
+    require(automaticFock && std::abs(automaticFock->fock_versatz_cm) < 1e-8,
+        "automatic Fock placement resets its absolute offset to zero");
+    configuration = after;
+
+    const auto planePreviewStart = readSailFixture(fixtureRoot).configuration;
+    const auto planePreviewPose = sailPose(planePreviewStart, QStringLiteral("Großsegel"));
+    require(planePreviewPose.has_value(), "plane preview matrix starts from a valid 420 pose");
+    const std::array<std::tuple<segelphysik::SegelEbene, std::array<double, 3>, std::size_t>, 3>
+        planeRequests{{
+            {segelphysik::SegelEbene::XY, {0.01, 0.02, 0.0}, 2},
+            {segelphysik::SegelEbene::XZ, {0.01, 0.0, 0.03}, 1},
+            {segelphysik::SegelEbene::YZ, {0.0, 0.02, 0.03}, 0}}};
+    int corePreviewTranslationPlanes = 0;
+    for (const auto& [plane, delta, normalAxis] : planeRequests) {
+        segelphysik::SegelAktionAnforderung request{};
+        request.aktion = segelphysik::SegelAktion::Translation;
+        request.element_id = "Großsegel";
+        request.ebene = plane;
+        request.translation_m = delta;
+        const auto preview = segelphysik::pruefeSegelAktion(planePreviewStart, request);
+        require(preview.lage && preview.revision == planePreviewStart.revision
+                && !preview.meshes.empty(),
+            "Core preview accepts each GUI model-axis translation plane without persistence");
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const double moved = preview.lage->translation_m[axis]
+                - planePreviewPose->translation_m[axis];
+            if (axis == normalAxis)
+                require(std::abs(moved) < 1e-8,
+                    "Core plane preview preserves translation normal to its selected view");
+            else
+                require(std::abs(moved - delta[axis]) < 1e-8,
+                    "Core plane preview applies both requested in-plane components");
+        }
+        ++corePreviewTranslationPlanes;
+    }
+    require(readSailFixture(fixtureRoot).configuration.revision == planePreviewStart.revision,
+        "all three translation previews leave persisted 420 revision unchanged");
+
+    struct RotationCornerCase {
+        segelphysik::SegelEcke corner;
+        const segelphysik::Vektor3* point;
+    };
+    int coreSemanticRotationHandles = 0;
+    for (const auto& elementId : {QStringLiteral("Großsegel"), QStringLiteral("Fock")}) {
+        const auto reference = sailReference(planePreviewStart, elementId);
+        const auto pose = sailPose(planePreviewStart, elementId);
+        require(reference && pose, "rotation preview matrix has each configured 420 sail");
+        const std::array<RotationCornerCase, 4> corners{{
+            {segelphysik::SegelEcke::Hals, &reference->ecken.hals_m},
+            {segelphysik::SegelEcke::Schothorn, &reference->ecken.schothorn_m},
+            {segelphysik::SegelEcke::KopfVorliek, &reference->ecken.kopf_vorliek_m},
+            {segelphysik::SegelEcke::KopfAchterliek, reference->ecken.kopf_achterliek_m
+                ? &*reference->ecken.kopf_achterliek_m : nullptr}}};
+        for (const auto& corner : corners) {
+            if (!corner.point) continue;
+            segelphysik::SegelAktionAnforderung request{};
+            request.aktion = segelphysik::SegelAktion::Rotation;
+            request.element_id = elementId.toStdString();
+            request.ebene = segelphysik::SegelEbene::XY;
+            request.bewegte_ecke = corner.corner;
+            request.winkel_grad = 8.0;
+            const auto preview = segelphysik::pruefeSegelAktion(planePreviewStart, request);
+            require(preview.lage && preview.revision == planePreviewStart.revision
+                    && !preview.meshes.empty(),
+                "Core previews every present semantic corner without persistence");
+            const auto& fixedPivot = corner.corner == segelphysik::SegelEcke::Hals
+                ? reference->ecken.kopf_vorliek_m : reference->ecken.hals_m;
+            const auto oldPivot = posedSailPoint(*reference, *pose, fixedPivot);
+            const auto newPivot = posedSailPoint(*reference, *preview.lage, fixedPivot);
+            require(forcedisplay::norm(forcedisplay::add(newPivot,
+                        forcedisplay::scale(oldPivot, -1.0))) < 1e-8,
+                "semantic rotation preview keeps its prescribed opposite pivot fixed");
+            ++coreSemanticRotationHandles;
+        }
+    }
+    require(coreSemanticRotationHandles == 7,
+        "Core preview matrix covers all four Grosssegel and all three Fock corners");
+
+    scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
+    invokeSailContextAction(tree, QStringLiteral("Großsegel"),
+        QStringLiteral("Manuelles Verschieben"));
+    after = readSailFixture(fixtureRoot).configuration;
+    auto grossReference = sailReference(after, QStringLiteral("Großsegel"));
+    auto grossPose = sailPose(after, QStringLiteral("Großsegel"));
+    require(grossReference && grossPose, "Core supplies Grosssegel corners and pose");
+    const int realGrossCornerCount = grossReference->ecken.kopf_achterliek_m ? 4 : 3;
+    auto* viewport = scene->findChild<QVTKOpenGLNativeWidget*>();
+    require(viewport && viewport->width() > 0 && viewport->height() > 0,
+        "420er inspection viewport is visible for mouse actions");
+
+    bool translated = false;
+    const std::array<segelphysik::Vektor3, 3> grossCorners{
+        grossReference->ecken.hals_m, grossReference->ecken.schothorn_m,
+        grossReference->ecken.kopf_vorliek_m};
+    const std::array<std::array<double, 3>, 4> barycentric{{
+        {{1.0/3.0, 1.0/3.0, 1.0/3.0}}, {{0.6, 0.2, 0.2}},
+        {{0.2, 0.6, 0.2}}, {{0.2, 0.2, 0.6}}}};
+    for (const auto& weights : barycentric) {
+        forcedisplay::Vec3 point{};
+        for (std::size_t corner = 0; corner < 3; ++corner)
+            point = forcedisplay::add(point, forcedisplay::scale(
+                posedSailPoint(*grossReference, *grossPose, grossCorners[corner]),
+                weights[corner]));
+        const auto screen = scene->inspectionScreenPointForWorld(point);
+        if (!viewport->rect().adjusted(4, 4, -4, -4).contains(screen.toPoint())) continue;
+        const auto beforeRevision = readSailFixture(fixtureRoot).configuration.revision;
+        const auto beforeGeometry = inspectionGeometryBounds(scene);
+        bool previewChanged = false;
+        dragInspectionPoint(scene, screen, screen + QPointF(31.0, 17.0), [&] {
+            previewChanged = !sameInspectionGeometry(beforeGeometry,
+                inspectionGeometryBounds(scene));
+        });
+        const auto moved = readSailFixture(fixtureRoot).configuration;
+        if (moved.revision != beforeRevision) {
+            require(previewChanged,
+                "uncommitted sail-drag preview replaces actual rendered mesh geometry");
+            scene->renderNow();
+            require(!sameInspectionGeometry(beforeGeometry,
+                    inspectionGeometryBounds(scene)),
+                "confirmed sail drag updates actual rendered mesh geometry");
+            configuration = moved;
+            translated = true;
+            break;
+        }
+    }
+    require(translated, "GUI surface drag translates the 420 Großsegel in its axis plane");
+
+    grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
+    grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
+    require(grossReference && grossPose, "Core returns post-drag Grosssegel pose");
+    struct CornerHandle {
+        const char* id;
+        const segelphysik::Vektor3* point;
+    };
+    int rotationPivotCount = 0;
+    const std::array<QString, 6> rotationViews{
+        QStringLiteral("backbord"), QStringLiteral("steuerbord"),
+        QStringLiteral("bug"), QStringLiteral("heck"),
+        QStringLiteral("oben"), QStringLiteral("unten")};
+    for (const bool halsPivot : {false, true}) {
+        bool pivotRotated = false;
+        for (const auto& view : rotationViews) {
+            scene->setInspectionCameraPreset(view, nullptr);
+            QApplication::processEvents();
+            scene->renderNow();
+            configuration = readSailFixture(fixtureRoot).configuration;
+            grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
+            grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
+            require(grossReference && grossPose, "pivot matrix reads current real sail geometry");
+            const std::array<CornerHandle, 4> handles{{
+                {"hals", &grossReference->ecken.hals_m},
+                {"schothorn", &grossReference->ecken.schothorn_m},
+                {"kopf_vorliek", &grossReference->ecken.kopf_vorliek_m},
+                {"kopf_achterliek", grossReference->ecken.kopf_achterliek_m
+                    ? &*grossReference->ecken.kopf_achterliek_m : nullptr}}};
+            for (const auto& handle : handles) {
+                if (!handle.point) continue;
+                const bool handleUsesHalsPivot =
+                    QString::fromLatin1(handle.id) != QStringLiteral("hals");
+                if (handleUsesHalsPivot != halsPivot) continue;
+                const auto localHandle = posedSailPoint(*grossReference, *grossPose, *handle.point);
+                const auto pivotLocal = halsPivot ? grossReference->ecken.hals_m
+                    : grossReference->ecken.kopf_vorliek_m;
+                const auto handleScreen = scene->inspectionScreenPointForWorld(localHandle);
+                const auto pivotScreen = scene->inspectionScreenPointForWorld(
+                    posedSailPoint(*grossReference, *grossPose, pivotLocal));
+                const QPointF lever = handleScreen - pivotScreen;
+                const double length = std::hypot(lever.x(), lever.y());
+                if (length < 28.0 || !viewport->rect().adjusted(8, 8, -8, -8)
+                        .contains(handleScreen.toPoint())) continue;
+                bool overlaps = false;
+                for (const auto& other : handles) {
+                    if (!other.point || &other == &handle) continue;
+                    const auto otherScreen = scene->inspectionScreenPointForWorld(
+                        posedSailPoint(*grossReference, *grossPose, *other.point));
+                    const QPointF separation = otherScreen - handleScreen;
+                    if (separation.x() * separation.x() + separation.y() * separation.y()
+                        < 30.0 * 30.0) {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if (overlaps) continue;
+                const QPointF dragTo = handleScreen
+                    + QPointF(-lever.y() / length * 18.0, lever.x() / length * 18.0);
+                const auto beforePose = *grossPose;
+                const auto beforeRevision = configuration.revision;
+                dragInspectionPoint(scene, handleScreen, dragTo);
+                const auto rotatedConfiguration = readSailFixture(fixtureRoot).configuration;
+                if (rotatedConfiguration.revision == beforeRevision) continue;
+                const auto rotatedPose = sailPose(rotatedConfiguration, QStringLiteral("Großsegel"));
+                require(rotatedPose.has_value(), "semantic rotation preserves a complete pose");
+                bool rotationChanged = false;
+                for (std::size_t component = 0; component < 4; ++component)
+                    rotationChanged = rotationChanged
+                        || std::abs(rotatedPose->rotation_xyzw[component]
+                            - beforePose.rotation_xyzw[component]) > 1e-8;
+                require(rotationChanged,
+                    "semantic-corner drag changes rigid rotation rather than deforming geometry");
+                configuration = rotatedConfiguration;
+                pivotRotated = true;
+                ++rotationPivotCount;
+                break;
+            }
+            if (pivotRotated) break;
+        }
+        require(pivotRotated, halsPivot
+            ? "real semantic corner rotation persists about Hals"
+            : "real Hals-handle rotation persists about KopfVorliek");
+    }
+
+    scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
+    configuration = readSailFixture(fixtureRoot).configuration;
+    grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
+    grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
+    require(grossReference && grossPose, "Core returns confirmed pose before cancellation test");
+    const auto confirmedRevision = configuration.revision;
+    scene->renderNow();
+    const auto confirmedGeometry = inspectionGeometryBounds(scene);
+    bool cancelledPreview = false;
+    for (const auto& weights : barycentric) {
+        forcedisplay::Vec3 point{};
+        for (std::size_t corner = 0; corner < 3; ++corner)
+            point = forcedisplay::add(point, forcedisplay::scale(
+                posedSailPoint(*grossReference, *grossPose, grossCorners[corner]),
+                weights[corner]));
+        const auto start = scene->inspectionScreenPointForWorld(point);
+        if (!viewport->rect().adjusted(4, 4, -4, -4).contains(start.toPoint())) continue;
+        const auto global = [&](const QPointF& p) {
+            return QPointF(viewport->mapToGlobal(p.toPoint()));
+        };
+        const QPointF finish = start + QPointF(27.0, 14.0);
+        QMouseEvent press(QEvent::MouseButtonPress, start, global(start),
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent move(QEvent::MouseMove, finish, global(finish),
+            Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &press);
+        QApplication::sendEvent(viewport, &move);
+        QApplication::processEvents();
+        scene->renderNow();
+        const auto previewGeometry = inspectionGeometryBounds(scene);
+        if (sameInspectionGeometry(confirmedGeometry, previewGeometry)) {
+            QMouseEvent release(QEvent::MouseButtonRelease, finish, global(finish),
+                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &release);
+            continue;
+        }
+        QEvent ungrab(QEvent::UngrabMouse);
+        QApplication::sendEvent(viewport, &ungrab);
+        QMouseEvent release(QEvent::MouseButtonRelease, finish, global(finish),
+            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &release);
+        QApplication::processEvents();
+        scene->renderNow();
+        const auto afterCancellation = readSailFixture(fixtureRoot).configuration;
+        require(afterCancellation.revision == confirmedRevision
+                && sameInspectionGeometry(confirmedGeometry,
+                    inspectionGeometryBounds(scene)),
+            "mouse ungrab removes preview and never persists a delayed Finish");
+        cancelledPreview = true;
+        break;
+    }
+    require(cancelledPreview,
+        "real 420er drag produces a preview before the ungrab-cancellation test");
+
+    enum class DragAbort { Escape, Camera, Tab, Hide, Ungrab };
+    const std::array<std::pair<DragAbort, const char*>, 5> abortMatrix{{
+        {DragAbort::Escape, "Escape"}, {DragAbort::Camera, "camera change"},
+        {DragAbort::Tab, "workspace tab change"}, {DragAbort::Hide, "viewport hide"},
+        {DragAbort::Ungrab, "mouse ungrab"}}};
+    for (const auto& [abort, label] : abortMatrix) {
+        std::cout << "drag-abort starting " << label << "\n" << std::flush;
+        require(scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr),
+            "restore editable view before drag-abort matrix case");
+        QApplication::processEvents();
+        configuration = readSailFixture(fixtureRoot).configuration;
+        grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
+        grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
+        require(grossReference && grossPose, "drag-abort matrix reads confirmed pose");
+        scene->renderNow();
+        const auto revisionBefore = configuration.revision;
+        const auto geometryBefore = inspectionGeometryBounds(scene);
+        bool aborted = false;
+        for (const auto& weights : barycentric) {
+            forcedisplay::Vec3 point{};
+            const std::array<const segelphysik::Vektor3*, 3> corners{
+                &grossReference->ecken.hals_m, &grossReference->ecken.schothorn_m,
+                &grossReference->ecken.kopf_vorliek_m};
+            for (std::size_t corner = 0; corner < corners.size(); ++corner)
+                point = forcedisplay::add(point, forcedisplay::scale(
+                    posedSailPoint(*grossReference, *grossPose, *corners[corner]),
+                    weights[corner]));
+            const auto start = scene->inspectionScreenPointForWorld(point);
+            if (!viewport->rect().adjusted(4, 4, -4, -4).contains(start.toPoint())) continue;
+            const auto global = [&](const QPointF& p) {
+                return QPointF(viewport->mapToGlobal(p.toPoint()));
+            };
+            const QPointF finish = start + QPointF(26.0, 15.0);
+            QMouseEvent press(QEvent::MouseButtonPress, start, global(start),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent move(QEvent::MouseMove, finish, global(finish),
+                Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &press);
+            QApplication::sendEvent(viewport, &move);
+            QApplication::processEvents();
+            scene->renderNow();
+            if (sameInspectionGeometry(geometryBefore, inspectionGeometryBounds(scene))) {
+                QMouseEvent release(QEvent::MouseButtonRelease, finish, global(finish),
+                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(viewport, &release);
+                continue;
+            }
+            if (abort == DragAbort::Escape) {
+                QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+                QApplication::sendEvent(viewport, &escape);
+            } else if (abort == DragAbort::Camera) {
+                require(scene->setInspectionCameraPreset(QStringLiteral("oben"), nullptr),
+                    "camera switch cancels in-progress sail drag");
+            } else if (abort == DragAbort::Tab) {
+                auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+                require(tabs && tabs->count() > 1, "workspace tab bar exists for drag abort");
+                tabs->setCurrentIndex(1);
+                QApplication::processEvents();
+                tabs->setCurrentIndex(0);
+            } else if (abort == DragAbort::Hide) {
+                viewport->hide();
+                QApplication::processEvents();
+                viewport->show();
+            } else {
+                QEvent ungrab(QEvent::UngrabMouse);
+                QApplication::sendEvent(viewport, &ungrab);
+            }
+            QMouseEvent delayedRelease(QEvent::MouseButtonRelease, finish, global(finish),
+                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &delayedRelease);
+            QApplication::processEvents();
+            scene->renderNow();
+            const auto afterAbort = readSailFixture(fixtureRoot).configuration;
+            require(afterAbort.revision == revisionBefore
+                    && sameInspectionGeometry(geometryBefore, inspectionGeometryBounds(scene)),
+                (std::string(label) + " cancels preview without save and restores confirmed geometry").c_str());
+            aborted = true;
+            break;
+        }
+        require(aborted, (std::string("real sail preview was available for ") + label + " cancellation").c_str());
+        std::cout << "drag-abort passed " << label << "\n" << std::flush;
+    }
+
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Manuelles Verschieben"));
+    scene->renderNow();
+    const auto fockAtZeroCm = inspectionGeometryBounds(scene);
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("10"));
+    configuration = readSailFixture(fixtureRoot).configuration;
+    auto fockPose = sailPose(configuration, QStringLiteral("Fock"));
+    require(fockPose && std::abs(fockPose->fock_versatz_cm - 10.0) < 1e-8,
+        "GUI absolute Fock dialog persists +10 cm");
+    const auto fockReferenceForOffset = sailReference(configuration, QStringLiteral("Fock"));
+    require(fockReferenceForOffset.has_value(), "Fock reference exists after centimeter edit");
+    const int realFockCornerCount = fockReferenceForOffset->ecken.kopf_achterliek_m ? 4 : 3;
+    scene->renderNow();
+    const auto fockAtTenCm = inspectionGeometryBounds(scene);
+    require(!sameInspectionGeometry(fockAtZeroCm, fockAtTenCm),
+        "absolute Fock offset updates the actual visible mesh");
+
+    struct FockHandle {
+        const char* id;
+        const segelphysik::Vektor3* point;
+    };
+    const std::array<FockHandle, 3> fockHandles{{
+        {"hals", &fockReferenceForOffset->ecken.hals_m},
+        {"schothorn", &fockReferenceForOffset->ecken.schothorn_m},
+        {"kopf_vorliek", &fockReferenceForOffset->ecken.kopf_vorliek_m}}};
+    bool fockRotated = false;
+    const auto fockPoseBeforeRotation = *fockPose;
+    for (const auto& view : rotationViews) {
+        scene->setInspectionCameraPreset(view, nullptr);
+        QApplication::processEvents();
+        scene->renderNow();
+        for (const auto& handle : fockHandles) {
+            const auto handlePoint = posedSailPoint(*fockReferenceForOffset,
+                fockPoseBeforeRotation, *handle.point);
+            const auto pivotPoint = QString::fromLatin1(handle.id) == QStringLiteral("hals")
+                ? fockReferenceForOffset->ecken.kopf_vorliek_m
+                : fockReferenceForOffset->ecken.hals_m;
+            const auto handleScreen = scene->inspectionScreenPointForWorld(handlePoint);
+            const auto pivotScreen = scene->inspectionScreenPointForWorld(
+                posedSailPoint(*fockReferenceForOffset, fockPoseBeforeRotation, pivotPoint));
+            const QPointF lever = handleScreen - pivotScreen;
+            const double length = std::hypot(lever.x(), lever.y());
+            if (length < 28.0 || !viewport->rect().adjusted(8, 8, -8, -8)
+                    .contains(handleScreen.toPoint())) continue;
+            bool overlaps = false;
+            for (const auto& other : fockHandles) {
+                if (&other == &handle) continue;
+                const auto otherScreen = scene->inspectionScreenPointForWorld(
+                    posedSailPoint(*fockReferenceForOffset, fockPoseBeforeRotation,
+                        *other.point));
+                const QPointF separation = otherScreen - handleScreen;
+                if (separation.x() * separation.x() + separation.y() * separation.y()
+                    < 30.0 * 30.0) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (overlaps) continue;
+            const QPointF dragTo = handleScreen
+                + QPointF(-lever.y() / length * 18.0, lever.x() / length * 18.0);
+            const auto revisionBefore = configuration.revision;
+            dragInspectionPoint(scene, handleScreen, dragTo);
+            const auto candidate = readSailFixture(fixtureRoot).configuration;
+            if (candidate.revision == revisionBefore) continue;
+            const auto candidatePose = sailPose(candidate, QStringLiteral("Fock"));
+            require(candidatePose.has_value(), "Core retains Fock pose after semantic drag");
+            bool rotationChanged = false;
+            for (std::size_t i = 0; i < 4; ++i)
+                rotationChanged = rotationChanged
+                    || std::abs(candidatePose->rotation_xyzw[i]
+                        - fockPoseBeforeRotation.rotation_xyzw[i]) > 1e-8;
+            require(rotationChanged,
+                "Fock drag at Core-pose handle changes rotation, not only translation");
+            configuration = candidate;
+            fockPose = candidatePose;
+            fockRotated = true;
+            break;
+        }
+        if (fockRotated) break;
+    }
+    require(fockRotated,
+        "Fock semantic handle at authoritative Core pose remains draggable after +10 cm");
+    scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
+
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("10"));
+    auto repeated = readSailFixture(fixtureRoot).configuration;
+    fockPose = sailPose(repeated, QStringLiteral("Fock"));
+    require(fockPose && std::abs(fockPose->fock_versatz_cm - 10.0) < 1e-8,
+        "GUI repeated absolute Fock input does not add the value twice");
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("-10"));
+    configuration = readSailFixture(fixtureRoot).configuration;
+    fockPose = sailPose(configuration, QStringLiteral("Fock"));
+    require(fockPose && std::abs(fockPose->fock_versatz_cm + 10.0) < 1e-8,
+        "GUI absolute Fock dialog persists -10 cm");
+    const auto offsetBeforeCancel = readSailFixture(fixtureRoot).configuration;
+    scene->renderNow();
+    const auto geometryBeforeOffsetCancel = inspectionGeometryBounds(scene);
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("cancel"),
+        SailDialogTestAction::Cancel);
+    std::cout << "cm-cancel passed\n" << std::flush;
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("invalid"),
+        SailDialogTestAction::RejectInvalid);
+    std::cout << "cm-invalid passed\n" << std::flush;
+    scene->renderNow();
+    const auto afterOffsetCancellation = readSailFixture(fixtureRoot).configuration;
+    require(afterOffsetCancellation.revision == offsetBeforeCancel.revision
+            && sameInspectionGeometry(geometryBeforeOffsetCancel,
+                inspectionGeometryBounds(scene)),
+        "Fock cm dialog cancel and invalid-input rejection preserve confirmed state");
+
+    invokeSailContextAction(tree, QStringLiteral("Großsegel"),
+        QStringLiteral("Backbordbug"));
+    configuration = readSailFixture(fixtureRoot).configuration;
+    auto grossPoseAfterTack = sailPose(configuration, QStringLiteral("Großsegel"));
+    require(grossPoseAfterTack
+            && grossPoseAfterTack->original_buglage == segelphysik::SegelBuglage::Backbord,
+        "GUI persists Großsegel original Backbord tack independently");
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Steuerbordbug"));
+    configuration = readSailFixture(fixtureRoot).configuration;
+    fockPose = sailPose(configuration, QStringLiteral("Fock"));
+    require(fockPose && fockPose->original_buglage == segelphysik::SegelBuglage::Steuerbord,
+        "GUI persists Fock original Steuerbord tack independently");
+
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, false);
+    scene->setInspectionCameraPreset(QString(), nullptr);
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+    require(diagnostic->text().contains(QStringLiteral("achsenfeste Kamera")),
+        "GUI rejects entering manual mode from the free camera");
+    scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+
+#ifdef _WIN32
+    const auto lockPath = std::filesystem::path(fixtureRoot.toStdWString())
+        / L"420" / L"bootsmodell.lock";
+    const HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    require(lock != INVALID_HANDLE_VALUE,
+        "Core persistence lock exists after committed GUI actions");
+    const auto beforeFailure = readSailFixture(fixtureRoot).configuration;
+    invokeSailContextAction(tree, QStringLiteral("Fock"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("15"));
+    CloseHandle(lock);
+    const auto afterFailure = readSailFixture(fixtureRoot).configuration;
+    require(afterFailure.revision == beforeFailure.revision,
+        "GUI write-lock denial leaves the persisted Core revision unchanged");
+    const auto persistedFock = sailPose(afterFailure, QStringLiteral("Fock"));
+    require(persistedFock && std::abs(persistedFock->fock_versatz_cm + 10.0) < 1e-8,
+        "GUI write-lock denial preserves the last saved Fock pose");
+    require(diagnostic->text().contains(QStringLiteral("CORE"))
+            || diagnostic->text().contains(QStringLiteral("Sperre"))
+            || diagnostic->text().contains(QStringLiteral("Schreib")),
+        "GUI visibly reports Core persistence lock failure");
+#else
+    require(false, "write-lock failure injection requires Windows");
+#endif
+
+    saveSailExpected(QDir(fixtureRoot).filePath(
+        QStringLiteral("sail-configurator-expected.json")), afterFailure);
+    window.close();
+    std::cout << "{\"automaticBothSails\":true,\"translation\":true,"
+        "\"corePreviewTranslationPlanes\":" << corePreviewTranslationPlanes
+        << ",\"coreSemanticRotationHandles\":" << coreSemanticRotationHandles
+        << ",\"realGrossCorners\":" << realGrossCornerCount
+        << ",\"realFockCorners\":" << realFockCornerCount
+        << ",\"real420PersistedTranslationPlanes\":1,"
+        "\"rigidRotation\":true,\"rotationPivotCases\":" << rotationPivotCount
+        << ",\"fockOffsets\":true,\"fockCancelAndInvalidInput\":true,"
+        "\"dragAbortCases\":5,\"originalTacks\":true,\"freeCameraLocked\":true,"
+        "\"writeLockFailure\":true}\n";
 }
 QByteArray digest(const QImage& image)
 {
@@ -393,7 +1656,7 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
     require(entry != nullptr, "420 absent from catalog");
     const auto parts = toDisplayParts(
         segelphysik::darstellungsgeometrie(catalog, entry->modell_id, entry->modell_fassung));
-    const auto modelPath = QDir(models).filePath(QStringLiteral("420/modell.json"));
+    const auto modelPath = QDir(models).filePath(QStringLiteral("420/bootsmodell.json"));
     const auto validation = validateModel(modelPath);
     require(validation.valid, "420 validation");
     QString error;
@@ -1311,6 +2574,218 @@ void testWorkspaceTabs(MainWindow& window, VtkSceneWidget& scene,
     report.insert(QStringLiteral("workspaceTabsIsolatedInspectionAndFixedInactiveColors"), true);
 }
 
+int testInspectionCameraAndPointerRouting()
+{
+    VtkSceneWidget scene;
+    scene.setInspectionMode();
+    DisplayPart sailPart;
+    sailPart.elementId = QStringLiteral("Großsegel");
+    sailPart.mesh = vtkSmartPointer<vtkPolyData>::New();
+    vtkNew<vtkPoints> points;
+    points->InsertNextPoint(-1.0, -1.0, 0.0);
+    points->InsertNextPoint(1.0, -1.0, 0.0);
+    points->InsertNextPoint(0.0, 1.0, 0.0);
+    vtkNew<vtkCellArray> triangles;
+    const vtkIdType triangle[3] = {0, 1, 2};
+    triangles->InsertNextCell(3, triangle);
+    sailPart.mesh->SetPoints(points);
+    sailPart.mesh->SetPolys(triangles);
+    QString error;
+    require(scene.setModel({sailPart}, &error),
+        "synthetic triangular sail enters normal inspection rendering");
+    scene.resize(620, 420);
+    scene.show();
+    QApplication::processEvents();
+    scene.renderNow();
+    const std::array<std::pair<QString, std::size_t>, 6> orthographicViews{{
+        {QStringLiteral("backbord"), 1}, {QStringLiteral("steuerbord"), 1},
+        {QStringLiteral("bug"), 0}, {QStringLiteral("heck"), 0},
+        {QStringLiteral("oben"), 2}, {QStringLiteral("unten"), 2}}};
+    std::array<bool, 3> translatedPlanes{};
+    for (const auto& [view, normalAxis] : orthographicViews) {
+        require(scene.setInspectionCameraPreset(view, nullptr)
+            && scene.inspectionEditView() && scene.parallelProjection(),
+            "each of the six model-axis inspection views is orthographic and editable");
+        const auto horizontal = scene.inspectionWorldVectorForScreenDelta({20.0, 0.0});
+        const auto vertical = scene.inspectionWorldVectorForScreenDelta({0.0, 15.0});
+        require(std::abs(horizontal[normalAxis]) < 1e-10
+                && std::abs(vertical[normalAxis]) < 1e-10,
+            "axis-view pointer translation excludes its model-plane normal");
+        require(forcedisplay::norm(horizontal) > 1e-10
+                && forcedisplay::norm(vertical) > 1e-10
+                && forcedisplay::norm(forcedisplay::cross(horizontal, vertical)) > 1e-10,
+            "synthetic triangle pointer translation spans the active camera plane");
+        translatedPlanes[normalAxis] = true;
+        auto* panViewport = scene.findChild<QVTKOpenGLNativeWidget*>();
+        require(panViewport, "inspection camera pan viewport exists");
+        scene.renderNow();
+        const forcedisplay::Vec3 referencePoint{0.0, 0.0, 0.0};
+        const auto beforePan = scene.inspectionScreenPointForWorld(referencePoint);
+        const QPointF start{30.0, 30.0};
+        const QPointF movement{20.0, 15.0};
+        const QPointF global = panViewport->mapToGlobal(start.toPoint());
+        QMouseEvent panPress(QEvent::MouseButtonPress, start, global,
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent panMove(QEvent::MouseMove, start + movement, global + movement,
+            Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent panRelease(QEvent::MouseButtonRelease, start + movement, global + movement,
+            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(panViewport, &panPress);
+        QApplication::sendEvent(panViewport, &panMove);
+        QApplication::sendEvent(panViewport, &panRelease);
+        scene.renderNow();
+        const auto screenMovement =
+            scene.inspectionScreenPointForWorld(referencePoint) - beforePan;
+        require(std::abs(screenMovement.x() - movement.x()) < 0.1
+                && std::abs(screenMovement.y() - movement.y()) < 0.1,
+            "inspection background pan must follow the mouse horizontally and vertically");
+    }
+    require(scene.setInspectionCameraPreset(QStringLiteral("oben_backbord_bug"), nullptr)
+        && !scene.inspectionEditView() && !scene.parallelProjection(),
+        "oblique inspection presets remain view-only perspective views");
+    require(scene.setInspectionCameraPreset(QString(), nullptr)
+        && !scene.inspectionEditView(), "free camera remains view-only");
+    require(scene.setInspectionCameraPreset(QStringLiteral("oben"), nullptr),
+        "return to top-axis inspection view");
+    auto* viewport = scene.findChild<QVTKOpenGLNativeWidget*>();
+    require(viewport, "inspection interaction viewport exists");
+    scene.setInspectionEditTarget(QStringLiteral("Großsegel"));
+    scene.setInspectionHandles({{QStringLiteral("hals"), {0.0, 0.0, 0.0}}});
+    scene.renderNow();
+    const auto handlePoint = scene.inspectionScreenPointForWorld({0.0, 0.0, 0.0});
+    const QPointF handleGlobal = viewport->mapToGlobal(handlePoint.toPoint());
+    QVector<VtkSceneWidget::InspectionDragPhase> dragPhases;
+    QString draggedElement, draggedHandle, contextElement, interactionHint;
+    scene.onInspectionDrag = [&](const QString& element, const QString& handle,
+        const QPointF&, VtkSceneWidget::InspectionDragPhase phase) {
+        draggedElement = element;
+        draggedHandle = handle;
+        dragPhases.push_back(phase);
+    };
+    scene.onInspectionContextMenu = [&](const QString& element, const QPoint&) {
+        contextElement = element;
+    };
+    scene.onInspectionInteractionHint = [&](const QString& hint) {
+        interactionHint = hint;
+    };
+    QMouseEvent dragPress(QEvent::MouseButtonPress, handlePoint, handleGlobal,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent dragMove(QEvent::MouseMove, handlePoint + QPointF(25.0, 15.0),
+        handleGlobal + QPointF(25.0, 15.0), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent dragRelease(QEvent::MouseButtonRelease, handlePoint + QPointF(25.0, 15.0),
+        handleGlobal + QPointF(25.0, 15.0), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &dragPress);
+    QApplication::sendEvent(viewport, &dragMove);
+    QApplication::sendEvent(viewport, &dragRelease);
+    require(dragPhases.size() == 3
+        && dragPhases[0] == VtkSceneWidget::InspectionDragPhase::Start
+        && dragPhases[1] == VtkSceneWidget::InspectionDragPhase::Move
+        && dragPhases[2] == VtkSceneWidget::InspectionDragPhase::Finish
+        && draggedElement == QStringLiteral("Großsegel")
+        && draggedHandle == QStringLiteral("hals"),
+        "DPI-aware handle routing emits one start/move/finish transaction");
+    const std::array<std::pair<QString, forcedisplay::Vec3>, 4> syntheticCorners{{
+        {QStringLiteral("hals"), {-0.75, -0.65, 0.0}},
+        {QStringLiteral("schothorn"), {0.75, -0.65, 0.0}},
+        {QStringLiteral("kopf_vorliek"), {0.0, 0.7, 0.0}},
+        {QStringLiteral("kopf_achterliek"), {0.65, 0.45, 0.0}}}};
+    for (std::size_t corner = 0; corner < syntheticCorners.size(); ++corner) {
+        scene.setInspectionHandles({{syntheticCorners[corner].first,
+            syntheticCorners[corner].second}});
+        scene.renderNow();
+        const auto cornerPoint = scene.inspectionScreenPointForWorld(
+            syntheticCorners[corner].second);
+        const auto cornerGlobal = viewport->mapToGlobal(cornerPoint.toPoint());
+        dragPhases.clear();
+        QMouseEvent cornerPress(QEvent::MouseButtonPress, cornerPoint, cornerGlobal,
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent cornerMove(QEvent::MouseMove, cornerPoint + QPointF(13.0, 9.0),
+            cornerGlobal + QPointF(13.0, 9.0), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent cornerRelease(QEvent::MouseButtonRelease,
+            cornerPoint + QPointF(13.0, 9.0), cornerGlobal + QPointF(13.0, 9.0),
+            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &cornerPress);
+        QApplication::sendEvent(viewport, &cornerMove);
+        QApplication::sendEvent(viewport, &cornerRelease);
+        require(dragPhases.size() == 3 && draggedHandle == syntheticCorners[corner].first
+                && dragPhases.front() == VtkSceneWidget::InspectionDragPhase::Start
+                && dragPhases.back() == VtkSceneWidget::InspectionDragPhase::Finish,
+            corner < 3
+                ? "synthetic triangular sail dispatches each semantic corner handle"
+                : "synthetic quadrilateral sail dispatches its fourth semantic corner");
+    }
+    scene.setInspectionHandles({});
+    int interactionCancellations = 0;
+    scene.onInspectionInteractionCancelled = [&] { ++interactionCancellations; };
+    dragPhases.clear();
+    const QPointF cancelPoint = scene.inspectionScreenPointForWorld({0.1, 0.1, 0.0});
+    const QPointF cancelGlobal = viewport->mapToGlobal(cancelPoint.toPoint());
+    QMouseEvent cancelPress(QEvent::MouseButtonPress, cancelPoint, cancelGlobal,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent cancelMove(QEvent::MouseMove, cancelPoint + QPointF(20.0, 12.0),
+        cancelGlobal + QPointF(20.0, 12.0), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &cancelPress);
+    QApplication::sendEvent(viewport, &cancelMove);
+    QEvent ungrab(QEvent::UngrabMouse);
+    QApplication::sendEvent(viewport, &ungrab);
+    QMouseEvent cancelledRelease(QEvent::MouseButtonRelease,
+        cancelPoint + QPointF(20.0, 12.0), cancelGlobal + QPointF(20.0, 12.0),
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &cancelledRelease);
+    require(interactionCancellations == 1
+        && dragPhases.size() == 2
+        && dragPhases.back() == VtkSceneWidget::InspectionDragPhase::Move,
+        "mouse ungrab cancels the in-progress GUI drag without a later Finish phase");
+
+    QMouseEvent hidePress(QEvent::MouseButtonPress, cancelPoint, cancelGlobal,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent hideMove(QEvent::MouseMove, cancelPoint + QPointF(18.0, 11.0),
+        cancelGlobal + QPointF(18.0, 11.0), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &hidePress);
+    QApplication::sendEvent(viewport, &hideMove);
+    viewport->hide();
+    QApplication::processEvents();
+    QMouseEvent hiddenRelease(QEvent::MouseButtonRelease,
+        cancelPoint + QPointF(18.0, 11.0), cancelGlobal + QPointF(18.0, 11.0),
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &hiddenRelease);
+    require(interactionCancellations == 2
+        && dragPhases.back() == VtkSceneWidget::InspectionDragPhase::Move,
+        "hiding the inspection viewport cancels without committing the preview");
+    viewport->show();
+    QApplication::processEvents();
+    scene.renderNow();
+    scene.setInspectionHandles({
+        {QStringLiteral("hals"), {0.0, 0.0, 0.0}},
+        {QStringLiteral("schothorn"), {0.0, 0.0, 0.0}}});
+    dragPhases.clear();
+    const QPointF ambiguousPoint = scene.inspectionScreenPointForWorld({0.0, 0.0, 0.0});
+    const QPointF ambiguousGlobal = viewport->mapToGlobal(ambiguousPoint.toPoint());
+    QMouseEvent ambiguousPress(QEvent::MouseButtonPress, ambiguousPoint, ambiguousGlobal,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent ambiguousRelease(QEvent::MouseButtonRelease, ambiguousPoint, ambiguousGlobal,
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &ambiguousPress);
+    QApplication::sendEvent(viewport, &ambiguousRelease);
+    require(dragPhases.isEmpty()
+        && interactionHint.contains(QStringLiteral("andere Achsansicht")),
+        "overlapping projected handles are rejected with an alternate-view hint");
+    const QPointF bodyPoint = scene.inspectionScreenPointForWorld({0.1, 0.1, 0.0});
+    const QPointF bodyGlobal = viewport->mapToGlobal(bodyPoint.toPoint());
+    QMouseEvent menuPress(QEvent::MouseButtonPress, bodyPoint, bodyGlobal,
+        Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+    QMouseEvent menuRelease(QEvent::MouseButtonRelease, bodyPoint, bodyGlobal,
+        Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport, &menuPress);
+    QApplication::sendEvent(viewport, &menuRelease);
+    require(contextElement == QStringLiteral("Großsegel"),
+        "right-click picking reports the exact displayed sail ID");
+    scene.setInspectionEditTarget({});
+    scene.setInspectionHandles({});
+    scene.hide();
+    return static_cast<int>(std::count(translatedPlanes.begin(), translatedPlanes.end(), true));
+}
+
 void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject& report)
 {
     QTemporaryDir temporary;
@@ -1349,6 +2824,12 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     auto* simulationScene = dynamic_cast<VtkSceneWidget*>(
         window.findChild<QWidget*>(QStringLiteral("simulationScene")));
     require(inspectionScene && simulationScene, "separate views preserve simulation scene");
+    auto* inspectionCameraCombo = window.findChild<QComboBox*>(
+        QStringLiteral("inspectionCameraPreset"));
+    require(inspectionCameraCombo && inspectionCameraCombo->isEnabled(),
+        "boot inspection exposes its camera selector above model selection");
+    testInspectionCameraAndPointerRouting();
+    report.insert(QStringLiteral("inspectionCameraAxesAndPointerRouting"), true);
     inspectionScene->renderNow();
     auto* viewport = inspectionScene->findChild<QVTKOpenGLNativeWidget*>();
     require(viewport && !viewport->mask().isEmpty()
@@ -1523,7 +3004,19 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
             require(values->topLevelItem(i)->text(1) == QStringLiteral("Bewegung"),
                 "area filtering hides other domains");
         }
-    require(visible > 0 && visible < rootValues, "filter changes actual visible rows");
+    if (!(visible > 0 && visible < rootValues)) {
+        int movementRows = 0;
+        QStringList areas;
+        for (int i = 0; i < values->topLevelItemCount(); ++i) {
+            const auto area = values->topLevelItem(i)->text(1);
+            if (area == QStringLiteral("Bewegung")) ++movementRows;
+            if (!areas.contains(area)) areas.push_back(area);
+        }
+        throw std::runtime_error(("filter changes actual visible rows: total="
+            + std::to_string(rootValues) + ", visible=" + std::to_string(visible)
+            + ", Bewegung=" + std::to_string(movementRows)
+            + ", property areas=" + areas.join(QStringLiteral(", ")).toStdString()).c_str());
+    }
     nameFilter->setText(QStringLiteral("no-such-property"));
     for (int i = 0; i < values->topLevelItemCount(); ++i)
         require(values->topLevelItem(i)->isHidden(), "column filters combine with AND");
@@ -1618,90 +3111,41 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         "actual tree element selection is opaque");
     tree->clearSelection();
     const auto inspectionCamera = inspectionScene->cameraView();
-    int geometries = 0;
-    QSet<QString> sourceIds;
     QSet<QString> elementIds;
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) {
-            const auto ids = (*it)->data(0, Qt::UserRole + 1).toStringList();
-            require(ids.size() == 1 && !elementIds.contains(ids.front()),
-                "each element appears once in the canonical object hierarchy");
-            elementIds.insert(ids.front());
-        }
-        if (!(*it)->data(0, Qt::UserRole + 2).isValid()) continue;
-        auto* geometry = *it;
+        auto* item = *it;
+        require(!item->text(0).contains(QStringLiteral("Bestandsquellen"))
+                && !item->text(0).startsWith(QStringLiteral("Quellmesh"))
+                && item->text(0) != QStringLiteral("Abgeleitete Daten"),
+            "object tree contains no duplicate source or derived references");
+        if (item->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")) continue;
+        const auto ids = item->data(0, Qt::UserRole + 1).toStringList();
+        require(ids.size() == 1 && !elementIds.contains(ids.front()),
+            "each existing object appears exactly once");
+        elementIds.insert(ids.front());
         tree->clearSelection();
-        geometry->setSelected(true);
+        item->setSelected(true);
         QApplication::processEvents();
-        require(inspectionScene->property("hasInspectionMesh").toBool(), "each advertised geometry renders");
         const auto camera = inspectionScene->cameraView();
-        require(camera.position == inspectionCamera.position && camera.focalPoint == inspectionCamera.focalPoint,
-            "geometry changes preserve camera");
-        geometry->setCheckState(0, Qt::Checked);
-        tree->clearSelection();
-        require(inspectionScene->property("hasInspectionMesh").toBool(),
-            "checked geometry remains renderable without a selected node");
-        geometry->setCheckState(0, Qt::Unchecked);
-        ++geometries;
-        require(!geometry->toolTip(0).isEmpty(), "geometry provenance is visible");
-        if (geometry->text(0).startsWith(QStringLiteral("Quellmesh"))) {
-            const auto key = geometry->parent()->text(0) + geometry->text(0);
-            require(!sourceIds.contains(key), "source reused by roles is listed only once");
-            sourceIds.insert(key);
-        }
+        require(camera.position == inspectionCamera.position
+                && camera.focalPoint == inspectionCamera.focalPoint,
+            "current object selection preserves camera");
     }
-    require(geometries > 0 && !sourceIds.isEmpty(), "source geometries exist");
     require(!elementIds.isEmpty(), "canonical object tree retains model elements");
     require(window.grab().save(evidence.filePath(QStringLiteral("boat_unified_source.bmp")), "BMP"),
-        "unified source model screenshot");
-    QTreeWidgetItem* derivedRoot = nullptr;
-    for (QTreeWidgetItemIterator it(tree); *it; ++it)
-        if ((*it)->text(0) == QStringLiteral("Abgeleitete Daten") && (*it)->childCount()) {
-            derivedRoot = *it;
-            break;
-        }
-    require(derivedRoot, "derived geometry branch exists under its element");
-    require(derivedRoot->childCount() > 0, "derived geometry remains available in unified format");
-    derivedRoot->setExpanded(true);
-    auto* derived = derivedRoot->child(0);
-    derived->setSelected(true);
-    tree->scrollToItem(derived);
-    QApplication::processEvents();
-    require(window.grab().save(evidence.filePath(QStringLiteral("boat_unified_derived.bmp")), "BMP"),
-        "unified derived geometry screenshot");
+        "current object model screenshot");
     tree->clearSelection();
-    int movementPreviews = 0;
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
-        if (id.isEmpty()) continue;
-        auto* previewItem = *it;
-        previewItem->setCheckState(0, Qt::Checked);
-        tree->clearSelection();
-        inspectionScene->renderNow();
-        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() > 0,
-            "checked movement preview is visible without changing simulation");
-        const auto camera = inspectionScene->cameraView();
-        require(camera.position == inspectionCamera.position && camera.focalPoint == inspectionCamera.focalPoint,
-            "movement preview preserves inspection camera");
-        require(previewItem->toolTip(0).contains(QStringLiteral("Normal:")),
-            "movement preview explains pose colors");
-        tree->scrollToItem(previewItem);
-        if (!movementPreviews)
-            require(window.grab().save(evidence.filePath(QStringLiteral("boat_movement_preview.bmp")), "BMP"),
-                "movement preview screenshot");
-        previewItem->setCheckState(0, Qt::Unchecked);
-        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() == 0,
-            "unchecking preview removes only temporary movement graphics");
-        ++movementPreviews;
+        require((*it)->data(0, Qt::UserRole + 5).toString().isEmpty(),
+            "movement diagnostics do not create another object reference");
     }
-    require(movementPreviews > 0, "moving elements expose a preview in the common object tree");
     const auto simulationCamera = simulationScene->cameraView();
     testWorkspaceTabs(window, *simulationScene, evidence, report);
     tabs->setCurrentIndex(0);
     require(simulationScene->cameraView().position == simulationCamera.position,
         "inspection never changes simulation camera");
     const auto treeBefore = tree->topLevelItemCount();
-    QFile changed(copy.filePath(QStringLiteral("modell.json")));
+    QFile changed(copy.filePath(QStringLiteral("bootsmodell.json")));
     require(changed.open(QIODevice::WriteOnly | QIODevice::Truncate), "change captured fixture");
     changed.write("{");
     changed.close();
@@ -1749,7 +3193,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         "selected element is opaque");
     const auto singleFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source"));
     segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/modell.json")).toStdWString()),
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/bootsmodell.json")).toStdWString()),
         std::filesystem::path(singleFolder.toStdWString()));
     window.setModelFolder(singleFolder);
     window.selectInitialModel(QStringLiteral("quader"));
@@ -1761,7 +3205,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
         require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
             "schema 3 must not retain competing source references");
-        if ((*it)->text(0).startsWith(QStringLiteral("Quellmesh"))) ++singleSources;
+        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) ++singleSources;
     }
     require(singleSources == 1 && inspectionScene->property("hasInspectionMesh").toBool(),
         "strict single-source model renders through the same GUI pipeline");
@@ -1769,7 +3213,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         "strict single-source render screenshot");
     const auto derivedFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source-derived"));
     segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/modell.json")).toStdWString()),
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/bootsmodell.json")).toStdWString()),
         std::filesystem::path(derivedFolder.toStdWString()), true);
     window.setModelFolder(derivedFolder);
     window.selectInitialModel(QStringLiteral("optimist"));
@@ -1777,28 +3221,22 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         && inspectionScene->property("hasInspectionMesh").toBool(); },
         "derived single-source boat GUI load timeout");
     QSet<QString> sourceOwners;
-    QTreeWidgetItem* derivedVolume = nullptr;
-    QTreeWidgetItem* derivedMass = nullptr;
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
         require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
             "derived boat has no competing sources");
-        if ((*it)->text(0).startsWith(QStringLiteral("Quellmesh"))) {
+        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) {
             const auto owners = (*it)->data(0,Qt::UserRole+1).toStringList();
             require(owners.size() == 1 && !sourceOwners.contains(owners.front()),
                 "derived boat exposes exactly one source per element");
             sourceOwners.insert(owners.front());
         }
-        if ((*it)->text(0) == QStringLiteral("hydrostatik_volumen")) derivedVolume = *it;
-        if ((*it)->text(0) == QStringLiteral("massen_mesh")) derivedMass = *it;
+        require((*it)->text(0) != QStringLiteral("hydrostatik_volumen")
+                && (*it)->text(0) != QStringLiteral("massen_mesh"),
+            "physical derivations are not duplicate object references");
     }
-    require(derivedVolume && derivedMass && sourceOwners.size() > 1,
-        "plane-cut volume and open mass shell appear as derived data under elements");
-    require(derivedVolume->toolTip(0).contains(QStringLiteral("z_schnitt"))
-        && derivedMass->toolTip(0).contains(QStringLiteral("ohne_deckflaeche")),
-        "derived geometry controls explain the actual Core derivation");
+    require(sourceOwners.size() > 1, "derived model retains existing canonical objects");
     tree->expandAll();
-    derivedVolume->setCheckState(0,Qt::Checked);
-    derivedVolume->setSelected(true);
+    tree->topLevelItem(0)->setSelected(true);
     inspectionScene->renderNow();
     require(values->topLevelItemCount() > 0, "derived element selection exposes all properties");
     bool derivedUseListed = false;
@@ -1806,7 +3244,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         if ((*it)->text(2) == QStringLiteral("Verwendungen")
             && (*it)->text(3).contains(QStringLiteral("hydrostatik_volumen (Ableitung)")))
             derivedUseListed = true;
-    require(derivedUseListed, "source usage table includes derived physical uses, not just unchanged copies");
+    require(derivedUseListed, "property table retains derived physical uses");
     require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3_derived.bmp")), "BMP"),
         "single-source boat with actual derived volume screenshot");
     tree->clearSelection();
@@ -2464,7 +3902,7 @@ void testBodyFixedCamera(const QString& models, const QString& evidencePath)
     require(entry, "camera test requires 420");
     const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
         catalog, entry->modell_id, entry->modell_fassung));
-    const auto path = QDir(models).filePath(QStringLiteral("420/modell.json"));
+    const auto path = QDir(models).filePath(QStringLiteral("420/bootsmodell.json"));
     const auto validation = validateModel(path);
     require(validation.valid, "420 camera test validation");
     std::atomic_bool cancellation{false};
@@ -2618,7 +4056,7 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
         require(entry != nullptr, "motion model absent");
         const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
             catalog, entry->modell_id, entry->modell_fassung));
-        const auto path = QDir(models).filePath(id + QStringLiteral("/modell.json"));
+        const auto path = QDir(models).filePath(id + QStringLiteral("/bootsmodell.json"));
         const auto validation = validateModel(path);
         QString error;
         auto live = LiveSimulation::create(path, validation, 1.0, 0.01, false, &error, {},
@@ -2909,7 +4347,7 @@ int main(int argc, char** argv)
             require(entry, "Performance model exists");
             const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
                 catalog, entry->modell_id, entry->modell_fassung));
-            const auto path = QDir(app.arguments()[2]).filePath(QStringLiteral("folkeboot/modell.json"));
+            const auto path = QDir(app.arguments()[2]).filePath(QStringLiteral("folkeboot/bootsmodell.json"));
             QString error;
             auto live = LiveSimulation::create(path, validateModel(path), .1, .01, false, &error);
             require(live != nullptr, "Performance reference live create");
@@ -3192,7 +4630,7 @@ int main(int argc, char** argv)
             for (const QString& id : {QStringLiteral("420"), QStringLiteral("folkeboot")}) {
                 const auto* entry = catalog.eintrag(id.toStdString());
                 require(entry, "Performance reference model missing.");
-                const auto path = QDir(app.arguments()[2]).filePath(id + QStringLiteral("/modell.json"));
+                const auto path = QDir(app.arguments()[2]).filePath(id + QStringLiteral("/bootsmodell.json"));
                 const auto validation = validateModel(path);
                 require(validation.valid, "Performance reference model invalid.");
                 const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
@@ -3566,6 +5004,32 @@ int main(int argc, char** argv)
             std::cout << "Column separators and resize cursor passed in all three workspaces.\n";
             return 0;
         }
+        if (app.arguments().size() == 2
+            && app.arguments()[1] == QStringLiteral("--inspection-pointer-only")) {
+            testInspectionCameraAndPointerRouting();
+            require(renderErrors->count == 0, "VTK error in inspection pointer test");
+            std::cout << "{\"inspectionCameraAxesAndPointerRouting\":true}\n";
+            return 0;
+        }
+        if (app.arguments().size() == 3
+            && app.arguments()[1] == QStringLiteral("--unified-montage-integration")) {
+            runUnifiedMontageIntegration(app.arguments()[2]);
+            require(renderErrors->count == 0, "VTK error in unified object montage");
+            return 0;
+        }
+        if (app.arguments().size() == 4
+            && app.arguments()[1] == QStringLiteral("--sail-configurator-integration")) {
+            require(QDir().mkpath(app.arguments()[3]),
+                "create sail configurator integration evidence folder");
+            copyAndRunSailConfiguratorIntegration(app.arguments()[2], app.arguments()[3]);
+            return 0;
+        }
+        if (app.arguments().size() == 4
+            && app.arguments()[1] == QStringLiteral("--sail-configurator-phase")) {
+            runSailConfiguratorPhase(app.arguments()[2], app.arguments()[3]);
+            require(renderErrors->count == 0, "VTK error in sail configurator phase");
+            return 0;
+        }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--inspection-only")) {
             QDir evidence(app.arguments()[3]);
             require(evidence.mkpath(QStringLiteral(".")), "inspection evidence directory");
@@ -3621,7 +5085,7 @@ int main(int argc, char** argv)
         QHash<QString, QString> groups;
         for (const auto& part : parts) groups.insert(part.elementId, part.group);
         scene.setElementGroups(groups);
-        const auto modelPath = QDir(app.arguments()[1]).filePath(QStringLiteral("folkeboot/modell.json"));
+        const auto modelPath = QDir(app.arguments()[1]).filePath(QStringLiteral("folkeboot/bootsmodell.json"));
         const auto validation = validateModel(modelPath);
         require(validation.valid, "Folkeboot validation");
         std::atomic_bool cancellation{false};

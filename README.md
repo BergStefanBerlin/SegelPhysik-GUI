@@ -70,6 +70,25 @@ Set `SEGELPHYSIK_CORE_SOURCE_DIR` to the local Core checkout if it is stored
 elsewhere. The GUI links the Core target directly; the Core CLI is not required
 at runtime.
 
+Model data directories are named `modells` (formerly `meshes`). The Core
+resolves file references from each `bootsmodell.json`. Core stores each
+component's `setting` directly beside its existing `id` and `Darstellung`,
+without additional object IDs or a second component list. Shared revision
+metadata remains in `konfiguration`. Source/lookup references occur once
+at the sail element; the Fock offset is derived from its pose. Unrelated
+model fields and other components are preserved. Mounting poses remain separate from operating
+angles. Saving is atomic and uses `bootsmodell.lock`; revisions and source
+checks still guard against conflicts and changed geometry. The former
+`segelkonfiguration.json` is migrated without resetting sail placement.
+
+The stored boat base pose places sails and boom amidships, with clews aft;
+0 degrees is this physical opening reference, not an identity quaternion.
+Mast/forestay inclination and sail camber are preserved.
+
+The GUI has no separate model-directory parser or component configuration
+file. Renaming data directories does not rename API mesh
+fields or alter the geometry and lookup tables.
+
 The performance implementation requires Core C-0.10's
 `Modellaufbereitung` API. Each live run owns separate persistent worker and
 display contexts: stepping and historical JSON generation reuse exact prepared
@@ -79,6 +98,8 @@ internal context; no solver settings or integration steps are reduced.
 See the [performance plan and evidence](Umsetzungsplaene/Umsetzungsplan_G-0.11.md).
 
 The dynamic camera reference is located in the right-hand display panel.
+In axis-fixed boat-selection views, dragging the background pans the image
+in the mouse direction, both horizontally and vertically.
 The auxiliary side/rear/top views are labelled "Analyseansichten".
 Without saved mode-specific settings, the static workspace starts with
 compass/attitude instruments off and analysis views on; the dynamic workspace
@@ -237,12 +258,12 @@ The model-catalog tests accept both legacy and migrated schema-3 reference
 folders. Existing schema-3 sources retain their explicit derivations rather
 than being downgraded to schema 2; legacy fixtures still exercise conversion
 and explicit conflict handling.
-Geometry is selected directly in the right object tree; there is no separate
-mesh selector. **Quellmesh** is nested under its element and lists original
-geometry, deduplicated by the Core source identity per element.
-**Abgeleitete Daten** under the same element lists computed geometry
-and its origin/derivation. Select geometry nodes or check them to keep additional
-geometry visible; derived overlays use gold, source geometry retains its colors.
+The right object tree contains exactly one reference per existing object.
+Only its current display geometry is rendered; a confirmed or temporary
+mounting pose replaces that object's geometry instead of adding another
+source instance. Physical source roles and derivation metadata remain in
+the Core and property table, not as duplicate objects or selectable overlays.
+Ambiguous current display references produce an explicit diagnostic.
 Unselected parts remain context. Movement definitions are properties of the
 object, not a separate movement tab.
 Selected elements are opaque, the remaining context uses opacity 0.15.
@@ -289,11 +310,11 @@ implemented in this step.
 Schemas `"2"` and `"3"` are defined in the Core
 [model specification](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
 The Core target `segelphysik_konvertieren` converts an existing model into
-`modell.json` and `boot.obj` in a **new** destination folder:
+`bootsmodell.json` and `boot.obj` in a **new** destination folder:
 
 ```powershell
 & "C:\spdeps\gui-workspace-tabs\segelphysik-core\Release\segelphysik_konvertieren.exe" `
-  "C:\path\to\source\modell.json" "C:\path\to\new-model"
+  "C:\path\to\source\bootsmodell.json" "C:\path\to\new-model"
 ```
 
 The destination's parent must exist. Existing destinations are rejected;
@@ -516,7 +537,7 @@ Launch `C:\spdeps\guibuild\Release\segelphysik_gui.exe` (with
 `C:\spdeps\installed\x64-windows\bin` on `PATH`). The build copies the Qt
 platform and style plugins next to the executable.
 
-**Model folder.** The GUI lists every `modell.json` in the model folder and in
+**Model folder.** The GUI lists every `bootsmodell.json` in the model folder and in
 its direct subfolders automatically, using the model `name` (fallback `id`,
 then folder name). Selecting an entry displays it immediately; the last model
 is reopened on the next start. The folder is watched: new, removed or renamed

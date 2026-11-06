@@ -110,7 +110,7 @@ void testFolderChanges(const QString& referenceFolder)
         dir.filePath(QStringLiteral("quader")));
     require(dir.mkpath(QStringLiteral("kaputt")), "mkdir failed.");
     {
-        QFile file(dir.filePath(QStringLiteral("kaputt/modell.json")));
+        QFile file(dir.filePath(QStringLiteral("kaputt/bootsmodell.json")));
         require(file.open(QIODevice::WriteOnly), "Cannot write broken model.");
         file.write("{}");
     }
@@ -139,9 +139,14 @@ void testFolderChanges(const QString& referenceFolder)
     const auto fixedTree = segelphysik::inspectionTreeJson(*opened.inspection, "modell");
     const auto fixedMesh = segelphysik::inspectionMeshJson(*opened.inspection, "darstellung");
     {
-        QFile file(dir.filePath(QStringLiteral("quader/modell.json")));
-        require(file.open(QIODevice::Append), "Cannot modify model.");
-        file.write("\n");
+        QFile file(dir.filePath(QStringLiteral("quader/bootsmodell.json")));
+        require(file.open(QIODevice::ReadOnly), "Cannot read model.");
+        auto model = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        model.insert(QStringLiteral("name"), QStringLiteral("Changed reference model"));
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "Cannot modify model.");
+        const auto bytes = QJsonDocument(model).toJson();
+        require(file.write(bytes) == bytes.size(), "Cannot write changed model.");
     }
     bool rejected = false;
     try {
@@ -159,7 +164,7 @@ void testFolderChanges(const QString& referenceFolder)
         "Reloaded catalog did not report a new model version.");
     static_cast<void>(loadDisplayData(*snapshot.catalog, quader->id, quader->version));
 
-    require(QFile::remove(dir.filePath(QStringLiteral("kaputt/modell.json"))),
+    require(QFile::remove(dir.filePath(QStringLiteral("kaputt/bootsmodell.json"))),
         "Cannot remove test model.");
     require(loadCatalog(root.path()).entries.size() == 1, "Removed model is still listed.");
 }
@@ -188,8 +193,8 @@ void testIdentityIndependentOfRole(const QString& referenceFolder)
     QTemporaryDir root;
     require(root.isValid(), "Temporary neutral-ID model folder.");
     const auto target = QDir(root.path()).filePath(QStringLiteral("v2"));
-    prepareUnifiedModel(QDir(referenceFolder).filePath(QStringLiteral("420/modell.json")), target);
-    QFile file(QDir(target).filePath(QStringLiteral("modell.json")));
+    prepareUnifiedModel(QDir(referenceFolder).filePath(QStringLiteral("420/bootsmodell.json")), target);
+    QFile file(QDir(target).filePath(QStringLiteral("bootsmodell.json")));
     require(file.open(QIODevice::ReadOnly), "Read neutral-ID source fixture.");
     const auto original = QJsonDocument::fromJson(file.readAll());
     file.close();
@@ -309,11 +314,11 @@ void testSingleSourceModels(const QString& folder)
 void testProblemParsing()
 {
     const auto problems = problemsFromText(QStringLiteral(
-        "CORE-MOD-0007 [modell.json, Gruppe rigg, Element Spriet]: Ueberschneidung; Vergleich mit Mast\n"
+        "CORE-MOD-0007 [bootsmodell.json, Gruppe rigg, Element Spriet]: Ueberschneidung; Vergleich mit Mast\n"
         "freier Text ohne Kennung"));
     require(problems.size() == 2, "Two problems expected.");
     require(problems[0].code == QStringLiteral("CORE-MOD-0007"), "Code not parsed.");
-    require(problems[0].location == QStringLiteral("modell.json, Gruppe rigg, Element Spriet"),
+    require(problems[0].location == QStringLiteral("bootsmodell.json, Gruppe rigg, Element Spriet"),
         "Location not parsed.");
     require(problems[0].message.startsWith(QStringLiteral("Ueberschneidung")), "Message not parsed.");
     require(!problems[0].summary.isEmpty() && !problems[0].remedy.isEmpty(),

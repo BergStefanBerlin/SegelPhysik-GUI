@@ -139,7 +139,7 @@ void testStationaryRun(const QString& modelPath, const ModelValidation& validati
     checkResidual(framedContext, QStringLiteral("residuum_kraft_welt_n"));
     checkResidual(framedContext, QStringLiteral("residuum_moment_modell_nm"));
     const auto movementPath = QDir(QFileInfo(modelPath).absolutePath())
-        .filePath(QStringLiteral("../420/modell.json"));
+        .filePath(QStringLiteral("../420/bootsmodell.json"));
     const auto movementValidation = validateModel(movementPath);
     require(movementValidation.valid, "Stationary movement reference model is invalid.");
     for (bool active : {false, true}) {
@@ -609,7 +609,7 @@ void testDrive(const QString& modelPath, const ModelValidation& validation)
 void testMovementInput(const QString& referenceModelPath)
 {
     const auto modelPath = QDir(QFileInfo(referenceModelPath).absolutePath())
-        .filePath(QStringLiteral("../420/modell.json"));
+        .filePath(QStringLiteral("../420/bootsmodell.json"));
     const auto validation = validateModel(modelPath);
     require(validation.valid, "420 movement model was rejected by Core.");
 
@@ -662,7 +662,7 @@ void testMovementInput(const QString& referenceModelPath)
 void testDynamicForce(const QString& referenceModelPath)
 {
     const auto modelPath = QDir(QFileInfo(referenceModelPath).absolutePath())
-        .filePath(QStringLiteral("../420/modell.json"));
+        .filePath(QStringLiteral("../420/bootsmodell.json"));
     const auto validation = validateModel(modelPath);
     require(validation.valid, "Dynamic force movement model rejected.");
     QJsonObject configuration{
@@ -892,7 +892,7 @@ void testPreparedLiveParity(const QString& referencePath)
 {
     const QDir models(QFileInfo(referencePath).dir().absoluteFilePath(QStringLiteral("..")));
     for (const QString id : {QStringLiteral("420"), QStringLiteral("folkeboot")}) {
-        const auto path = models.filePath(id + QStringLiteral("/modell.json"));
+        const auto path = models.filePath(id + QStringLiteral("/bootsmodell.json"));
         const auto validation = validateModel(path);
         const auto model = segelphysik::lade_modell(std::filesystem::path(path.toStdWString()));
         auto raw = segelphysik::testantrieb_start(model, {},

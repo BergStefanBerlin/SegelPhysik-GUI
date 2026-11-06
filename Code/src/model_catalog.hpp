@@ -32,7 +32,7 @@ struct ModelEntry {
     QString name;
     QString description;
     QString version;   // Modellfassung laut Core
-    QString path;      // vom Core aufgelöste modell.json, für den Simulationslauf
+    QString path;      // vom Core aufgelöste bootsmodell.json, für den Simulationslauf
     bool usable = false;
     int errorCount = 0;
     QStringList diagnostics;

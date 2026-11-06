@@ -377,6 +377,18 @@ MainWindow::MainWindow(QWidget* parent)
     auto* catalogLayout = new QVBoxLayout(catalogPanel);
     catalogLayout->setContentsMargins(14, 18, 14, 14);
     catalogLayout->setSpacing(10);
+    auto* cameraCaption = new QLabel(QStringLiteral("KAMERA"));
+    cameraCaption->setObjectName(QStringLiteral("caption"));
+    inspectionCameraCombo_ = new QComboBox;
+    inspectionCameraCombo_->setObjectName(QStringLiteral("inspectionCameraPreset"));
+    inspectionCameraCombo_->addItem(QStringLiteral("Freie Ansicht (Maus)"), QString());
+    for (const auto& preset : navigation::cameraPresets())
+        inspectionCameraCombo_->addItem(QString::fromUtf8(preset.label),
+            QString::fromLatin1(preset.id));
+    inspectionCameraCombo_->setEnabled(false);
+    inspectionCameraCombo_->setToolTip(QStringLiteral(
+        "Sechs achsenfeste Ansichten sind orthografisch und erlauben die Segelbearbeitung. "
+        "Schräge Ansichten dienen nur der Betrachtung."));
     auto* catalogCaption = new QLabel(QStringLiteral("MODELLE"));
     catalogCaption->setObjectName(QStringLiteral("caption"));
     folderLabel_ = new QLabel(QStringLiteral("Kein Modellordner"));
@@ -387,6 +399,8 @@ MainWindow::MainWindow(QWidget* parent)
     modelList_->setSelectionMode(QAbstractItemView::SingleSelection);
     modelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     modelList_->setTextElideMode(Qt::ElideRight);
+    catalogLayout->addWidget(cameraCaption);
+    catalogLayout->addWidget(inspectionCameraCombo_);
     catalogLayout->addWidget(catalogCaption);
     catalogLayout->addWidget(folderLabel_);
     catalogLayout->addWidget(modelList_, 1);
@@ -396,6 +410,11 @@ MainWindow::MainWindow(QWidget* parent)
     workspaceStack_->setObjectName(QStringLiteral("workspaceStack"));
     inspection_ = new BoatInspection;
     workspaceStack_->addWidget(inspection_);
+    connect(inspectionCameraCombo_, &QComboBox::activated, this, [this] {
+        QString error;
+        if (!inspection_->setCameraPreset(inspectionCameraCombo_->currentData().toString(), &error))
+            showError(QStringLiteral("Kameraansicht"), error);
+    });
     auto* simulationPanel = new QWidget;
     auto* simulationLayout = new QHBoxLayout(simulationPanel);
     simulationLayout->setContentsMargins(0, 0, 0, 0);
@@ -1983,6 +2002,7 @@ void MainWindow::openModel(const QString& id)
     closeGraphics();
     modelId_ = entry->id;
     cameraCombo_->setEnabled(false);
+    inspectionCameraCombo_->setEnabled(false);
     modelVersion_ = entry->version;
     modelPath_ = entry->path;
     modelName_ = entry->name.isEmpty() ? entry->id : entry->name;
@@ -2085,7 +2105,7 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     const ModelValidation& validation)
 {
     QString error;
-    inspection_->setSnapshot(opened->data.inspection);
+    inspection_->setSnapshot(opened->data.inspection, catalog_.catalog);
     scene_->setElementGroups(opened->data.elementGroups);
     hydrodynamicRoles_ = opened->data.hydrodynamicRoles;
     scene_->setHydrodynamicRoles(hydrodynamicRoles_);
@@ -2113,9 +2133,19 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
         }
     }
     cameraCombo_->setEnabled(true);
+    inspectionCameraCombo_->setEnabled(!opened->parts.isEmpty());
     {
         const QSignalBlocker blocker(cameraCombo_);
         cameraCombo_->setCurrentIndex(0);
+    }
+    {
+        const QSignalBlocker blocker(inspectionCameraCombo_);
+        const int inspectionPreset = inspectionCameraCombo_->findData(QStringLiteral("backbord"));
+        inspectionCameraCombo_->setCurrentIndex(inspectionPreset < 0 ? 0 : inspectionPreset);
+    }
+    if (!opened->parts.isEmpty()
+        && !inspection_->setCameraPreset(QStringLiteral("backbord"), &error)) {
+        showError(QStringLiteral("Kameraansicht"), error);
     }
     initialReferences(opened->data);
     applyGraphicsProfile();

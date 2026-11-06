@@ -48,7 +48,7 @@ public:
     ~MainWindow() override;
 
     void setModelFolder(const QString& folder);
-    // Modell-ID oder Pfad einer modell.json; wird nach dem Katalogabruf
+    // Modell-ID oder Pfad einer bootsmodell.json; wird nach dem Katalogabruf
     // ausgewertet. Leer: zuletzt gewähltes oder erstes verwendbares Modell.
     void selectInitialModel(const QString& preferred);
 
@@ -148,6 +148,7 @@ private:
     QPushButton* chooseFolderButton_ = nullptr;
     QListWidget* modelList_ = nullptr;
     QLabel* folderLabel_ = nullptr;
+    QComboBox* inspectionCameraCombo_ = nullptr;
     QCheckBox* realtimeCheck_ = nullptr;
     QFileSystemWatcher* folderWatcher_ = nullptr;
     QTimer* rescanTimer_ = nullptr;
