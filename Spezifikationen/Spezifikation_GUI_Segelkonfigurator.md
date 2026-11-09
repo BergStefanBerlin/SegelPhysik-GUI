@@ -130,7 +130,7 @@ Stand aktiv, die fehlgeschlagene Vorschau wird zurueckgenommen und der
 Fehler sichtbar gemeldet. Keine Erfolgsmeldung oder stiller Reset.
 
 Auf ausdruecklichen Nutzerauftrag vom 06.11.2026, 14:15 Uhr wird die
-Konfiguration in `bootsmodell.json` integriert; der bisherige Dateiname
+Konfiguration in `modells_information.json` integriert; der bisherige Dateiname
 `modell.json` und die separate `segelkonfiguration.json` werden abgeloest.
 Die Nutzerpraezisierung vom 06.11.2026, 14:45 Uhr legt die Einstellungen
 direkt am jeweiligen bestehenden Element fest: `setting` steht neben

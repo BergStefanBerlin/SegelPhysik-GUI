@@ -415,7 +415,7 @@ void copyClean420Fixture(const QString& modelRoot, const QString& fixtureRoot)
         const auto relative = it->path().lexically_relative(sourceModel);
         const auto name = it->path().filename().wstring();
         if (name == L"segelkonfiguration.json" || name == L"segelkonfiguration.lock"
-            || name == L"bootsmodell.lock") {
+            || name == L"modells_information.lock") {
             if (it->is_directory()) it.disable_recursion_pending();
             continue;
         }
@@ -432,7 +432,7 @@ void copyClean420Fixture(const QString& modelRoot, const QString& fixtureRoot)
                 std::filesystem::copy_options::overwrite_existing);
         }
     }
-    QFile model(QDir(fixtureRoot).filePath(QStringLiteral("420/bootsmodell.json")));
+    QFile model(QDir(fixtureRoot).filePath(QStringLiteral("420/modells_information.json")));
     require(model.open(QIODevice::ReadOnly), "read copied boat model");
     auto document = withoutComponentSettings(QJsonDocument::fromJson(model.readAll()).object(), true);
     model.close();
@@ -460,7 +460,7 @@ std::pair<int, int> compareCopied420Hashes(const QString& modelRoot, const QStri
         const auto relative = it->path().lexically_relative(sourceModel);
         const auto name = it->path().filename().wstring();
         if (name == L"segelkonfiguration.json" || name == L"segelkonfiguration.lock"
-            || name == L"bootsmodell.lock") continue;
+            || name == L"modells_information.lock") continue;
         const auto relativeText = relative.generic_wstring();
         const bool lookupProduct = relativeText.find(L"LookUp/") != std::wstring::npos
             || relativeText.find(L"LookUp\\") != std::wstring::npos;
@@ -474,7 +474,7 @@ std::pair<int, int> compareCopied420Hashes(const QString& modelRoot, const QStri
         require(source.good() && copied.good(), "source and isolated fixture file are readable");
         const std::string sourceBytes((std::istreambuf_iterator<char>(source)), {});
         const std::string copiedBytes((std::istreambuf_iterator<char>(copied)), {});
-        if (name == L"bootsmodell.json") {
+        if (name == L"modells_information.json") {
             auto original = QJsonDocument::fromJson(QByteArray(sourceBytes.data(),
                 static_cast<qsizetype>(sourceBytes.size()))).object();
             auto clean = QJsonDocument::fromJson(QByteArray(copiedBytes.data(),
@@ -608,7 +608,7 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
     const auto destination = std::filesystem::path(copies.path().toStdWString());
     for (const auto& folder : std::filesystem::directory_iterator(source)) {
         if (!folder.is_directory()
-            || !std::filesystem::exists(folder.path() / L"bootsmodell.json")) continue;
+            || !std::filesystem::exists(folder.path() / L"modells_information.json")) continue;
         std::filesystem::copy(folder.path(), destination / folder.path().filename(),
             std::filesystem::copy_options::recursive);
     }
@@ -616,6 +616,7 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
         segelphysik::modellkatalog(destination));
     int boats = 0;
     int sails = 0;
+    int renderedModels = 0;
     for (const auto& entry : catalog->eintraege()) {
         auto snapshot = segelphysik::readModelInspection(
             *catalog, entry.modell_id, entry.modell_fassung);
@@ -630,15 +631,18 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
         widget.setSnapshot(snapshot, catalog);
         widget.resize(1400, 900);
         widget.show();
+        widget.scene()->renderNow();
+        require(!inspectionGeometryBounds(widget.scene()).empty(),
+            "every current Core model renders visible GUI geometry");
+        ++renderedModels;
         auto* tree = widget.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
         require(tree != nullptr, "canonical object tree exists");
         QSet<QString> ids;
         for (QTreeWidgetItemIterator it(tree); *it; ++it) {
             const auto* item = *it;
-            require(!item->text(0).contains(QStringLiteral("Bestandsquellen"))
-                    && !item->text(0).startsWith(QStringLiteral("Quellmesh"))
-                    && item->text(0) != QStringLiteral("Abgeleitete Daten"),
-                "all models expose only current object references");
+            if (item->data(0, Qt::UserRole + 2).isValid())
+                require(!item->toolTip(0).isEmpty(),
+                    "all models expose geometry provenance in the object tree");
             if (item->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")) continue;
             const auto elementIds = item->data(0, Qt::UserRole + 1).toStringList();
             require(elementIds.size() == 1 && !ids.contains(elementIds.front()),
@@ -708,10 +712,13 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
                 != QStringLiteral("Core-Konfiguration fehlt oder ordnet dem Segel keine eindeutige Referenz zu."),
             "every boat reopens its confirmed configuration");
     }
+    require(renderedModels == static_cast<int>(catalog->eintraege().size()),
+        "GUI rendered every current model in the catalog");
     require(boats == 3 && sails == 5, "all three current boats and five sails exercised");
     require(sourceHashes() == originalHashes,
         "original model directory remains byte-identical with no files added or removed");
-    std::cout << "Unified GUI montage: " << boats << " boats, " << sails << " sails\n";
+    std::cout << "Unified GUI montage: " << renderedModels << " models, "
+              << boats << " boats, " << sails << " sails\n";
 }
 
 void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
@@ -784,7 +791,7 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         invokeSailContextAction(tree, QStringLiteral("Fock"),
             QStringLiteral("Manuelles Verschieben"));
         const auto configPath = QDir(fixtureRoot).filePath(
-            QStringLiteral("420/bootsmodell.json"));
+            QStringLiteral("420/modells_information.json"));
         QFile corrupt(configPath);
         require(corrupt.open(QIODevice::ReadOnly), "read isolated model before corrupting config");
         auto corruptDocument = QJsonDocument::fromJson(corrupt.readAll()).object();
@@ -1328,7 +1335,7 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
 
 #ifdef _WIN32
     const auto lockPath = std::filesystem::path(fixtureRoot.toStdWString())
-        / L"420" / L"bootsmodell.lock";
+        / L"420" / L"modells_information.lock";
     const HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     require(lock != INVALID_HANDLE_VALUE,
@@ -1656,7 +1663,7 @@ void test420Dynamic(const QString& models, const segelphysik::Modellkatalog& cat
     require(entry != nullptr, "420 absent from catalog");
     const auto parts = toDisplayParts(
         segelphysik::darstellungsgeometrie(catalog, entry->modell_id, entry->modell_fassung));
-    const auto modelPath = QDir(models).filePath(QStringLiteral("420/bootsmodell.json"));
+    const auto modelPath = QDir(models).filePath(QStringLiteral("420/modells_information.json"));
     const auto validation = validateModel(modelPath);
     require(validation.valid, "420 validation");
     QString error;
@@ -3112,12 +3119,25 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     tree->clearSelection();
     const auto inspectionCamera = inspectionScene->cameraView();
     QSet<QString> elementIds;
+    QSet<QString> sourceIds;
+    int geometryNodes = 0;
+    int movementPreviews = 0;
+    bool derivedGeometry = false;
+    QTreeWidgetItem* firstGeometry = nullptr;
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
         auto* item = *it;
-        require(!item->text(0).contains(QStringLiteral("Bestandsquellen"))
-                && !item->text(0).startsWith(QStringLiteral("Quellmesh"))
-                && item->text(0) != QStringLiteral("Abgeleitete Daten"),
-            "object tree contains no duplicate source or derived references");
+        if (item->text(0) == QStringLiteral("Abgeleitete Daten") && item->childCount() > 0)
+            derivedGeometry = true;
+        if (item->data(0, Qt::UserRole + 2).isValid()) {
+            ++geometryNodes;
+            require(!item->toolTip(0).isEmpty(), "geometry provenance is visible");
+            if (!firstGeometry) firstGeometry = item;
+            if (item->text(0).startsWith(QStringLiteral("Quellmesh"))) {
+                const auto key = item->parent()->text(0) + item->text(0);
+                require(!sourceIds.contains(key), "source reused by roles is listed only once");
+                sourceIds.insert(key);
+            }
+        }
         if (item->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")) continue;
         const auto ids = item->data(0, Qt::UserRole + 1).toStringList();
         require(ids.size() == 1 && !elementIds.contains(ids.front()),
@@ -3132,20 +3152,53 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
             "current object selection preserves camera");
     }
     require(!elementIds.isEmpty(), "canonical object tree retains model elements");
+    require(geometryNodes > 0 && !sourceIds.isEmpty(),
+        "source geometry nodes are visible under their model elements");
+    require(derivedGeometry, "derived geometry appears in its own element branch");
     require(window.grab().save(evidence.filePath(QStringLiteral("boat_unified_source.bmp")), "BMP"),
         "current object model screenshot");
     tree->clearSelection();
+    require(firstGeometry != nullptr, "selectable geometry node exists");
+    firstGeometry->setSelected(true);
+    QApplication::processEvents();
+    inspectionScene->renderNow();
+    require(inspectionScene->property("hasInspectionMesh").toBool(),
+        "selected source geometry remains renderable");
+    const auto geometryCamera = inspectionScene->cameraView();
+    require(geometryCamera.position == inspectionCamera.position
+            && geometryCamera.focalPoint == inspectionCamera.focalPoint,
+        "geometry selection preserves camera");
+    firstGeometry->setCheckState(0, Qt::Checked);
+    require(inspectionScene->property("hasInspectionMesh").toBool(),
+        "checked geometry remains renderable without a selected node");
+    firstGeometry->setCheckState(0, Qt::Unchecked);
+    tree->clearSelection();
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        require((*it)->data(0, Qt::UserRole + 5).toString().isEmpty(),
-            "movement diagnostics do not create another object reference");
+        const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
+        if (id.isEmpty()) continue;
+        ++movementPreviews;
+        const auto previewCamera = inspectionScene->cameraView();
+        (*it)->setCheckState(0, Qt::Checked);
+        inspectionScene->renderNow();
+        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() > 0,
+            "checked movement preview is visible without changing simulation");
+        require(inspectionScene->cameraView().position == previewCamera.position
+                && inspectionScene->cameraView().focalPoint == previewCamera.focalPoint,
+            "movement preview preserves inspection camera");
+        require((*it)->toolTip(0).contains(QStringLiteral("Normal:")),
+            "movement preview explains pose colors");
+        (*it)->setCheckState(0, Qt::Unchecked);
+        require(inspectionScene->property("inspectionMovementPreviewCount").toInt() == 0,
+            "unchecking preview removes only temporary movement graphics");
     }
+    require(movementPreviews > 0, "moving elements expose a preview in the common object tree");
     const auto simulationCamera = simulationScene->cameraView();
     testWorkspaceTabs(window, *simulationScene, evidence, report);
     tabs->setCurrentIndex(0);
     require(simulationScene->cameraView().position == simulationCamera.position,
         "inspection never changes simulation camera");
     const auto treeBefore = tree->topLevelItemCount();
-    QFile changed(copy.filePath(QStringLiteral("bootsmodell.json")));
+    QFile changed(copy.filePath(QStringLiteral("modells_information.json")));
     require(changed.open(QIODevice::WriteOnly | QIODevice::Truncate), "change captured fixture");
     changed.write("{");
     changed.close();
@@ -3193,7 +3246,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         "selected element is opaque");
     const auto singleFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source"));
     segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/bootsmodell.json")).toStdWString()),
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/modells_information.json")).toStdWString()),
         std::filesystem::path(singleFolder.toStdWString()));
     window.setModelFolder(singleFolder);
     window.selectInitialModel(QStringLiteral("quader"));
@@ -3213,7 +3266,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
         "strict single-source render screenshot");
     const auto derivedFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source-derived"));
     segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/bootsmodell.json")).toStdWString()),
+        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/modells_information.json")).toStdWString()),
         std::filesystem::path(derivedFolder.toStdWString()), true);
     window.setModelFolder(derivedFolder);
     window.selectInitialModel(QStringLiteral("optimist"));
@@ -3902,7 +3955,7 @@ void testBodyFixedCamera(const QString& models, const QString& evidencePath)
     require(entry, "camera test requires 420");
     const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
         catalog, entry->modell_id, entry->modell_fassung));
-    const auto path = QDir(models).filePath(QStringLiteral("420/bootsmodell.json"));
+    const auto path = QDir(models).filePath(QStringLiteral("420/modells_information.json"));
     const auto validation = validateModel(path);
     require(validation.valid, "420 camera test validation");
     std::atomic_bool cancellation{false};
@@ -4056,7 +4109,7 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
         require(entry != nullptr, "motion model absent");
         const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
             catalog, entry->modell_id, entry->modell_fassung));
-        const auto path = QDir(models).filePath(id + QStringLiteral("/bootsmodell.json"));
+        const auto path = QDir(models).filePath(id + QStringLiteral("/modells_information.json"));
         const auto validation = validateModel(path);
         QString error;
         auto live = LiveSimulation::create(path, validation, 1.0, 0.01, false, &error, {},
@@ -4347,7 +4400,7 @@ int main(int argc, char** argv)
             require(entry, "Performance model exists");
             const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
                 catalog, entry->modell_id, entry->modell_fassung));
-            const auto path = QDir(app.arguments()[2]).filePath(QStringLiteral("folkeboot/bootsmodell.json"));
+            const auto path = QDir(app.arguments()[2]).filePath(QStringLiteral("folkeboot/modells_information.json"));
             QString error;
             auto live = LiveSimulation::create(path, validateModel(path), .1, .01, false, &error);
             require(live != nullptr, "Performance reference live create");
@@ -4630,7 +4683,7 @@ int main(int argc, char** argv)
             for (const QString& id : {QStringLiteral("420"), QStringLiteral("folkeboot")}) {
                 const auto* entry = catalog.eintrag(id.toStdString());
                 require(entry, "Performance reference model missing.");
-                const auto path = QDir(app.arguments()[2]).filePath(id + QStringLiteral("/bootsmodell.json"));
+                const auto path = QDir(app.arguments()[2]).filePath(id + QStringLiteral("/modells_information.json"));
                 const auto validation = validateModel(path);
                 require(validation.valid, "Performance reference model invalid.");
                 const auto parts = toDisplayParts(segelphysik::darstellungsgeometrie(
@@ -5085,7 +5138,7 @@ int main(int argc, char** argv)
         QHash<QString, QString> groups;
         for (const auto& part : parts) groups.insert(part.elementId, part.group);
         scene.setElementGroups(groups);
-        const auto modelPath = QDir(app.arguments()[1]).filePath(QStringLiteral("folkeboot/bootsmodell.json"));
+        const auto modelPath = QDir(app.arguments()[1]).filePath(QStringLiteral("folkeboot/modells_information.json"));
         const auto validation = validateModel(modelPath);
         require(validation.valid, "Folkeboot validation");
         std::atomic_bool cancellation{false};

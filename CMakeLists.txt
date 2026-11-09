@@ -275,8 +275,8 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_core_integration
         COMMAND segelphysik_gui_core_tests
-            "${SEGELPHYSIK_MODELLE_DIR}/quader/bootsmodell.json"
-            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/tests/testdata/stationaere_referenz/bootsmodell.json")
+            "${SEGELPHYSIK_MODELLE_DIR}/quader/modells_information.json"
+            "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/tests/testdata/stationaere_referenz/modells_information.json")
 
     add_executable(segelphysik_gui_catalog_tests
         Code/src/model_catalog.cpp
@@ -288,6 +288,12 @@ if(BUILD_TESTING)
         segelphysik_core)
     add_test(NAME gui_model_catalog
         COMMAND segelphysik_gui_catalog_tests
+            "${SEGELPHYSIK_MODELLE_DIR}")
+    add_test(NAME gui_420_model_02
+        COMMAND segelphysik_gui_catalog_tests --420-v02
+            "${SEGELPHYSIK_MODELLE_DIR}")
+    add_test(NAME gui_simple_models_02
+        COMMAND segelphysik_gui_catalog_tests --simple-v02
             "${SEGELPHYSIK_MODELLE_DIR}")
 
     add_executable(segelphysik_gui_mesh_tests

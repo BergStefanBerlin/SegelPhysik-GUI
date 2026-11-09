@@ -46,7 +46,7 @@ Historische Schritte und Nachweise bleiben unverändert.
 |---|---|---|---|---|
 | U-G-000067 Vertrag und Ausgangsstand | Gemeinsame Core-Zuordnungen, Feldinventar und Bewegungsdaten abgestimmt; vorhandene Regressionen und Grafikbaseline erhalten. | A-G-00075 bis A-G-00078 | Freigabe erteilt | Technisch abgeschlossen |
 | U-G-000068 Festes Meterraster | 0,5-m-Teilung, ganze Meter solid, Zwischenlinien dotted; Ursprung und runde Ränder erhalten. | A-G-00078 | U-G-000067 | Implementiert und DPI-geprüft |
-| U-G-000069 Gemeinsamer Objektbaum | Fachreiter entfernt, jedes Element einmal mit Quelle/Ableitungen; Bestandsquellen sichtbar gekennzeichnet. | A-G-00075 | U-G-000067, Core-Metadaten | Für alle elf migrierten Modelle technisch nachgewiesen |
+| U-G-000069 Gemeinsamer Objektbaum | Fachreiter entfernt, jedes Element einmal mit Quelle/Ableitungen; mehrere Geometriequellen verständlich gekennzeichnet. | A-G-00075 | U-G-000067, Core-Metadaten | Für alle elf migrierten Modelle technisch nachgewiesen |
 | U-G-000070 Vollständige Tabelle | Alle Fachinformationen und Bereichsspalte aus Core; vollständige Werte ohne Duplikate. | A-G-00076 | U-G-000069, Core-Metadaten | Implementiert und getestet |
 | U-G-000071 Bewegungsvorschau | Achse, Normal-/Referenzstellung und tatsächliche Extreme aus Core; keine Simulationsänderung. | A-G-00077 | U-G-000069, Core-Bewegungsdaten | Implementiert und getestet |
 | U-G-000072 Integration und Abnahme | Einzelquellen-/Altbestand, tatsächliche Teilnetze, Felder, Bewegung, Raster, Kamera/Snapshot und DPI geprüft. | A-G-00075 bis A-G-00078 | U-G-000068, U-G-000070, U-G-000071, Core-Nachweise | Gesamtmigration/Integration technisch nachgewiesen; persönliche Abnahme separat |

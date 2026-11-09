@@ -15,7 +15,7 @@
 
 namespace {
 
-const QString modelFileName = QStringLiteral("bootsmodell.json");
+const QString modelFileName = QStringLiteral("modells_information.json");
 
 std::filesystem::path nativePath(const QString& path)
 {

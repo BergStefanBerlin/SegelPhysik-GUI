@@ -48,7 +48,7 @@ public:
     ~MainWindow() override;
 
     void setModelFolder(const QString& folder);
-    // Modell-ID oder Pfad einer bootsmodell.json; wird nach dem Katalogabruf
+    // Modell-ID oder Pfad einer modells_information.json; wird nach dem Katalogabruf
     // ausgewertet. Leer: zuletzt gewähltes oder erstes verwendbares Modell.
     void selectInitialModel(const QString& preferred);
 

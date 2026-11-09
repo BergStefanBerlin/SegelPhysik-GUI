@@ -71,13 +71,13 @@ elsewhere. The GUI links the Core target directly; the Core CLI is not required
 at runtime.
 
 Model data directories are named `modells` (formerly `meshes`). The Core
-resolves file references from each `bootsmodell.json`. Core stores each
+resolves file references from each `modells_information.json`. Core stores each
 component's `setting` directly beside its existing `id` and `Darstellung`,
 without additional object IDs or a second component list. Shared revision
 metadata remains in `konfiguration`. Source/lookup references occur once
 at the sail element; the Fock offset is derived from its pose. Unrelated
 model fields and other components are preserved. Mounting poses remain separate from operating
-angles. Saving is atomic and uses `bootsmodell.lock`; revisions and source
+angles. Saving is atomic and uses `modells_information.lock`; revisions and source
 checks still guard against conflicts and changed geometry. The former
 `segelkonfiguration.json` is migrated without resetting sail placement.
 
@@ -310,11 +310,11 @@ implemented in this step.
 Schemas `"2"` and `"3"` are defined in the Core
 [model specification](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
 The Core target `segelphysik_konvertieren` converts an existing model into
-`bootsmodell.json` and `boot.obj` in a **new** destination folder:
+`modells_information.json` and `boot.obj` in a **new** destination folder:
 
 ```powershell
 & "C:\spdeps\gui-workspace-tabs\segelphysik-core\Release\segelphysik_konvertieren.exe" `
-  "C:\path\to\source\bootsmodell.json" "C:\path\to\new-model"
+  "C:\path\to\source\modells_information.json" "C:\path\to\new-model"
 ```
 
 The destination's parent must exist. Existing destinations are rejected;
@@ -537,7 +537,7 @@ Launch `C:\spdeps\guibuild\Release\segelphysik_gui.exe` (with
 `C:\spdeps\installed\x64-windows\bin` on `PATH`). The build copies the Qt
 platform and style plugins next to the executable.
 
-**Model folder.** The GUI lists every `bootsmodell.json` in the model folder and in
+**Model folder.** The GUI lists every `modells_information.json` in the model folder and in
 its direct subfolders automatically, using the model `name` (fallback `id`,
 then folder name). Selecting an entry displays it immediately; the last model
 is reopened on the next start. The folder is watched: new, removed or renamed

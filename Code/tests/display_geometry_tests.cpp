@@ -6,6 +6,9 @@
 #include <vtkCellArray.h>
 #include <vtkPolyData.h>
 
+#include <algorithm>
+
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -38,6 +41,53 @@ void testQuader(const QString& folder)
     require(part.mesh->GetNumberOfPoints() == 8, "quader mesh should have 8 points.");
     require(part.mesh->GetNumberOfPolys() == 12, "quader mesh should have 12 triangles.");
     require(!part.elementId.isEmpty(), "Display part without element id.");
+}
+
+void testSimpleModels(const QString& folder)
+{
+    const auto snapshot = loadCatalog(folder);
+    require(snapshot.catalog != nullptr, "Catalog missing.");
+    const QStringList modelIds{
+        QStringLiteral("bleistift"), QStringLiteral("kegel"),
+        QStringLiteral("kugel"), QStringLiteral("platte"),
+        QStringLiteral("pyramide"), QStringLiteral("quader"),
+        QStringLiteral("rolle"), QStringLiteral("unregelmaessig")};
+    for (const auto& modelId : modelIds) {
+        const auto entry = std::find_if(snapshot.entries.cbegin(), snapshot.entries.cend(),
+            [&](const auto& candidate) { return candidate.id == modelId; });
+        require(entry != snapshot.entries.cend(),
+            "Simple model missing from Core catalog.");
+        require(entry->usable && entry->errorCount == 0,
+            "Core rejected a simple model.");
+        const auto data = loadDisplayData(*snapshot.catalog, entry->id, entry->version);
+        const auto parts = toDisplayParts(data.geometry);
+        require(!parts.isEmpty(), "Simple model has no GUI display geometry.");
+        for (const auto& part : parts) {
+            require(part.mesh != nullptr && part.mesh->GetNumberOfPoints() > 0
+                    && part.mesh->GetNumberOfPolys() > 0,
+                "Simple model contains an empty GUI display mesh.");
+            require(!part.elementId.isEmpty(),
+                "Simple model display mesh has no element identity.");
+        }
+        std::cout << entry->id.toStdString() << ": " << parts.size()
+                  << " display part(s)\n";
+    }
+}
+
+void test420(const QString& folder)
+{
+    const auto snapshot = loadCatalog(folder);
+    require(snapshot.catalog != nullptr, "Catalog missing for 420 display geometry.");
+    const auto entry = std::find_if(snapshot.entries.cbegin(), snapshot.entries.cend(),
+        [](const auto& candidate) { return candidate.id == QStringLiteral("420"); });
+    require(entry != snapshot.entries.cend() && entry->usable,
+        "420 missing or unusable in display catalog.");
+    const auto data = loadDisplayData(*snapshot.catalog, entry->id, entry->version);
+    const auto parts = toDisplayParts(data.geometry);
+    require(!parts.isEmpty(), "420 has no GUI display geometry.");
+    for (const auto& part : parts)
+        require(part.mesh != nullptr && part.mesh->GetNumberOfPoints() > 0,
+            "420 display mesh has no points.");
 }
 
 void testEmptyGeometry()
@@ -83,6 +133,8 @@ int main(int argc, char* argv[])
     }
     try {
         testQuader(QString::fromLocal8Bit(argv[1]));
+        test420(QString::fromLocal8Bit(argv[1]));
+        testSimpleModels(QString::fromLocal8Bit(argv[1]));
         testEmptyGeometry();
         testMaterialContract();
         std::cout << "Display geometry via core passed.\n";

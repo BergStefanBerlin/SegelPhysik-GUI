@@ -38,6 +38,7 @@ public:
 
 private:
     void updateTree();
+    void appendGeometryNodes();
     void updateMesh();
     void updateSelection();
     void bindCurrentGeometry();

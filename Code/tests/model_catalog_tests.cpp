@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QSet>
 #include <QJsonArray>
@@ -99,6 +100,46 @@ void testReferenceFolder(const QString& folder)
     require(!data.geometry.teile.empty(), "Core delivered no display geometry.");
 }
 
+void test420Model02(const QString& folder)
+{
+    const auto snapshot = loadCatalog(folder);
+    require(snapshot.error.isEmpty() && snapshot.catalog != nullptr,
+        "420 model catalog could not be loaded.");
+    const auto* boat = find(snapshot, QStringLiteral("420"));
+    require(boat != nullptr && boat->usable && boat->errorCount == 0,
+        "Core rejected the 420 schema 0.2 model in the GUI catalog.");
+    require(QFileInfo(boat->path).fileName() == QStringLiteral("modells_information.json"),
+        "GUI did not resolve the 420 schema 0.2 source file.");
+    const auto data = loadDisplayData(*snapshot.catalog, boat->id, boat->version);
+    require(data.inspection != nullptr && !data.geometry.teile.empty(),
+        "GUI received no 420 inspection snapshot or display geometry.");
+    require(data.totalMassKg && *data.totalMassKg > 0.0,
+        "GUI received no valid 420 mass projection.");
+    require(data.elementGroups.value(QStringLiteral("Ruder")) == QStringLiteral("ruder"),
+        "GUI lost the 420 rudder group.");
+    require(data.elementMovements.isEmpty(),
+        "GUI must not infer movement absent from the 420 model.");
+}
+
+void testSimpleModels02(const QString& folder)
+{
+    const auto snapshot = loadCatalog(folder);
+    require(snapshot.error.isEmpty() && snapshot.catalog != nullptr,
+        "Simple model catalog could not be loaded.");
+    for (const auto& id : {QStringLiteral("bleistift"), QStringLiteral("kegel"),
+             QStringLiteral("kugel"), QStringLiteral("platte"), QStringLiteral("pyramide"),
+             QStringLiteral("quader"), QStringLiteral("rolle"), QStringLiteral("unregelmaessig")}) {
+        const auto* entry = find(snapshot, id);
+        require(entry != nullptr && entry->usable && entry->errorCount == 0,
+            "Core rejected a simple schema 0.2 model in the GUI catalog.");
+        require(QFileInfo(entry->path).fileName() == QStringLiteral("modells_information.json"),
+            "GUI did not resolve a simple schema 0.2 source file.");
+        const auto data = loadDisplayData(*snapshot.catalog, entry->id, entry->version);
+        require(data.inspection != nullptr && !data.geometry.teile.empty(),
+            "GUI received no inspection snapshot or display geometry for a simple model.");
+    }
+}
+
 void testFolderChanges(const QString& referenceFolder)
 {
     QTemporaryDir root;
@@ -110,7 +151,7 @@ void testFolderChanges(const QString& referenceFolder)
         dir.filePath(QStringLiteral("quader")));
     require(dir.mkpath(QStringLiteral("kaputt")), "mkdir failed.");
     {
-        QFile file(dir.filePath(QStringLiteral("kaputt/bootsmodell.json")));
+        QFile file(dir.filePath(QStringLiteral("kaputt/modells_information.json")));
         require(file.open(QIODevice::WriteOnly), "Cannot write broken model.");
         file.write("{}");
     }
@@ -139,7 +180,7 @@ void testFolderChanges(const QString& referenceFolder)
     const auto fixedTree = segelphysik::inspectionTreeJson(*opened.inspection, "modell");
     const auto fixedMesh = segelphysik::inspectionMeshJson(*opened.inspection, "darstellung");
     {
-        QFile file(dir.filePath(QStringLiteral("quader/bootsmodell.json")));
+        QFile file(dir.filePath(QStringLiteral("quader/modells_information.json")));
         require(file.open(QIODevice::ReadOnly), "Cannot read model.");
         auto model = QJsonDocument::fromJson(file.readAll()).object();
         file.close();
@@ -164,7 +205,7 @@ void testFolderChanges(const QString& referenceFolder)
         "Reloaded catalog did not report a new model version.");
     static_cast<void>(loadDisplayData(*snapshot.catalog, quader->id, quader->version));
 
-    require(QFile::remove(dir.filePath(QStringLiteral("kaputt/bootsmodell.json"))),
+    require(QFile::remove(dir.filePath(QStringLiteral("kaputt/modells_information.json"))),
         "Cannot remove test model.");
     require(loadCatalog(root.path()).entries.size() == 1, "Removed model is still listed.");
 }
@@ -193,8 +234,8 @@ void testIdentityIndependentOfRole(const QString& referenceFolder)
     QTemporaryDir root;
     require(root.isValid(), "Temporary neutral-ID model folder.");
     const auto target = QDir(root.path()).filePath(QStringLiteral("v2"));
-    prepareUnifiedModel(QDir(referenceFolder).filePath(QStringLiteral("420/bootsmodell.json")), target);
-    QFile file(QDir(target).filePath(QStringLiteral("bootsmodell.json")));
+    prepareUnifiedModel(QDir(referenceFolder).filePath(QStringLiteral("420/modells_information.json")), target);
+    QFile file(QDir(target).filePath(QStringLiteral("modells_information.json")));
     require(file.open(QIODevice::ReadOnly), "Read neutral-ID source fixture.");
     const auto original = QJsonDocument::fromJson(file.readAll());
     file.close();
@@ -208,19 +249,10 @@ void testIdentityIndependentOfRole(const QString& referenceFolder)
         && catalog.entries.front().usable, "Neutral identity must not change model validation.");
     const auto& entry = catalog.entries.front();
     const auto display = loadDisplayData(*catalog.catalog, entry.id, entry.version);
-    require(display.elementMovements.contains(QStringLiteral("teil_017")),
-        "Movement must follow identity, not a hardcoded rudder ID.");
-    const auto nodes = segelphysik::getObjectTree(*display.inspection, "modell");
-    std::vector<std::string> roots;
-    for (const auto& node : nodes) if (node.id.empty()) roots.push_back(node.id);
-    const auto properties = segelphysik::getObjectProperties(*display.inspection, "modell", roots, true);
-    bool role = false;
-    for (const auto& property : properties) {
-        if (property.object_path.find("teil_017") != std::string::npos
-            && std::holds_alternative<std::string>(property.value)
-            && std::get<std::string>(property.value) == "ruder") role = true;
-    }
-    require(role, "Explicit rudder role must remain inspectable for neutral identity.");
+    require(display.elementGroups.contains(QStringLiteral("teil_017")),
+        "Group projection must follow neutral element identity.");
+    require(display.elementGroups.value(QStringLiteral("teil_017")) == QStringLiteral("ruder"),
+        "Semantic rudder group must remain inspectable for neutral identity.");
 }
 
 void testUnifiedModels(const QString& folder)
@@ -314,11 +346,11 @@ void testSingleSourceModels(const QString& folder)
 void testProblemParsing()
 {
     const auto problems = problemsFromText(QStringLiteral(
-        "CORE-MOD-0007 [bootsmodell.json, Gruppe rigg, Element Spriet]: Ueberschneidung; Vergleich mit Mast\n"
+        "CORE-MOD-0007 [modells_information.json, Gruppe rigg, Element Spriet]: Ueberschneidung; Vergleich mit Mast\n"
         "freier Text ohne Kennung"));
     require(problems.size() == 2, "Two problems expected.");
     require(problems[0].code == QStringLiteral("CORE-MOD-0007"), "Code not parsed.");
-    require(problems[0].location == QStringLiteral("bootsmodell.json, Gruppe rigg, Element Spriet"),
+    require(problems[0].location == QStringLiteral("modells_information.json, Gruppe rigg, Element Spriet"),
         "Location not parsed.");
     require(problems[0].message.startsWith(QStringLiteral("Ueberschneidung")), "Message not parsed.");
     require(!problems[0].summary.isEmpty() && !problems[0].remedy.isEmpty(),
@@ -330,6 +362,26 @@ void testProblemParsing()
 int main(int argc, char* argv[])
 {
     QCoreApplication application(argc, argv);
+    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--420-v02")) {
+        try {
+            test420Model02(QString::fromLocal8Bit(argv[2]));
+            std::cout << "420 schema 0.2 model via GUI catalog passed.\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--simple-v02")) {
+        try {
+            testSimpleModels02(QString::fromLocal8Bit(argv[2]));
+            std::cout << "Simple schema 0.2 models via GUI catalog passed.\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc != 2) {
         std::cerr << "Expected the reference model folder.\n";
         return 2;

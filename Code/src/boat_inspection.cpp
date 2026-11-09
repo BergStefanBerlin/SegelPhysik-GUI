@@ -768,6 +768,7 @@ void BoatInspection::updateTree()
             if (parent && parent != item) parent->addChild(item);
             else tree_->addTopLevelItem(item);
         }
+        appendGeometryNodes();
         bindCurrentGeometry();
         for (const auto& node : nodes) {
             if (node.kind != "element" || node.element_ids.size() != 1) continue;
@@ -775,6 +776,19 @@ void BoatInspection::updateTree()
             if (!movement) continue;
             const auto id = text(node.element_ids.front());
             movements_.insert(id, *movement);
+            auto* item = new QTreeWidgetItem(items.value(text(node.id)),
+                {QStringLiteral("Bewegungsvorschau · Achse / Normal / Extreme")});
+            item->setData(0, Qt::UserRole, text(node.id));
+            item->setData(0, Qt::UserRole + 1, QStringList{id});
+            item->setData(0, Qt::UserRole + 3, true);
+            item->setData(0, Qt::UserRole + 5, id);
+            item->setCheckState(0, Qt::Unchecked);
+            QStringList description;
+            description << QStringLiteral("Reine Vorschau – verändert weder Quelle noch Simulation.")
+                << QStringLiteral("Normal: Cyan · Minimum: Orange · Maximum: Violett · Achse: Gelb");
+            if (!movement->minimum_value) description << QStringLiteral("Minimum: nicht vorhanden");
+            if (!movement->maximum_value) description << QStringLiteral("Maximum: nicht vorhanden");
+            item->setToolTip(0, description.join(QLatin1Char('\n')));
         }
         tree_->expandToDepth(1);
         updateMesh();
@@ -789,6 +803,11 @@ void BoatInspection::updateMovementPreview()
 {
     try {
         QHash<QString, QSet<QString>> requested;
+        for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+            const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
+            if (!id.isEmpty() && ((*it)->isSelected() || (*it)->checkState(0) == Qt::Checked))
+                requested[id].insert(QStringLiteral("all"));
+        }
         QHash<QString, QSet<QString>> selectedActions;
         for (auto* row : values_->selectedItems())
             if (!row->isHidden() && !row->data(0, movementIdRole).toString().isEmpty())
@@ -962,6 +981,67 @@ void BoatInspection::onSailDrag(const QString& elementId, const QString& handle,
     }
 }
 
+void BoatInspection::appendGeometryNodes()
+{
+    QHash<QString, QTreeWidgetItem*> elements;
+    for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+        if ((*it)->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")) continue;
+        const auto ids = (*it)->data(0, Qt::UserRole + 1).toStringList();
+        if (ids.size() == 1) elements.insert(ids.front(), *it);
+    }
+
+    QHash<QString, QTreeWidgetItem*> derivedRoots;
+    QSet<QString> sources;
+    for (std::size_t i = 0; i < meshes_.size(); ++i) {
+        const auto& mesh = meshes_[i];
+        const bool derived = mesh.provenance == "abgeleitet";
+        auto* parent = elements.value(text(mesh.element_id));
+        if (!parent) continue;
+        const auto identity = text(mesh.element_id) + QLatin1Char('|') + text(mesh.source_id);
+        if (!derived && !mesh.source_id.empty()) {
+            if (sources.contains(identity)) continue;
+            sources.insert(identity);
+        }
+        if (derived) {
+            auto*& root = derivedRoots[text(mesh.element_id)];
+            if (!root) {
+                root = new QTreeWidgetItem(parent, {QStringLiteral("Abgeleitete Daten")});
+                root->setData(0, Qt::UserRole + 3, true);
+                root->setData(0, Qt::UserRole, parent->data(0, Qt::UserRole));
+            }
+            parent = root;
+        }
+        auto* item = new QTreeWidgetItem(parent);
+        item->setText(0, derived ? text(mesh.type)
+            : QStringLiteral("Quellmesh · %1").arg(text(mesh.source_id)));
+        item->setData(0, Qt::UserRole, elements.value(text(mesh.element_id))->data(0, Qt::UserRole));
+        item->setData(0, Qt::UserRole + 1, QStringList{text(mesh.element_id)});
+        item->setData(0, Qt::UserRole + 2, static_cast<int>(i));
+        item->setData(0, Qt::UserRole + 3, true);
+        item->setCheckState(0, Qt::Unchecked);
+        const auto uses = meshUses(meshes_, mesh);
+        item->setToolTip(0, QStringLiteral("%1\nQuelle: %2\n%3\nVerwendungen: %4")
+            .arg(text(mesh.origin), text(mesh.source_id), text(mesh.derivation),
+                uses.join(QStringLiteral(", "))));
+        if (derived) item->setForeground(0, QColor(QStringLiteral("#e9b64d")));
+    }
+
+    for (auto it = elements.begin(); it != elements.end(); ++it) {
+        QSet<QString> unique;
+        for (const auto& mesh : meshes_)
+            if (text(mesh.element_id) == it.key() && mesh.provenance == "quelle")
+                unique.insert(text(mesh.source_id));
+        if (unique.size() > 1) {
+            it.value()->setText(0, it.value()->text(0) + QStringLiteral(" [mehrere Geometriequellen]"));
+            it.value()->setToolTip(0, QStringLiteral(
+                "%1\nEine Modellbeschreibung verweist auf %2 verschiedene Geometriequellen, "
+                "z. B. für Darstellung, Masse oder Hydrostatik. Das sind keine mehreren "
+                "Modellversionen.")
+                .arg(it.value()->data(0, Qt::UserRole).toString()).arg(unique.size()));
+        }
+    }
+}
+
 void BoatInspection::bindCurrentGeometry()
 {
     for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
@@ -1006,6 +1086,10 @@ void BoatInspection::updateMesh()
     }
     try {
         std::vector<segelphysik::InspectionMesh> displayed;
+        QSet<QString> replaced;
+        for (const int index : requested)
+            if (meshes_.at(index).provenance != "abgeleitet")
+                replaced.insert(text(meshes_.at(index).element_id));
         QSet<QString> currentElements;
         QSet<QString> configuredElements;
         for (auto it = configuredMeshes_.cbegin(); it != configuredMeshes_.cend(); ++it)
@@ -1014,14 +1098,24 @@ void BoatInspection::updateMesh()
             configuredElements.insert(it.key());
         for (const auto& mesh : meshes_) {
             const auto element = text(mesh.element_id);
-            if (mesh.type != "darstellung" || configuredElements.contains(element)) continue;
+            if (mesh.type != "darstellung" || configuredElements.contains(element)
+                || replaced.contains(element)) continue;
             if (currentElements.contains(element))
                 throw std::runtime_error("Mehrdeutige aktuelle Darstellung fuer Objekt: "
                     + mesh.element_id);
             displayed.push_back(mesh);
             currentElements.insert(element);
         }
+        for (const auto& mesh : meshes_) {
+            const auto element = text(mesh.element_id);
+            if (mesh.provenance == "quelle" && !currentElements.contains(element)
+                && !replaced.contains(element) && !configuredElements.contains(element)) {
+                displayed.push_back(mesh);
+                currentElements.insert(element);
+            }
+        }
         for (const auto& element : configuredElements) {
+            if (replaced.contains(element)) continue;
             const auto selectedPreview = previewMeshes_.constFind(element);
             const auto& configured = selectedPreview != previewMeshes_.cend()
                 ? selectedPreview.value() : configuredMeshes_.value(element);
@@ -1033,6 +1127,14 @@ void BoatInspection::updateMesh()
             if (id.isEmpty() || displayedIds.contains(id))
                 throw std::runtime_error("Mehrdeutige aktuelle Objektgeometrie: " + mesh.element_id);
             displayedIds.insert(id);
+        }
+        for (const int index : requested) {
+            auto mesh = meshes_.at(index);
+            if (mesh.provenance == "abgeleitet")
+                mesh.color_rgb = std::array<double, 3>{0.91, 0.71, 0.30};
+            if (mesh.surface && *mesh.surface == "unsichtbar")
+                mesh.surface = "drahtgitter";
+            displayed.push_back(std::move(mesh));
         }
         const auto parts = toDisplayParts(displayed);
         QString error;
