@@ -30,8 +30,10 @@ public:
     explicit BoatInspection(QWidget* parent = nullptr);
     QWidget* valuesWidget() const;
     VtkSceneWidget* scene() const { return scene_; }
+    void setStructure(const segelphysik::Modellstruktur& structure);
     void setSnapshot(std::shared_ptr<const segelphysik::ModelInspection> snapshot,
-        std::shared_ptr<const segelphysik::Modellkatalog> catalog = {});
+        std::shared_ptr<const segelphysik::Modellkatalog> catalog = {},
+        bool loadAerodynamics = true);
     void clear(const QString& message);
     void setCatalogWidget(QWidget* widget);
     bool setCameraPreset(const QString& id, QString* error);
@@ -73,6 +75,7 @@ private:
     QHash<QString, std::vector<segelphysik::InspectionMesh>> previewMeshes_;
     QSet<int> activeMeshes_;
     QHash<QString, segelphysik::InspectionMovementPreview> movements_;
+    QHash<QString, QString> referenceBadges_;
     QTreeWidget* tree_ = nullptr;
     QTreeWidget* values_ = nullptr;
     std::array<QLineEdit*, 6> filters_{};

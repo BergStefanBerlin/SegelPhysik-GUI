@@ -6,6 +6,9 @@
 #include "boat_inspection.hpp"
 #include "filter_header.hpp"
 
+#include <segelphysik/defaults.hpp>
+#include <segelphysik/modell_fingerprints.hpp>
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -267,20 +270,6 @@ const QChar warningSign(0x26A0);
 
 enum Column { ColName, ColMagnitude, ColX, ColY, ColZ, ColState, ColScale, ColumnCount };
 
-QString defaultModelFolder()
-{
-    const QString besideExecutable =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("modelle"));
-    if (QDir(besideExecutable).exists()) {
-        return besideExecutable;
-    }
-#ifdef SEGELPHYSIK_DEFAULT_MODEL_DIR
-    return QString::fromUtf8(SEGELPHYSIK_DEFAULT_MODEL_DIR);
-#else
-    return {};
-#endif
-}
-
 QString samePath(const QString& path)
 {
     return QFileInfo(path).absoluteFilePath();
@@ -399,6 +388,7 @@ MainWindow::MainWindow(QWidget* parent)
     modelList_->setSelectionMode(QAbstractItemView::SingleSelection);
     modelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     modelList_->setTextElideMode(Qt::ElideRight);
+    modelList_->setContextMenuPolicy(Qt::CustomContextMenu);
     catalogLayout->addWidget(cameraCaption);
     catalogLayout->addWidget(inspectionCameraCombo_);
     catalogLayout->addWidget(catalogCaption);
@@ -690,11 +680,30 @@ MainWindow::MainWindow(QWidget* parent)
                 openModel(id);
             }
         });
+    connect(modelList_, &QListWidget::customContextMenuRequested, this,
+        [this](const QPoint& position) {
+            auto* item = modelList_->itemAt(position);
+            if (!item) return;
+            const auto id = item->data(Qt::UserRole).toString();
+            const auto* entry = entryFor(id);
+            if (!entry || !entry->schemaValid || entry->visualizationHashCurrent) return;
+            QMenu menu(this);
+            auto* update = menu.addAction(QStringLiteral("Visualisation-Hash erneuern"));
+            update->setEnabled(fingerprintThread_ == nullptr && simulationThread_ == nullptr
+                && openThread_ == nullptr && catalogThread_ == nullptr
+                && !fingerprintWatcherSuppressed_);
+            connect(update, &QAction::triggered, this,
+                [this, id] { updateVisualizationFingerprint(id); });
+            menu.exec(modelList_->viewport()->mapToGlobal(position));
+        });
     connect(folderWatcher_, &QFileSystemWatcher::directoryChanged, this,
         [this](const QString&) { scheduleFolderRescan(); });
     connect(folderWatcher_, &QFileSystemWatcher::fileChanged, this,
         [this](const QString&) { scheduleFolderRescan(); });
-    connect(rescanTimer_, &QTimer::timeout, this, [this] { reloadCatalog(); });
+    connect(rescanTimer_, &QTimer::timeout, this, [this] {
+        if (fingerprintWatcherSuppressed_ || fingerprintThread_ != nullptr) return;
+        reloadCatalog();
+    });
     connect(liveTimer_, &QTimer::timeout, this, [this] { updateLiveProgress(); });
     connect(runButton_, &QPushButton::clicked, this, [this] { startSimulation(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancellation_.store(true); });
@@ -1369,7 +1378,8 @@ MainWindow::~MainWindow()
     shuttingDown_.store(true);
     cancellation_.store(true);
     for (auto* thread : openThreads_) thread->wait();
-    for (const auto& thread : {openThread_, simulationThread_, catalogThread_}) {
+    for (const auto& thread : {openThread_, simulationThread_, catalogThread_,
+             fingerprintThread_}) {
         if (thread != nullptr) {
             thread->wait();
         }
@@ -1764,15 +1774,39 @@ void MainWindow::chooseModelFolder()
 void MainWindow::setModelFolder(const QString& folder)
 {
     const bool usable = !folder.isEmpty() && QDir(folder).exists();
-    modelFolder_ = usable ? QDir(folder).absolutePath() : defaultModelFolder();
+    if (!folder.isEmpty() && !usable) {
+        showError(QStringLiteral("Modellordner"),
+            QStringLiteral("Der ausgewählte Modellordner ist nicht verfügbar: %1")
+                .arg(QDir::toNativeSeparators(folder)));
+        return;
+    }
+    useConfiguredModelFolder_ = folder.isEmpty();
+    if (usable) {
+        modelFolder_ = QDir(folder).absolutePath();
+    } else {
+        try {
+            modelFolder_ = QString::fromStdWString(
+                segelphysik::modellordner_standard().wstring());
+        } catch (const std::exception& error) {
+            modelFolder_.clear();
+            showError(QStringLiteral("Modellpfad-Konfiguration"),
+                QString::fromUtf8(error.what()));
+        }
+    }
     if (usable) {
         QSettings().setValue(folderSettingKey, modelFolder_);
     }
     ++openGeneration_;
     modelId_.clear();
     modelVersion_.clear();
+    modelPath_.clear();
     validation_ = {};
     modelCache_.clear();
+    resetResults();
+    scene_->clearModel();
+    for (auto* view : staticScenes_) view->clearModel();
+    cameraCombo_->setEnabled(false);
+    inspectionCameraCombo_->setEnabled(false);
     inspection_->clear(QStringLiteral("Modellordner wird eingelesen …"));
     setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
     reloadCatalog();
@@ -1790,6 +1824,22 @@ void MainWindow::selectInitialModel(const QString& preferred)
 
 void MainWindow::scheduleFolderRescan()
 {
+    if (fingerprintWatcherSuppressed_ || fingerprintThread_ != nullptr) return;
+    modelCache_.clear();
+    ++openGeneration_;
+    validation_ = {};
+    if (simulationThread_ == nullptr) {
+        resetResults();
+        scene_->clearModel();
+        for (auto* view : staticScenes_) view->clearModel();
+        cameraCombo_->setEnabled(false);
+        inspectionCameraCombo_->setEnabled(false);
+        statusLabel_->setText(QStringLiteral("Modell wird erneut geprüft …"));
+        statusLabel_->setToolTip(QString());
+        statusLabel_->setStyleSheet(QString());
+    }
+    setBusy(true);
+    reopenAfterCatalog_ = true;
     rescanTimer_->start();
 }
 
@@ -1800,6 +1850,27 @@ void MainWindow::reloadCatalog()
         return;
     }
     catalogReloadPending_ = false;
+    if (useConfiguredModelFolder_) {
+        try {
+            const auto configured = QString::fromStdWString(
+                segelphysik::modellordner_standard().wstring());
+            if (configured != modelFolder_) {
+                if (simulationThread_ != nullptr) {
+                    defaultsReloadPending_ = true;
+                } else {
+                    defaultsReloadPending_ = false;
+                    setModelFolder({});
+                    selectInitialModel({});
+                    return;
+                }
+            }
+        } catch (const std::exception& error) {
+            if (simulationThread_ == nullptr) modelFolder_.clear();
+            else defaultsReloadPending_ = true;
+            showError(QStringLiteral("Modellpfad-Konfiguration"),
+                QString::fromUtf8(error.what()));
+        }
+    }
     const QString folder = modelFolder_;
     folderLabel_->setText(QStringLiteral("Katalog wird geladen …"));
     auto* thread = QThread::create([this, folder] {
@@ -1864,8 +1935,12 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
                 tip << QStringLiteral("Core-Katalog: verwendbar");
             } else {
                 item->setForeground(rejectedModelColor);
-                tip << QStringLiteral("Core-Katalog: fehlerhaft (%1 Fehler) – nur Ansicht")
+                tip << QStringLiteral("Core-Katalog: fehlerhaft (%1 Fehler)")
                            .arg(entry.errorCount);
+                if (!entry.schemaValid || !entry.visualizationHashCurrent)
+                    tip << QStringLiteral("Modellansicht durch Core-Prüfung gesperrt");
+                else
+                    tip << QStringLiteral("Nur Ansicht; Simulation gesperrt");
                 tip << entry.diagnostics;
             }
             item->setToolTip(tip.join(QLatin1Char('\n')));
@@ -1879,9 +1954,20 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
     if (!watched.isEmpty()) {
         folderWatcher_->removePaths(watched);
     }
-    const auto paths = watchedModelPaths(modelFolder_);
-    if (!paths.isEmpty()) {
-        folderWatcher_->addPaths(paths);
+    try {
+        QStringList diagnostics;
+        const auto paths = watchedModelPaths(modelFolder_, &diagnostics);
+        if (!paths.isEmpty()) {
+            const auto failed = folderWatcher_->addPaths(paths);
+            if (!failed.isEmpty())
+                showError(QStringLiteral("Modellüberwachung"),
+                    QStringLiteral("Diese Pfade konnten nicht überwacht werden:\n%1")
+                        .arg(failed.join(QLatin1Char('\n'))));
+        }
+        if (!diagnostics.isEmpty())
+            showError(QStringLiteral("Modellüberwachung"), diagnostics.join(QLatin1Char('\n')));
+    } catch (const std::exception& error) {
+        showError(QStringLiteral("Modellüberwachung"), QString::fromUtf8(error.what()));
     }
 
     if (selectionPending_) {
@@ -1893,7 +1979,8 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
     const bool changed = current == nullptr || current->version != previousVersion;
     if (!modelId_.isEmpty() && (changed || reopenAfterCatalog_)) {
         const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
-        if (opened && opened->data.inspection) {
+        if (opened && opened->data.inspection &&
+            QFileInfo(modelPath_).fileName() != QStringLiteral("modells_data.json")) {
             modelLabel_->setText(QStringLiteral("%1\n(geänderte Modellfassung im Ordner; Inspektion unverändert)")
                 .arg(modelName_));
             reopenAfterCatalog_ = false;
@@ -1904,8 +1991,15 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
             modelLabel_->setText(QStringLiteral("%1\n(geänderte Modellfassung im Ordner)").arg(modelName_));
         } else if (current != nullptr) {
             const QString id = modelId_;
-            modelId_.clear();
             openModel(id);
+        } else {
+            modelId_.clear();
+            modelVersion_.clear();
+            modelPath_.clear();
+            modelName_.clear();
+            modelLabel_->setText(QStringLiteral("Kein Modell verfügbar"));
+            statusLabel_->setText(QStringLiteral("Das gewählte Modell ist nicht mehr verfügbar."));
+            setBusy(openThread_ != nullptr);
         }
     }
     reopenAfterCatalog_ = false;
@@ -1966,6 +2060,58 @@ const ModelEntry* MainWindow::entryFor(const QString& id) const
     return nullptr;
 }
 
+void MainWindow::updateVisualizationFingerprint(const QString& modelId)
+{
+    if (fingerprintThread_ != nullptr || simulationThread_ != nullptr
+        || openThread_ != nullptr || catalogThread_ != nullptr
+        || fingerprintWatcherSuppressed_) return;
+    const auto* entry = entryFor(modelId);
+    if (!entry || !entry->schemaValid || entry->visualizationHashCurrent
+        || QFileInfo(entry->path).fileName() != QStringLiteral("modells_data.json")) {
+        return;
+    }
+
+    const auto modelFolder = QFileInfo(entry->path).absolutePath();
+    statusLabel_->setText(QStringLiteral("Visualisation-Fingerprint wird aktualisiert …"));
+    statusLabel_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
+    const auto catalogFolder = modelFolder_;
+    rescanTimer_->stop();
+    fingerprintWatcherSuppressed_ = true;
+    auto* thread = QThread::create([this, modelFolder, catalogFolder] {
+        QString error;
+        try {
+            segelphysik::aktualisiere_modell_fingerprints(
+                std::filesystem::path(modelFolder.toStdWString()),
+                {segelphysik::ModellFingerprintBereich::visualisation});
+        } catch (const std::exception& exception) {
+            error = QString::fromUtf8(exception.what());
+        }
+        QMetaObject::invokeMethod(this, [this, catalogFolder, error] {
+            QTimer::singleShot(600, this, [this] {
+                fingerprintWatcherSuppressed_ = false;
+            });
+            if (modelFolder_ != catalogFolder) return;
+            if (!error.isEmpty()) {
+                fingerprintThread_.clear();
+                statusLabel_->setText(QStringLiteral("Fingerprint-Aktualisierung fehlgeschlagen"));
+                statusLabel_->setToolTip(error);
+                statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+                showModelProblems(problemsFromText(error));
+                return;
+            }
+            reopenAfterCatalog_ = true;
+            modelCache_.clear();
+            reloadCatalog();
+        }, Qt::QueuedConnection);
+    });
+    fingerprintThread_ = thread;
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (fingerprintThread_ == thread) fingerprintThread_ = nullptr;
+    });
+    thread->start();
+}
+
 void MainWindow::resetResults()
 {
     live_.reset();
@@ -1999,6 +2145,7 @@ void MainWindow::openModel(const QString& id)
     if (entry == nullptr) {
         return;
     }
+    const bool sameModel = modelId_ == id;
     closeGraphics();
     modelId_ = entry->id;
     cameraCombo_->setEnabled(false);
@@ -2006,7 +2153,8 @@ void MainWindow::openModel(const QString& id)
     modelVersion_ = entry->version;
     modelPath_ = entry->path;
     modelName_ = entry->name.isEmpty() ? entry->id : entry->name;
-    inspection_->clear(QStringLiteral("Modell wird vom Core geladen …"));
+    if (!sameModel)
+        inspection_->clear(QStringLiteral("Modell wird vom Core geladen …"));
     validation_ = {};
     lastRunDynamic_.reset();
     resetResults();
@@ -2048,8 +2196,37 @@ void MainWindow::openModel(const QString& id)
                 if (!fresh->data.geometry.teile.empty())
                     fresh->parts = toDisplayParts(fresh->data.geometry);
                 opened = fresh;
+                if (opened->data.modelFormat03) {
+                    const auto display = std::make_shared<OpenedModel>(*opened);
+                    QMetaObject::invokeMethod(this,
+                        [this, selected, display, generation] {
+                            if (generation == openGeneration_ && selected.id == modelId_)
+                                modelDisplayOpened(selected, display);
+                        },
+                        Qt::QueuedConnection);
+                }
             }
-            if (selected.usable) {
+            if (opened->data.modelFormat03) {
+                if (selected.usable && !opened->data.inspection) {
+                    if (!catalog)
+                        throw std::runtime_error("Kein Modellkatalog verfügbar.");
+                    loadSelectedModelPhysics(opened->data, *catalog);
+                }
+                if (opened->data.inspection) {
+                    const auto& info = opened->data.inspection->info();
+                    validation.modelId = QString::fromStdString(info.model_id);
+                    validation.fingerprint = QString::fromStdString(info.model_version);
+                    validation.valid = info.status == "verwendbar";
+                    QStringList diagnostics;
+                    for (const auto& diagnostic : info.diagnostics)
+                        diagnostics << QStringLiteral("%1: %2")
+                            .arg(QString::fromStdString(diagnostic.fehler_id),
+                                QString::fromStdString(diagnostic.text));
+                    validation.diagnostic = diagnostics.join(QLatin1Char('\n'));
+                } else {
+                    validation.diagnostic = selected.diagnostics.join(QLatin1Char('\n'));
+                }
+            } else if (selected.usable) {
                 validation = validateModel(selected.path);
             } else {
                 validation.diagnostic = selected.diagnostics.join(QLatin1Char('\n'));
@@ -2077,10 +2254,24 @@ void MainWindow::openModel(const QString& id)
                         QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
                     statusLabel_->setToolTip(error);
                     statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
-                    scene_->clearModel();
-                    for (auto* view : staticScenes_) view->clearModel();
-                    inspection_->clear(error);
+                    if (!opened || !opened->data.modelFormat03) {
+                        scene_->clearModel();
+                        for (auto* view : staticScenes_) view->clearModel();
+                        inspection_->clear(error);
+                    }
                     showModelProblems(selected.problems + problemsFromText(error));
+                    return;
+                }
+                if (opened->data.modelFormat03 && !opened->data.inspection) {
+                    inspection_->clear(validation.diagnostic);
+                    statusLabel_->setText(QStringLiteral(
+                        "%1 Ansicht geladen – Physik nicht freigegeben")
+                            .arg(warningSign));
+                    statusLabel_->setToolTip(validation.diagnostic);
+                    statusLabel_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
+                    showModelProblems(selected.problems +
+                        problemsFromText(validation.diagnostic));
+                    setBusy(false);
                     return;
                 }
                 modelCache_.insert(cacheKey(selected.id, selected.version), opened);
@@ -2101,11 +2292,57 @@ void MainWindow::openModel(const QString& id)
     thread->start();
 }
 
+void MainWindow::modelDisplayOpened(const ModelEntry& entry,
+    const std::shared_ptr<OpenedModel>& opened)
+{
+    QString error;
+    inspection_->setStructure(opened->data.structure);
+    scene_->setElementGroups(opened->data.elementGroups);
+    for (auto* view : staticScenes_) view->setElementGroups(opened->data.elementGroups);
+    configureMovementControls(opened->data);
+    if (opened->parts.isEmpty()) {
+        scene_->clearModel();
+        for (auto* view : staticScenes_) view->clearModel();
+    } else if (!scene_->setModel(opened->parts, &error)) {
+        statusLabel_->setText(QStringLiteral("Darstellung nicht verfügbar: %1").arg(error));
+        statusLabel_->setToolTip(error);
+        statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+        showModelProblems(entry.problems + problemsFromText(error));
+        return;
+    }
+    for (auto* view : staticScenes_) {
+        if (!opened->parts.isEmpty() && !view->setModel(opened->parts, &error)) {
+            for (auto* other : staticScenes_) other->clearModel();
+            statusLabel_->setText(QStringLiteral("Zusatzansicht nicht verfügbar: %1").arg(error));
+            showModelProblems(entry.problems + problemsFromText(error));
+            return;
+        }
+    }
+    cameraCombo_->setEnabled(true);
+    inspectionCameraCombo_->setEnabled(!opened->parts.isEmpty());
+    {
+        const QSignalBlocker blocker(cameraCombo_);
+        cameraCombo_->setCurrentIndex(0);
+    }
+    initialReferences(opened->data);
+    applyGraphicsProfile();
+    clearValues();
+    statusLabel_->setText(QStringLiteral("Objektbaum und Darstellung geladen"));
+    statusLabel_->setToolTip(QStringLiteral(
+        "Physikdaten werden im Core im Hintergrund geladen; Aerodynamik ist vorläufig ausgenommen."));
+    statusLabel_->setStyleSheet(QString());
+    modelLabel_->setToolTip(QStringLiteral("%1 · Fassung %2")
+        .arg(entry.id, entry.version));
+    setBusy(false);
+}
+
 void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<OpenedModel>& opened,
     const ModelValidation& validation)
 {
     QString error;
-    inspection_->setSnapshot(opened->data.inspection, catalog_.catalog);
+    inspection_->setSnapshot(opened->data.inspection, catalog_.catalog,
+        !opened->data.modelFormat03);
+    inspection_->setEnabled(true);
     scene_->setElementGroups(opened->data.elementGroups);
     hydrodynamicRoles_ = opened->data.hydrodynamicRoles;
     scene_->setHydrodynamicRoles(hydrodynamicRoles_);
@@ -2473,6 +2710,11 @@ void MainWindow::startLiveSimulation(double duration, double step, bool paced, c
 
 void MainWindow::simulationFinished()
 {
+    if (defaultsReloadPending_) {
+        defaultsReloadPending_ = false;
+        scheduleFolderRescan();
+        return;
+    }
     const auto* tabs = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
     if (tabs && tabs->currentIndex() != 0) {
         const QSignalBlocker blocker(modeCombo_);

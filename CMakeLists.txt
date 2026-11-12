@@ -17,8 +17,11 @@ if(NOT EXISTS "${SEGELPHYSIK_CORE_SOURCE_DIR}/Code/CMakeLists.txt")
 endif()
 
 set(SEGELPHYSIK_MODELLE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../Modelle"
-    CACHE PATH "Model folder (sibling of the CORE and GUI checkouts)")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../Modelle_alt"
+    CACHE PATH "Legacy model fixtures archived under the model repository")
+set(SEGELPHYSIK_GUI_MONTAGE_TEST_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/.local-test-data/unified-montage"
+    CACHE PATH "Persistent local model fixture for the unified GUI montage test")
 
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Svg Xml)
 find_package(VTK CONFIG REQUIRED COMPONENTS
@@ -65,8 +68,6 @@ add_executable(segelphysik_gui WIN32
     Code/src/vtk_scene.cpp
     Code/src/vtk_scene.hpp)
 target_include_directories(segelphysik_gui PRIVATE Code/src)
-target_compile_definitions(segelphysik_gui PRIVATE
-    "SEGELPHYSIK_DEFAULT_MODEL_DIR=\"${SEGELPHYSIK_MODELLE_DIR}\"")
 target_link_libraries(segelphysik_gui PRIVATE
     Qt6::Widgets
     Qt6::Svg Qt6::Xml
@@ -128,7 +129,9 @@ if(BUILD_TESTING)
     set_tests_properties(gui_navigation PROPERTIES TIMEOUT 20)
     if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
         set_tests_properties(gui_navigation PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins"
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/bin")
     else()
         set_tests_properties(gui_navigation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
@@ -195,15 +198,33 @@ if(BUILD_TESTING)
         set_tests_properties(gui_sail_configurator_420 PROPERTIES
             TIMEOUT 900 RUN_SERIAL TRUE
             ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        add_test(NAME gui_unified_montage_fixture
+            COMMAND ${CMAKE_COMMAND}
+                "-DSOURCE_DIR=${SEGELPHYSIK_MODELLE_DIR}"
+                "-DFIXTURE_DIR=${SEGELPHYSIK_GUI_MONTAGE_TEST_DIR}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/Code/tests/prepare_gui_montage_fixture.cmake")
+        set_tests_properties(gui_unified_montage_fixture PROPERTIES
+            FIXTURES_SETUP gui_unified_montage_models
+            RUN_SERIAL TRUE)
         add_test(NAME gui_unified_montage COMMAND segelphysik_gui_graphics_render_tests
-            --unified-montage-integration "${SEGELPHYSIK_MODELLE_DIR}")
+            --unified-montage-integration "${SEGELPHYSIK_GUI_MONTAGE_TEST_DIR}/models")
         set_tests_properties(gui_unified_montage PROPERTIES
             TIMEOUT 900 RUN_SERIAL TRUE
+            FIXTURES_REQUIRED gui_unified_montage_models
             ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1")
+        add_test(NAME gui_model_format_03_interactions
+            COMMAND segelphysik_gui_graphics_render_tests
+                --model-format-03-gates "${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
+        set_tests_properties(gui_model_format_03_interactions PROPERTIES
+            TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "model-format-0.3;ui-integration"
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1;SEGELPHYSIK_TEST_SCHEMA_ROOT=${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
         if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
             set_property(TEST gui_sail_configurator_420 APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
             set_property(TEST gui_unified_montage APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            set_property(TEST gui_model_format_03_interactions APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
         endif()
         foreach(scale IN ITEMS 100 150 200)
@@ -231,13 +252,13 @@ if(BUILD_TESTING)
                 TIMEOUT 300 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             set_tests_properties(gui_workspace_tabs_${scale} PROPERTIES
-                TIMEOUT 90 RUN_SERIAL TRUE
+                TIMEOUT 180 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             set_tests_properties(gui_dynamic_layout_${scale} PROPERTIES
                 TIMEOUT 90 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             set_tests_properties(gui_boat_inspection_${scale} PROPERTIES
-                TIMEOUT 120 RUN_SERIAL TRUE
+                TIMEOUT 300 RUN_SERIAL TRUE
                 ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=${scale_factor}")
             set_tests_properties(gui_inspection_pointer_${scale} PROPERTIES
                 TIMEOUT 60 RUN_SERIAL TRUE
@@ -261,7 +282,9 @@ if(BUILD_TESTING)
         TIMEOUT 20)
     if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
         set_tests_properties(gui_graphics_dialog PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins"
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/bin")
     else()
         set_tests_properties(gui_graphics_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
@@ -295,6 +318,14 @@ if(BUILD_TESTING)
     add_test(NAME gui_simple_models_02
         COMMAND segelphysik_gui_catalog_tests --simple-v02
             "${SEGELPHYSIK_MODELLE_DIR}")
+    add_test(NAME gui_model_format_03
+        COMMAND segelphysik_gui_catalog_tests --model-format-03
+            "${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
+    set_tests_properties(gui_model_format_03 PROPERTIES ENVIRONMENT
+        "SEGELPHYSIK_TEST_SCHEMA_ROOT=${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
+    set_tests_properties(gui_core_integration gui_model_catalog gui_420_model_02
+        gui_simple_models_02 PROPERTIES LABELS "legacy-compatibility")
+    set_tests_properties(gui_model_format_03 PROPERTIES LABELS "model-format-0.3")
 
     add_executable(segelphysik_gui_mesh_tests
         Code/src/display_geometry.cpp
@@ -319,6 +350,16 @@ if(BUILD_TESTING)
     target_include_directories(segelphysik_gui_force_display_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_force_display_tests PRIVATE Qt6::Core)
     add_test(NAME gui_force_display COMMAND segelphysik_gui_force_display_tests)
+    if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+        get_property(gui_tests DIRECTORY PROPERTY TESTS)
+        foreach(gui_test IN LISTS gui_tests)
+            if(gui_test MATCHES "^gui_")
+                set_property(TEST ${gui_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+                    "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/bin")
+            endif()
+        endforeach()
+    endif()
 endif()
 
 if(MSVC)

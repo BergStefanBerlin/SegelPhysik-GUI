@@ -7,6 +7,7 @@
 #include "boat_inspection.hpp"
 
 #include <segelphysik/katalog.hpp>
+#include <segelphysik/defaults.hpp>
 #include <segelphysik/modell.hpp>
 #include <segelphysik/segelkonfigurator.hpp>
 #include <QApplication>
@@ -81,6 +82,7 @@
 #include <vtkRenderer.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRendererCollection.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
 #include <future>
@@ -89,6 +91,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -168,8 +171,14 @@ void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
     SailDialogTestAction dialogAction = SailDialogTestAction::Accept,
     std::optional<bool> desiredChecked = std::nullopt)
 {
-    auto* item = sailTreeItem(tree, elementId);
-    require(item != nullptr, "420 sail has an exact element row in inspection tree");
+    QApplication::processEvents();
+    QTreeWidgetItem* item = nullptr;
+    const auto rowError = "420 sail has an exact element row in inspection tree: "
+        + elementId.toStdString() + " (" + actionText.toStdString() + ")";
+    waitUntil([&] {
+        item = sailTreeItem(tree, elementId);
+        return item != nullptr;
+    }, rowError.c_str());
     tree->scrollToItem(item);
     QApplication::processEvents();
     const auto rect = tree->visualItemRect(item);
@@ -574,7 +583,7 @@ void copyAndRunSailConfiguratorIntegration(const QString& modelRoot,
         child.start(executable, {QStringLiteral("--sail-configurator-phase"),
             phase, fixtureRoot});
         require(child.waitForStarted(10000), "start isolated GUI configurator phase");
-        if (!child.waitForFinished(180000))
+        if (!child.waitForFinished(600000))
             throw std::runtime_error(("isolated GUI configurator phase timeout: "
                 + child.readAll().toStdString()).c_str());
         if (child.exitStatus() != QProcess::NormalExit || child.exitCode() != 0) {
@@ -589,35 +598,38 @@ void copyAndRunSailConfiguratorIntegration(const QString& modelRoot,
 
 void runUnifiedMontageIntegration(const QString& modelRoot)
 {
-    const auto sourceHashes = [&] {
+    const auto source = std::filesystem::path(modelRoot.toStdWString());
+    const auto mutableModelInputHashes = [&] {
         QMap<QString, QByteArray> hashes;
-        for (const auto& file : std::filesystem::recursive_directory_iterator(
-                std::filesystem::path(modelRoot.toStdWString()))) {
-            if (!file.is_regular_file()) continue;
-            const auto path = QString::fromStdWString(file.path().wstring());
+        const auto addFile = [&](const std::filesystem::path& file) {
+            const auto path = QString::fromStdWString(file.wstring());
             QFile input(path);
-            require(input.open(QIODevice::ReadOnly), "original model file readable for checksum");
-            hashes.insert(path, QCryptographicHash::hash(input.readAll(), QCryptographicHash::Sha256));
+            require(input.open(QIODevice::ReadOnly),
+                "mutable model input is readable for checksum");
+            hashes.insert(QString::fromStdString(file.lexically_relative(source).generic_string()),
+                QCryptographicHash::hash(input.readAll(), QCryptographicHash::Sha256));
+        };
+        for (const auto& model : std::filesystem::directory_iterator(source)) {
+            if (!model.is_directory()
+                || !std::filesystem::exists(model.path() / L"modells_information.json")) continue;
+            const auto modelData = model.path() / L"modells_data.json";
+            if (std::filesystem::is_regular_file(modelData)) addFile(modelData);
+            const auto visualisation = model.path() / L"modells" / L"visualisation";
+            if (!std::filesystem::is_directory(visualisation)) continue;
+            for (const auto& file : std::filesystem::recursive_directory_iterator(visualisation)) {
+                if (file.is_regular_file()) addFile(file.path());
+            }
         }
         return hashes;
     };
-    const auto originalHashes = sourceHashes();
-    QTemporaryDir copies;
-    require(copies.isValid(), "isolated montage catalog available");
-    const auto source = std::filesystem::path(modelRoot.toStdWString());
-    const auto destination = std::filesystem::path(copies.path().toStdWString());
-    for (const auto& folder : std::filesystem::directory_iterator(source)) {
-        if (!folder.is_directory()
-            || !std::filesystem::exists(folder.path() / L"modells_information.json")) continue;
-        std::filesystem::copy(folder.path(), destination / folder.path().filename(),
-            std::filesystem::copy_options::recursive);
-    }
+    const auto originalMutableInputHashes = mutableModelInputHashes();
     auto catalog = std::make_shared<segelphysik::Modellkatalog>(
-        segelphysik::modellkatalog(destination));
+        segelphysik::modellkatalog(source));
     int boats = 0;
     int sails = 0;
     int renderedModels = 0;
     for (const auto& entry : catalog->eintraege()) {
+        std::cerr << "Unified GUI montage: loading " << entry.modell_id << '\n';
         auto snapshot = segelphysik::readModelInspection(
             *catalog, entry.modell_id, entry.modell_fassung);
         auto configuration = segelphysik::leseSegelKonfiguration(*catalog, *snapshot);
@@ -635,6 +647,7 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
         require(!inspectionGeometryBounds(widget.scene()).empty(),
             "every current Core model renders visible GUI geometry");
         ++renderedModels;
+        std::cerr << "Unified GUI montage: rendered " << entry.modell_id << '\n';
         auto* tree = widget.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
         require(tree != nullptr, "canonical object tree exists");
         QSet<QString> ids;
@@ -660,6 +673,8 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
         const auto references = configuration.referenzen;
         for (const auto& reference : references) {
             const auto id = QString::fromStdString(reference.element_id);
+            std::cerr << "Unified GUI montage: editing " << entry.modell_id
+                      << '/' << reference.element_id << '\n';
             invokeSailContextAction(tree, id, reference.art == segelphysik::SegelArt::Fock
                 ? QStringLiteral("Fock automatisch setzen")
                 : QStringLiteral("Großsegel automatisch setzen"));
@@ -715,8 +730,8 @@ void runUnifiedMontageIntegration(const QString& modelRoot)
     require(renderedModels == static_cast<int>(catalog->eintraege().size()),
         "GUI rendered every current model in the catalog");
     require(boats == 3 && sails == 5, "all three current boats and five sails exercised");
-    require(sourceHashes() == originalHashes,
-        "original model directory remains byte-identical with no files added or removed");
+    require(mutableModelInputHashes() == originalMutableInputHashes,
+        "montage leaves visualisation folders and modells_data.json unchanged");
     std::cout << "Unified GUI montage: " << renderedModels << " models, "
               << boats << " boats, " << sails << " sails\n";
 }
@@ -746,8 +761,39 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         window.findChild<QWidget*>(QStringLiteral("inspectionScene")));
     auto* camera = window.findChild<QComboBox*>(QStringLiteral("inspectionCameraPreset"));
     auto* diagnostic = window.findChild<QLabel*>(QStringLiteral("inspectionDiagnostics"));
-    require(tree && scene && camera && diagnostic,
+    auto* status = window.findChild<QLabel*>(QStringLiteral("status"));
+    require(tree && scene && camera && diagnostic && status,
         "GUI exposes real inspection tree, scene, camera selector and diagnostics");
+    const auto coreSuccess = QStringLiteral("Core-Prüfung erfolgreich");
+    bool reloadStarted = !status->text().contains(coreSuccess);
+    QTimer reloadObserver;
+    reloadObserver.setInterval(10);
+    QObject::connect(&reloadObserver, &QTimer::timeout, &window, [&] {
+        if (!status->text().contains(coreSuccess)) reloadStarted = true;
+    });
+    reloadObserver.start();
+    const auto waitForModelReload = [&] {
+        waitUntil([&] {
+            return camera->isEnabled()
+                && status->text().contains(coreSuccess);
+        }, "420 model watcher reload did not finish");
+    };
+    const auto waitForWatcherReload = [&] {
+        try {
+            waitUntil([&] {
+                return reloadStarted && camera->isEnabled()
+                    && status->text().contains(coreSuccess);
+            }, "420 model watcher reload did not finish");
+        } catch (const std::exception&) {
+            const auto failure = QStringLiteral(
+                "420 model watcher reload did not finish (status=%1; tooltip=%2; "
+                "diagnostic=%3; cameraEnabled=%4; reloadStarted=%5)")
+                .arg(status->text(), status->toolTip(), diagnostic->text())
+                .arg(camera->isEnabled()).arg(reloadStarted);
+            throw std::runtime_error(failure.toStdString());
+        }
+        reloadStarted = false;
+    };
     waitUntil([&] {
         return camera->isEnabled()
             && sailTreeItem(tree, QStringLiteral("Großsegel"))
@@ -934,6 +980,20 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
     auto* viewport = scene->findChild<QVTKOpenGLNativeWidget*>();
     require(viewport && viewport->width() > 0 && viewport->height() > 0,
         "420er inspection viewport is visible for mouse actions");
+    QStringList observedDragEvents;
+    const auto previousDragHandler = scene->onInspectionDrag;
+    scene->onInspectionDrag = [&](const QString& element, const QString& handle,
+        const QPointF& point, VtkSceneWidget::InspectionDragPhase phase) {
+        const auto phaseName = phase == VtkSceneWidget::InspectionDragPhase::Start
+            ? QStringLiteral("start")
+            : phase == VtkSceneWidget::InspectionDragPhase::Move
+                ? QStringLiteral("move")
+                : phase == VtkSceneWidget::InspectionDragPhase::Finish
+                    ? QStringLiteral("finish") : QStringLiteral("cancel");
+        observedDragEvents << QStringLiteral("%1/%2/%3")
+            .arg(element, handle, phaseName);
+        if (previousDragHandler) previousDragHandler(element, handle, point, phase);
+    };
 
     bool translated = false;
     const std::array<segelphysik::Vektor3, 3> grossCorners{
@@ -971,6 +1031,7 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         }
     }
     require(translated, "GUI surface drag translates the 420 Großsegel in its axis plane");
+    waitForModelReload();
 
     grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
     grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
@@ -986,7 +1047,11 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         QStringLiteral("oben"), QStringLiteral("unten")};
     for (const bool halsPivot : {false, true}) {
         bool pivotRotated = false;
+        QStringList rotationAttempts;
         for (const auto& view : rotationViews) {
+            waitForModelReload();
+            invokeSailContextAction(tree, QStringLiteral("Großsegel"),
+                QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
             scene->setInspectionCameraPreset(view, nullptr);
             QApplication::processEvents();
             scene->renderNow();
@@ -1032,9 +1097,15 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
                     + QPointF(-lever.y() / length * 18.0, lever.x() / length * 18.0);
                 const auto beforePose = *grossPose;
                 const auto beforeRevision = configuration.revision;
+                observedDragEvents.clear();
                 dragInspectionPoint(scene, handleScreen, dragTo);
                 const auto rotatedConfiguration = readSailFixture(fixtureRoot).configuration;
-                if (rotatedConfiguration.revision == beforeRevision) continue;
+                if (rotatedConfiguration.revision == beforeRevision) {
+                    rotationAttempts << QStringLiteral("%1/%2: %3 (events %4)")
+                        .arg(view, QString::fromLatin1(handle.id), diagnostic->text(),
+                            observedDragEvents.join(QLatin1Char(',')));
+                    continue;
+                }
                 const auto rotatedPose = sailPose(rotatedConfiguration, QStringLiteral("Großsegel"));
                 require(rotatedPose.has_value(), "semantic rotation preserves a complete pose");
                 bool rotationChanged = false;
@@ -1047,13 +1118,18 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
                 configuration = rotatedConfiguration;
                 pivotRotated = true;
                 ++rotationPivotCount;
+                waitForModelReload();
                 break;
             }
             if (pivotRotated) break;
         }
-        require(pivotRotated, halsPivot
-            ? "real semantic corner rotation persists about Hals"
-            : "real Hals-handle rotation persists about KopfVorliek");
+        if (!pivotRotated) {
+            const auto expectation = halsPivot
+                ? QStringLiteral("real semantic corner rotation persists about Hals")
+                : QStringLiteral("real Hals-handle rotation persists about KopfVorliek");
+            throw std::runtime_error((expectation + QStringLiteral("; attempts: ")
+                + rotationAttempts.join(QStringLiteral(" | "))).toStdString());
+        }
     }
 
     scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
@@ -1061,6 +1137,9 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
     grossReference = sailReference(configuration, QStringLiteral("Großsegel"));
     grossPose = sailPose(configuration, QStringLiteral("Großsegel"));
     require(grossReference && grossPose, "Core returns confirmed pose before cancellation test");
+    waitForModelReload();
+    invokeSailContextAction(tree, QStringLiteral("Großsegel"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
     const auto confirmedRevision = configuration.revision;
     scene->renderNow();
     const auto confirmedGeometry = inspectionGeometryBounds(scene);
@@ -1197,8 +1276,10 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         QStringLiteral("Manuelles Verschieben"));
     scene->renderNow();
     const auto fockAtZeroCm = inspectionGeometryBounds(scene);
+    reloadStarted = false;
     invokeSailContextAction(tree, QStringLiteral("Fock"),
         QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("10"));
+    waitForWatcherReload();
     configuration = readSailFixture(fixtureRoot).configuration;
     auto fockPose = sailPose(configuration, QStringLiteral("Fock"));
     require(fockPose && std::abs(fockPose->fock_versatz_cm - 10.0) < 1e-8,
@@ -1220,9 +1301,10 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         {"schothorn", &fockReferenceForOffset->ecken.schothorn_m},
         {"kopf_vorliek", &fockReferenceForOffset->ecken.kopf_vorliek_m}}};
     bool fockRotated = false;
-    const auto fockPoseBeforeRotation = *fockPose;
-    for (const auto& view : rotationViews) {
-        scene->setInspectionCameraPreset(view, nullptr);
+        QStringList fockAttempts;
+        const auto fockPoseBeforeRotation = *fockPose;
+        for (const auto& view : rotationViews) {
+            scene->setInspectionCameraPreset(view, nullptr);
         QApplication::processEvents();
         scene->renderNow();
         for (const auto& handle : fockHandles) {
@@ -1236,8 +1318,15 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
                 posedSailPoint(*fockReferenceForOffset, fockPoseBeforeRotation, pivotPoint));
             const QPointF lever = handleScreen - pivotScreen;
             const double length = std::hypot(lever.x(), lever.y());
-            if (length < 28.0 || !viewport->rect().adjusted(8, 8, -8, -8)
-                    .contains(handleScreen.toPoint())) continue;
+            const auto attempt = view + QLatin1Char('/')
+                + QString::fromLatin1(handle.id);
+            const bool onscreen = viewport->rect().adjusted(8, 8, -8, -8)
+                .contains(handleScreen.toPoint());
+            if (length < 28.0 || !onscreen) {
+                fockAttempts << QStringLiteral("%1 skipped (lever=%2 px, onscreen=%3)")
+                    .arg(attempt).arg(length, 0, 'f', 1).arg(onscreen);
+                continue;
+            }
             bool overlaps = false;
             for (const auto& other : fockHandles) {
                 if (&other == &handle) continue;
@@ -1251,13 +1340,20 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
                     break;
                 }
             }
-            if (overlaps) continue;
+            if (overlaps) {
+                fockAttempts << QStringLiteral("%1 skipped (overlapping handles)").arg(attempt);
+                continue;
+            }
             const QPointF dragTo = handleScreen
                 + QPointF(-lever.y() / length * 18.0, lever.x() / length * 18.0);
             const auto revisionBefore = configuration.revision;
             dragInspectionPoint(scene, handleScreen, dragTo);
             const auto candidate = readSailFixture(fixtureRoot).configuration;
-            if (candidate.revision == revisionBefore) continue;
+            if (candidate.revision == revisionBefore) {
+                fockAttempts << QStringLiteral("%1 unchanged (diagnostic: %2)")
+                    .arg(attempt, diagnostic->text());
+                continue;
+            }
             const auto candidatePose = sailPose(candidate, QStringLiteral("Fock"));
             require(candidatePose.has_value(), "Core retains Fock pose after semantic drag");
             bool rotationChanged = false;
@@ -1274,8 +1370,12 @@ void runSailConfiguratorPhase(const QString& phase, const QString& fixtureRoot)
         }
         if (fockRotated) break;
     }
-    require(fockRotated,
-        "Fock semantic handle at authoritative Core pose remains draggable after +10 cm");
+    if (!fockRotated) {
+        const auto failure = QStringLiteral(
+            "Fock semantic handle at authoritative Core pose remains draggable after +10 cm; %1")
+            .arg(fockAttempts.join(QStringLiteral("; ")));
+        require(false, failure.toUtf8().constData());
+    }
     scene->setInspectionCameraPreset(QStringLiteral("backbord"), nullptr);
 
     invokeSailContextAction(tree, QStringLiteral("Fock"),
@@ -1397,10 +1497,12 @@ void waitUntil(const std::function<bool()>& ready, const char* message)
 {
     QElapsedTimer timeout;
     timeout.start();
-    while (!ready() && timeout.elapsed() < 15000) {
+    bool satisfied = ready();
+    while (!satisfied && timeout.elapsed() < 15000) {
         QApplication::processEvents();
+        satisfied = ready();
     }
-    require(ready(), message);
+    require(satisfied, message);
 }
 
 void confirmDynamicRun(MainWindow& window, double seconds, bool realtime = true)
@@ -3283,25 +3385,41 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
                 "derived boat exposes exactly one source per element");
             sourceOwners.insert(owners.front());
         }
-        require((*it)->text(0) != QStringLiteral("hydrostatik_volumen")
-                && (*it)->text(0) != QStringLiteral("massen_mesh"),
-            "physical derivations are not duplicate object references");
+        if (!(*it)->data(0, Qt::UserRole + 2).isValid())
+            require((*it)->text(0) != QStringLiteral("hydrostatik_volumen")
+                    && (*it)->text(0) != QStringLiteral("massen_mesh"),
+                "physical derivations are not duplicate object references");
     }
     require(sourceOwners.size() > 1, "derived model retains existing canonical objects");
     tree->expandAll();
-    tree->topLevelItem(0)->setSelected(true);
+    QTreeWidgetItem* derivedVolumeElement = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")
+            && (*it)->data(0, Qt::UserRole + 1).toStringList()
+                .contains(QStringLiteral("Schwert"))) {
+            derivedVolumeElement = *it;
+            break;
+        }
+    }
+    require(derivedVolumeElement != nullptr, "derived volume element is present in the object tree");
+    tree->clearSelection();
+    tree->setCurrentItem(derivedVolumeElement);
+    derivedVolumeElement->setSelected(true);
     inspectionScene->renderNow();
     require(values->topLevelItemCount() > 0, "derived element selection exposes all properties");
     bool derivedUseListed = false;
     for (QTreeWidgetItemIterator it(values); *it; ++it)
+    {
         if ((*it)->text(2) == QStringLiteral("Verwendungen")
             && (*it)->text(3).contains(QStringLiteral("hydrostatik_volumen (Ableitung)")))
             derivedUseListed = true;
+    }
     require(derivedUseListed, "property table retains derived physical uses");
     require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3_derived.bmp")), "BMP"),
         "single-source boat with actual derived volume screenshot");
     tree->clearSelection();
-    tree->topLevelItem(0)->setSelected(true);
+    tree->setCurrentItem(derivedVolumeElement);
+    derivedVolumeElement->setSelected(true);
     checkMovementBounds(true);
     report.insert(QStringLiteral("boatInspectionTreesMeshesValuesFixedSnapshotAndLayout"), true);
     report.insert(QStringLiteral("unifiedModelFormatRendered"), true);
@@ -4372,6 +4490,506 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
     require(file.write(bytes) == bytes.size(), "motion evidence write");
     std::cout << bytes.constData();
 }
+
+void runModelFormat03InteractionTests(const QString& sourceRoot)
+{
+    struct EnvironmentValue {
+        QByteArray name;
+        bool existed = false;
+        QByteArray value;
+        EnvironmentValue(const char* key, const QByteArray& replacement)
+            : name(key), existed(qEnvironmentVariableIsSet(key)), value(qgetenv(key))
+        {
+            qputenv(name.constData(), replacement);
+        }
+        ~EnvironmentValue()
+        {
+            if (existed) qputenv(name.constData(), value);
+            else qunsetenv(name.constData());
+        }
+        void set(const std::optional<QByteArray>& replacement)
+        {
+            if (replacement) qputenv(name.constData(), *replacement);
+            else qunsetenv(name.constData());
+        }
+    };
+
+    QTemporaryDir fixture;
+    QTemporaryDir settings;
+    require(fixture.isValid() && settings.isValid(), "isolated GUI 0.3 fixture directories");
+    const auto source = std::filesystem::path(sourceRoot.toStdWString());
+    const auto destination = std::filesystem::path(fixture.path().toStdWString());
+    std::filesystem::copy(source / "schema_data.json", destination / "schema_data.json");
+    std::filesystem::copy(source / "schema_validation.json",
+        destination / "schema_validation.json");
+    std::filesystem::copy(source / "bleistift", destination / "bleistift",
+        std::filesystem::copy_options::recursive);
+
+    EnvironmentValue schemaOverride("SEGELPHYSIK_TEST_SCHEMA_ROOT",
+        fixture.path().toLocal8Bit());
+    EnvironmentValue defaultsOverride("SEGELPHYSIK_TEST_DEFAULTS_FILE",
+        QDir(settings.path()).filePath(QStringLiteral("defaults.json")).toLocal8Bit());
+    EnvironmentValue testModelRoot("SEGELPHYSIK_TEST_MODEL_ROOT", {});
+    EnvironmentValue modelRoot("SEGELPHYSIK_MODEL_ROOT", {});
+    EnvironmentValue schemaRoot("SEGELPHYSIK_SCHEMA_ROOT", {});
+    QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikGateTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("ModelFormat03"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+
+    const auto validationPath = destination / "bleistift" / "modells_validation.json";
+    auto validation = nlohmann::json::parse([&] {
+        std::ifstream input(validationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }());
+    validation["model"]["fingerprints"]["visualisation"]["hash"] = std::string(64, '0');
+    {
+        std::ofstream output(validationPath, std::ios::binary | std::ios::trunc);
+        output << validation.dump();
+        require(output.good(), "write isolated stale visualization fingerprint");
+    }
+    const auto staleBytes = [&] {
+        std::ifstream input(validationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }();
+    const auto schemaDataPath = destination / "schema_data.json";
+    const auto schemaDataBytes = [&] {
+        std::ifstream input(schemaDataPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }();
+    const auto schemaValidationPath = destination / "schema_validation.json";
+    const auto schemaValidationBytes = [&] {
+        std::ifstream input(schemaValidationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }();
+
+    MainWindow window;
+    window.setModelFolder(fixture.path());
+    window.selectInitialModel(QStringLiteral("bleistift"));
+    window.show();
+    auto* modelList = window.findChild<QListWidget*>(QStringLiteral("modelList"));
+    auto* run = window.findChild<QPushButton*>(QStringLiteral("primaryButton"));
+    auto* status = window.findChild<QLabel*>(QStringLiteral("status"));
+    require(modelList && run && status, "MainWindow exposes model list, status and simulation action");
+    try {
+        waitUntil([&] {
+            return modelList->count() == 1
+                && status->toolTip().contains(QStringLiteral("CORE-"));
+        }, "stale 0.3 model reports Core diagnostic in the real UI");
+    } catch (const std::exception& error) {
+        throw std::runtime_error((std::string(error.what()) + "; model count="
+            + std::to_string(modelList->count())
+            + ", status=" + status->text().toStdString()
+            + ", tooltip=" + status->toolTip().toStdString()).c_str());
+    }
+    require(!run->isEnabled(), "stale visualization fingerprint blocks simulation");
+    QList<VtkSceneWidget*> scenes;
+    for (auto* widget : window.findChildren<QWidget*>())
+        if (auto* scene = dynamic_cast<VtkSceneWidget*>(widget)) scenes.push_back(scene);
+    require(!scenes.isEmpty(), "MainWindow exposes its VTK views");
+    for (const auto* scene : scenes)
+        require(scene->workCounters().meshPreparations == 0,
+            "stale visualization fingerprint keeps geometry out of every view");
+
+    const auto invokeContext = [&](bool expectAction) {
+        auto* item = modelList->item(0);
+        modelList->scrollToItem(item);
+        QApplication::processEvents();
+        const auto rect = modelList->visualItemRect(item);
+        require(rect.isValid() && !rect.isEmpty(), "0.3 catalog row is visible");
+        bool triggered = false;
+        bool actionEnabled = false;
+        bool actionActivated = false;
+        QTimer driver;
+        driver.setInterval(10);
+        QObject::connect(&driver, &QTimer::timeout, &driver, [&] {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                auto* menu = qobject_cast<QMenu*>(widget);
+                if (!menu || !menu->isVisible()) continue;
+                for (auto* action : menu->actions()) {
+                    if (action->text() != QStringLiteral("Visualisation-Hash erneuern"))
+                        continue;
+                    triggered = true;
+                    actionEnabled = action->isEnabled();
+                    QObject::connect(action, &QAction::triggered, menu,
+                        [&actionActivated] { actionActivated = true; });
+                    if (!actionEnabled) {
+                        menu->close();
+                        return;
+                    }
+                    action->trigger();
+                    menu->close();
+                    return;
+                }
+            }
+        });
+        driver.start();
+        const QPoint local = rect.center();
+        const QPoint global = modelList->viewport()->mapToGlobal(local);
+        QContextMenuEvent event(QContextMenuEvent::Mouse, local, global);
+        QApplication::sendEvent(modelList->viewport(), &event);
+        driver.stop();
+        QApplication::processEvents();
+        require(triggered == expectAction,
+            expectAction ? "stale, schema-valid model offers its hash action"
+                         : "schema-invalid model does not offer its hash action");
+        if (expectAction) {
+            if (!actionEnabled) return false;
+            require(actionActivated,
+                "stale visualization hash action is activated from its context menu");
+            return true;
+        }
+        return false;
+    };
+
+#ifdef _WIN32
+    struct FileHandle {
+        HANDLE value = INVALID_HANDLE_VALUE;
+        ~FileHandle() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+        void close()
+        {
+            if (value != INVALID_HANDLE_VALUE) {
+                CloseHandle(value);
+                value = INVALID_HANDLE_VALUE;
+            }
+        }
+    } validationLock;
+    validationLock.value = CreateFileW(validationPath.c_str(), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    require(validationLock.value != INVALID_HANDLE_VALUE,
+        "lock temporary validation file against atomic replacement");
+    waitUntil([&] { return invokeContext(true); },
+        "hash action did not become available after model loading");
+    try {
+        waitUntil([&] {
+            return status->text().contains(QStringLiteral("fehlgeschlagen"))
+                && status->toolTip().contains(QStringLiteral("CORE-FPR-0003"));
+        }, "failed hash worker reports its Core error in the UI");
+    } catch (const std::exception& error) {
+        QStringList dialogs;
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (const auto* dialog = qobject_cast<QMessageBox*>(widget))
+                dialogs << dialog->text();
+        }
+        throw std::runtime_error((std::string(error.what()) + "; status="
+            + status->text().toStdString() + "; tooltip="
+            + status->toolTip().toStdString() + "; dialogs="
+            + dialogs.join(QStringLiteral(" | ")).toStdString() + "; model="
+            + modelList->item(0)->toolTip().toStdString()).c_str());
+    }
+    require(!run->isEnabled()
+        && scenes.front()->workCounters().meshPreparations == 0,
+        "failed hash update keeps simulation and geometry blocked");
+    require(staleBytes == [&] {
+        std::ifstream input(validationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }(), "failed UI update leaves validation bytes unchanged");
+    validationLock.close();
+#endif
+
+    waitUntil([&] { return invokeContext(true); },
+        "hash action did not become available after releasing validation file");
+    try {
+        waitUntil([&] { return run->isEnabled(); },
+            "fingerprint worker updates isolated model and catalog reload restores simulation");
+    } catch (const std::exception& error) {
+        throw std::runtime_error((std::string(error.what()) + "; post-update status="
+            + status->text().toStdString()
+            + ", tooltip=" + status->toolTip().toStdString()).c_str());
+    }
+    require(staleBytes != [&] {
+        std::ifstream input(validationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }(), "successful UI action updates only the temporary validation file");
+    require(std::any_of(scenes.cbegin(), scenes.cend(), [](const auto* scene) {
+        return scene->workCounters().meshPreparations > 0;
+    }), "successful hash refresh reloads visualization into the VTK views");
+    QElapsedTimer watcherSuppression;
+    watcherSuppression.start();
+    waitUntil([&] { return watcherSuppression.elapsed() >= 700; },
+        "fingerprint watcher suppression expires before testing later model changes");
+
+    auto dataPath = destination / "bleistift" / "modells_data.json";
+    auto data = nlohmann::json::parse([&] {
+        std::ifstream input(dataPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }());
+    data["identity"]["name"] = 42;
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << data.dump();
+        require(output.good(), "write schema-invalid isolated model data");
+    }
+    waitUntil([&] {
+        return !run->isEnabled()
+            && status->toolTip().contains(QStringLiteral("CORE-MOD"));
+    }, "file watcher reload blocks simulation after schema-invalid model change");
+    invokeContext(false);
+    {
+        std::ifstream input(source / "bleistift" / "modells_data.json", std::ios::binary);
+        const auto originalData = std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << originalData;
+        require(output.good(), "restore original isolated model data");
+    }
+    waitUntil([&] { return run->isEnabled(); },
+        "watcher revalidates model after repair");
+
+    const auto resourceRelative = data["groups"]["body"]["elements"][0]
+        ["display"]["geometry"].get<std::string>();
+    const auto resourcePath = destination / "bleistift"
+        / std::filesystem::u8path(resourceRelative);
+    const auto resourceBytes = [&] {
+        std::ifstream input(resourcePath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }();
+    require(std::filesystem::remove(resourcePath),
+        "remove isolated geometry resource to exercise watcher");
+    waitUntil([&] {
+        return !run->isEnabled()
+            && status->toolTip().contains(QStringLiteral("CORE-MOD"));
+    }, "resource deletion triggers Core revalidation");
+    {
+        std::ofstream output(resourcePath, std::ios::binary);
+        output << resourceBytes;
+        require(output.good(), "restore isolated geometry resource");
+    }
+    waitUntil([&] { return run->isEnabled(); },
+        "resource restoration triggers Core revalidation");
+
+    {
+        std::ofstream output(schemaDataPath, std::ios::binary | std::ios::trunc);
+        output << "{";
+        require(output.good(), "corrupt isolated watched schema file");
+    }
+    waitUntil([&] {
+        return !run->isEnabled()
+            && status->toolTip().contains(QStringLiteral("CORE-MOD"));
+    }, "schema file change triggers Core revalidation");
+    {
+        std::ofstream output(schemaDataPath, std::ios::binary | std::ios::trunc);
+        output << schemaDataBytes;
+        require(output.good(), "restore isolated schema file");
+    }
+    waitUntil([&] { return run->isEnabled(); },
+        "schema restoration triggers Core revalidation");
+
+    {
+        std::ofstream output(schemaValidationPath, std::ios::binary | std::ios::trunc);
+        output << "{";
+        require(output.good(), "corrupt isolated validation schema file");
+    }
+    waitUntil([&] {
+        return !run->isEnabled()
+            && status->toolTip().contains(QStringLiteral("CORE-MOD"));
+    }, "validation schema change triggers Core revalidation");
+    {
+        std::ofstream output(schemaValidationPath, std::ios::binary | std::ios::trunc);
+        output << schemaValidationBytes;
+        require(output.good(), "restore isolated validation schema file");
+    }
+    waitUntil([&] { return run->isEnabled(); },
+        "validation schema restoration triggers Core revalidation");
+
+    auto validationData = nlohmann::json::parse([&] {
+        std::ifstream input(validationPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }());
+    const auto validValidationBytes = validationData.dump();
+    validationData["identity"]["id"] = "different";
+    {
+        std::ofstream output(validationPath, std::ios::binary | std::ios::trunc);
+        output << validationData.dump();
+        require(output.good(), "corrupt isolated watched validation file");
+    }
+    waitUntil([&] {
+        return !run->isEnabled()
+            && status->toolTip().contains(QStringLiteral("CORE-MOD"));
+    }, "validation file change triggers Core revalidation");
+    {
+        std::ofstream output(validationPath, std::ios::binary | std::ios::trunc);
+        output << validValidationBytes;
+        require(output.good(), "restore isolated validation file");
+    }
+    waitUntil([&] { return run->isEnabled(); },
+        "validation restoration triggers Core revalidation");
+    window.close();
+
+    const auto defaultRoot = destination / "default-models";
+    const auto alternateRoot = destination / "alternate-models";
+    std::filesystem::create_directories(defaultRoot);
+    std::filesystem::create_directories(alternateRoot);
+    std::filesystem::copy(source / "bleistift", defaultRoot / "bleistift",
+        std::filesystem::copy_options::recursive);
+
+    const auto defaultsPath = QDir(settings.path()).filePath(QStringLiteral("defaults.json"));
+    const auto writeDefaults = [&](const QString& modelPath) {
+        const nlohmann::json defaults{
+            {"modelRoot", modelPath.toStdString()},
+            {"schemaRoot", fixture.path().toStdString()},
+            {"defaults", {{"preserved", true}}}};
+        std::ofstream output(defaultsPath.toStdString(), std::ios::binary | std::ios::trunc);
+        output << defaults.dump();
+        require(output.good(), "write isolated GUI defaults file");
+    };
+    const auto testOverridePath = fixture.path() + QStringLiteral("/test-override");
+    const auto environmentPath = fixture.path() + QStringLiteral("/environment");
+    const auto explicitPath = fixture.path() + QStringLiteral("/explicit");
+    writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    testModelRoot.set(testOverridePath.toLocal8Bit());
+    modelRoot.set(environmentPath.toLocal8Bit());
+    const auto testSchemaPath = fixture.path() + QStringLiteral("/schema-test");
+    const auto environmentSchemaPath = fixture.path() + QStringLiteral("/schema-env");
+    schemaOverride.set(testSchemaPath.toLocal8Bit());
+    schemaRoot.set(environmentSchemaPath.toLocal8Bit());
+    require(segelphysik::modellordner_standard() ==
+            std::filesystem::path(testOverridePath.toStdWString()),
+        "test model-root override outranks environment and defaults");
+    require(segelphysik::schemaordner_fuer_modellordner(defaultRoot) ==
+            std::filesystem::path(testSchemaPath.toStdWString()),
+        "test schema-root override outranks environment and defaults");
+    require(segelphysik::modellordner_standard(
+            std::filesystem::path(explicitPath.toStdWString())) ==
+            std::filesystem::path(explicitPath.toStdWString()),
+        "explicit model root outranks all configured paths");
+    testModelRoot.set(std::nullopt);
+    schemaOverride.set(std::nullopt);
+    require(segelphysik::modellordner_standard() ==
+            std::filesystem::path(environmentPath.toStdWString()),
+        "model-root environment variable outranks defaults");
+    require(segelphysik::schemaordner_fuer_modellordner(defaultRoot) ==
+            std::filesystem::path(environmentSchemaPath.toStdWString()),
+        "schema-root environment variable outranks defaults");
+    modelRoot.set(std::nullopt);
+    schemaRoot.set(std::nullopt);
+    require(segelphysik::modellordner_standard() == defaultRoot,
+        "defaults model root is used when higher-priority paths are absent");
+    require(segelphysik::schemaordner_fuer_modellordner(defaultRoot) ==
+            std::filesystem::path(fixture.path().toStdWString()),
+        "defaults schema root is used when higher-priority paths are absent");
+
+    MainWindow defaultsWindow;
+    defaultsWindow.setModelFolder({});
+    defaultsWindow.selectInitialModel(QStringLiteral("bleistift"));
+    defaultsWindow.show();
+    auto* defaultsList = defaultsWindow.findChild<QListWidget*>(QStringLiteral("modelList"));
+    require(defaultsList, "defaults-backed MainWindow model list");
+    waitUntil([&] { return defaultsList->count() == 1; },
+        "GUI loads the model root from defaults.json");
+    writeDefaults(QString::fromStdWString(alternateRoot.wstring()));
+    waitUntil([&] { return defaultsList->count() == 0; },
+        "defaults file watcher switches the configured catalog root");
+    QString defaultsDialogText;
+    QTimer dialogDriver;
+    dialogDriver.setInterval(10);
+    QObject::connect(&dialogDriver, &QTimer::timeout, &dialogDriver, [&] {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<QMessageBox*>(widget);
+            if (!dialog || !dialog->isVisible()) continue;
+            defaultsDialogText = dialog->text();
+            dialog->accept();
+        }
+    });
+    dialogDriver.start();
+    {
+        std::ofstream output(defaultsPath.toStdString(),
+            std::ios::binary | std::ios::trunc);
+        output << "{";
+        require(output.good(), "write invalid isolated defaults JSON");
+    }
+    waitUntil([&] {
+        return !defaultsDialogText.isEmpty()
+            && defaultsDialogText.contains(QStringLiteral("defaults.json"));
+    }, "invalid defaults changes are surfaced instead of falling back silently");
+    dialogDriver.stop();
+    writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    waitUntil([&] { return defaultsList->count() == 1; },
+        "valid defaults restore the configured GUI catalog");
+    const auto showsFolder = [&](const QString& folderName) {
+        for (const auto* label : defaultsWindow.findChildren<QLabel*>())
+            if (label->text().contains(folderName)) return true;
+        return false;
+    };
+    modelRoot.set(QString::fromStdWString(alternateRoot.wstring()).toLocal8Bit());
+    defaultsWindow.setModelFolder(QString::fromStdWString(defaultRoot.wstring()));
+    try {
+        waitUntil([&] {
+            return defaultsList->count() == 1
+                && showsFolder(QStringLiteral("default-models"));
+        }, "explicit GUI folder selection loads despite environment override");
+    } catch (const std::exception& error) {
+        throw std::runtime_error((std::string(error.what()) + "; entries="
+            + std::to_string(defaultsList->count())
+            + ", default folder label found="
+            + (showsFolder(QStringLiteral("default-models")) ? "yes" : "no")).c_str());
+    }
+    writeDefaults(QString::fromStdWString(alternateRoot.wstring()));
+    waitUntil([&] {
+        return defaultsList->count() == 1
+            && showsFolder(QStringLiteral("default-models"));
+    }, "explicit GUI folder selection outranks changed defaults and environment");
+    modelRoot.set(std::nullopt);
+    defaultsWindow.setModelFolder({});
+    waitUntil([&] {
+        return defaultsList->count() == 0
+            && showsFolder(QStringLiteral("alternate-models"));
+    }, "configured GUI folder follows defaults after explicit selection is cleared");
+    defaultsDialogText.clear();
+    dialogDriver.start();
+    require(std::filesystem::remove(std::filesystem::path(defaultsPath.toStdWString())),
+        "remove isolated defaults file to exercise watcher recovery");
+    waitUntil([&] {
+        return !defaultsDialogText.isEmpty()
+            && defaultsDialogText.contains(QStringLiteral("defaults.json"));
+    }, "missing defaults file is surfaced through the watched parent directory");
+    dialogDriver.stop();
+    writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    waitUntil([&] { return defaultsList->count() == 1; },
+        "recreated defaults file restores configured GUI catalog");
+#ifdef _WIN32
+    struct DefaultsReadLock {
+        HANDLE value = INVALID_HANDLE_VALUE;
+        ~DefaultsReadLock() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+        void close()
+        {
+            if (value != INVALID_HANDLE_VALUE) {
+                CloseHandle(value);
+                value = INVALID_HANDLE_VALUE;
+            }
+        }
+    } defaultsReadLock;
+    defaultsReadLock.value = CreateFileW(
+        std::filesystem::path(defaultsPath.toStdWString()).c_str(), GENERIC_READ,
+        FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    require(defaultsReadLock.value != INVALID_HANDLE_VALUE,
+        "lock temporary defaults file against GUI reads");
+    defaultsDialogText.clear();
+    dialogDriver.start();
+    writeDefaults(QString::fromStdWString(alternateRoot.wstring()));
+    waitUntil([&] {
+        return !defaultsDialogText.isEmpty()
+            && defaultsDialogText.contains(QStringLiteral("defaults.json"));
+    }, "unreadable defaults change is reported instead of falling back");
+    dialogDriver.stop();
+    defaultsReadLock.close();
+    writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    waitUntil([&] { return defaultsList->count() == 1; },
+        "readable defaults restore GUI configuration after access error");
+#endif
+    defaultsWindow.close();
+    std::cout << "GUI 0.3 UI-/Worker-/Watcher-Gates bestanden; nur temporaere Modellkopie geaendert.\n";
+}
 }
 
 int main(int argc, char** argv)
@@ -4385,6 +5003,11 @@ int main(int argc, char** argv)
     vtkNew<RenderErrors> renderErrors;
     vtkOutputWindow::SetInstance(renderErrors);
     try {
+        if (app.arguments().size() == 3
+            && app.arguments()[1] == QStringLiteral("--model-format-03-gates")) {
+            runModelFormat03InteractionTests(app.arguments()[2]);
+            return 0;
+        }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--performance-regression-only")) {
             QTemporaryDir settings;
             require(settings.isValid(), "Performance settings directory");

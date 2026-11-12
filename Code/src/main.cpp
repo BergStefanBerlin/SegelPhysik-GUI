@@ -25,12 +25,14 @@ int main(int argc, char* argv[])
     if (argument.isEmpty() || !info.exists()) {
         window.setModelFolder(remembered);
         window.selectInitialModel({});
-    } else if (info.isDir() && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_information.json")))) {
+    } else if (info.isDir()
+        && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_data.json")))
+        && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_information.json")))) {
         // Katalogordner
         window.setModelFolder(argument);
         window.selectInitialModel({});
     } else {
-        // Modellordner oder modells_information.json: Katalog ist der übergeordnete Ordner;
+        // Modellordner oder Modelldatei: Katalog ist der übergeordnete Ordner;
         // die Vorauswahl folgt nach dem Katalogabruf.
         const QString modelDir = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
         window.setModelFolder(QFileInfo(modelDir).absolutePath());

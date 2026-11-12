@@ -2,7 +2,14 @@
   "status": "finalisiert",
   "thema": "Offene Entscheidungen zur Anbindung der GUI an die Modellkatalog-Schnittstelle",
   "spezifikation": "../Spezifikation_GUI_Modellkatalog_Anbindung.md",
-  "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu allen Punkten übernommen. Übernommene Punkte verweisen auf ihre A-Kennung; zurückgestellte Punkte sind keine Anforderungen.",
+  "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu IDEE-G-00015 bis IDEE-G-00017 übernommen. IDEE-G-00089 und IDEE-G-00090 wurden am 10.11.2026 für G-0.21 finalisiert; übernommene Punkte verweisen auf ihre A-Kennung.",
+  "finalisierte_zuordnungen": [
+    {"idee": "IDEE-G-00015", "anforderung": "A-G-00020"},
+    {"idee": "IDEE-G-00016", "anforderung": "A-G-00020"},
+    {"idee": "IDEE-G-00017", "anforderung": "A-G-00019"},
+    {"idee": "IDEE-G-00089", "anforderungen": ["A-G-00147", "A-G-00148"]},
+    {"idee": "IDEE-G-00090", "anforderungen": ["A-G-00149", "A-G-00150"]}
+  ],
   "punkte": [
     {
       "id": "IDEE-G-00015",
@@ -30,6 +37,26 @@
       "vorschlag": "Überwachung bleibt in der GUI (Ordnerwahl ist GUI-Sache); bei Änderung ruft sie modellkatalog erneut ab.",
       "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
       "uebernommen_als": "A-G-00019"
+    },
+    {
+      "id": "IDEE-G-00089",
+      "status": "angenommen",
+      "thema": "Anzeige schema-ungueltiger 0.3-Modelle",
+      "bezug": "../Spezifikation_GUI_Modellkatalog_Anbindung.md#gui-betrieb-mit-modellformat-03",
+      "anforderungen": ["A-G-00147", "A-G-00148"],
+      "umsetzungsschritte": ["U-G-000156", "U-G-000157", "U-G-000158"],
+      "entscheidung": "Ein schema-ungueltiges Modell wird weder dargestellt noch simuliert. Ist modells_data.json schema-valide und der visualisation-Hash aktuell, darf die vollstaendige Ansicht auch bei Fehlern anderer Fingerprint-Bereiche angezeigt werden; alle Fehler bleiben sichtbar und sperren die Simulation. Bei veraltetem visualisation-Hash zeigt ein Rechtsklickbefehl Visualisation-Hash erneuern die Core-Aktualisierung an; danach wird neu geprueft.",
+      "quelle": "Nutzerfreigabe zur Finalisierung am 10.11.2026."
+    },
+    {
+      "id": "IDEE-G-00090",
+      "status": "angenommen",
+      "thema": "Aktiver Modellpfad und Cutover",
+      "bezug": "../Spezifikation_GUI_Modellkatalog_Anbindung.md#a-g-00150-gui-abnahme-des-modellordner-cutovers",
+      "anforderungen": ["A-G-00149", "A-G-00150"],
+      "umsetzungsschritte": ["U-G-000159", "U-G-000160", "U-G-000161"],
+      "entscheidung": "Die gemeinsame Laufzeitdatei und Test-/Benutzerauswahl bestimmen Pfade. Physisches Umbenennen und Verschieben erfolgt erst nach Core- und GUI-Vorprüfungen im getrennten Core-Plan; die GUI prüft den finalen Pfad erneut, ohne Modellordner selbst zu verschieben.",
+      "quelle": "Nutzerfreigabe zur Finalisierung am 10.11.2026."
     }
   ]
 }

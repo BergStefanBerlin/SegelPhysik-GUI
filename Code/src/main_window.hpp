@@ -69,11 +69,14 @@ private:
     void updateSceneActivity(bool synchronize = true);
     void chooseModelFolder();
     void reloadCatalog();
+    void updateVisualizationFingerprint(const QString& modelId);
     void applyCatalog(const CatalogSnapshot& snapshot);
     void scheduleFolderRescan();
     void applyPendingSelection();
     const ModelEntry* entryFor(const QString& id) const;
     void openModel(const QString& id);
+    void modelDisplayOpened(const ModelEntry& entry,
+        const std::shared_ptr<OpenedModel>& opened);
     void modelOpened(const ModelEntry& entry, const std::shared_ptr<OpenedModel>& opened,
         const ModelValidation& validation);
     void startSimulation();
@@ -237,6 +240,9 @@ private:
     QVector<QJsonObject> states_;
     QString runtimeInfo_;
     QString modelFolder_;
+    bool useConfiguredModelFolder_ = false;
+    bool defaultsReloadPending_ = false;
+    bool fingerprintWatcherSuppressed_ = false;
     QString pendingSelection_;
     bool selectionPending_ = false;
     bool reopenAfterCatalog_ = false;
@@ -252,4 +258,5 @@ private:
     QSet<QThread*> openThreads_;
     QPointer<QThread> simulationThread_;
     QPointer<QThread> catalogThread_;
+    QPointer<QThread> fingerprintThread_;
 };

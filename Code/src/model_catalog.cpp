@@ -1,8 +1,10 @@
 #include "model_catalog.hpp"
 
 #include <segelphysik/core.hpp>
+#include <segelphysik/defaults.hpp>
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
@@ -15,7 +17,8 @@
 
 namespace {
 
-const QString modelFileName = QStringLiteral("modells_information.json");
+const QString modelFileName = QStringLiteral("modells_data.json");
+const QString legacyModelFileName = QStringLiteral("modells_information.json");
 
 std::filesystem::path nativePath(const QString& path)
 {
@@ -111,6 +114,9 @@ CatalogSnapshot loadCatalog(const QString& folder)
             entry.description = item.beschreibung ? text(*item.beschreibung) : QString();
             entry.version = text(item.modell_fassung);
             entry.usable = item.status == "verwendbar";
+            entry.schemaValid = item.schema_valide;
+            entry.visualizationHashCurrent = item.visualisierung_hash_aktuell;
+            entry.fingerprintsCurrent = item.fingerprints_aktuell;
             entry.errorCount = static_cast<int>(item.fehleranzahl);
             try {
                 entry.path = QString::fromStdWString(segelphysik::katalog_datei(
@@ -142,27 +148,61 @@ CatalogSnapshot loadCatalog(const QString& folder)
     return snapshot;
 }
 
-QStringList watchedModelPaths(const QString& folder)
+QStringList watchedModelPaths(const QString& folder, QStringList* diagnostics)
 {
     QStringList paths;
+    const auto watchDirectory = [&](QDir directory) {
+        while (!directory.exists() && directory.cdUp()) {}
+        if (directory.exists()) paths << directory.absolutePath();
+    };
+    const auto report = [&](const std::exception& error) {
+        if (!diagnostics) throw;
+        diagnostics->push_back(QString::fromUtf8(error.what()));
+    };
+    try {
+        const QFileInfo configuration(QString::fromStdWString(
+            segelphysik::laufzeit_defaults_datei().wstring()));
+        if (configuration.exists()) paths << configuration.absoluteFilePath();
+        watchDirectory(configuration.dir());
+    } catch (const std::exception& error) {
+        report(error);
+    }
     const QDir dir(folder);
     if (folder.isEmpty() || !dir.exists()) {
+        if (!folder.isEmpty()) watchDirectory(QFileInfo(folder).dir());
+        paths.removeDuplicates();
         return paths;
     }
     paths << dir.absolutePath();
-    if (dir.exists(modelFileName)) {
-        paths << dir.absoluteFilePath(modelFileName);
-    }
-    for (const auto& sub : modelDirectories(dir)) {
+    auto directories = modelDirectories(dir);
+    directories.prepend(QFileInfo(dir.absolutePath()));
+    bool format03 = false;
+    for (const auto& sub : directories) {
         const QDir subDir(sub.absoluteFilePath());
-        if (!subDir.exists(modelFileName)) {
-            continue;
-        }
+        if (!subDir.exists(modelFileName) && !subDir.exists(legacyModelFileName)) continue;
+        format03 = format03 || subDir.exists(modelFileName);
         paths << subDir.absolutePath();
-        for (const auto& file : subDir.entryInfoList(QDir::Files)) {
-            paths << file.absoluteFilePath();
+        QDirIterator entries(subDir.absolutePath(),
+            QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+            QDirIterator::Subdirectories);
+        while (entries.hasNext()) {
+            const QFileInfo entry(entries.next());
+            paths << entry.absoluteFilePath();
         }
     }
+    if (format03) {
+        try {
+            const QDir schemas(QString::fromStdWString(
+                segelphysik::schemaordner_fuer_modellordner(nativePath(folder)).wstring()));
+            watchDirectory(schemas);
+            for (const auto& schema : {QStringLiteral("schema_data.json"),
+                     QStringLiteral("schema_validation.json")})
+                if (schemas.exists(schema)) paths << schemas.absoluteFilePath(schema);
+        } catch (const std::exception& error) {
+            report(error);
+        }
+    }
+    paths.removeDuplicates();
     return paths;
 }
 
@@ -176,6 +216,45 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
     data.version = version;
     data.path = QString::fromStdWString(
         segelphysik::katalog_datei(catalog, id, fassung).wstring());
+    data.modelFormat03 = QFileInfo(data.path).fileName() == modelFileName;
+    const auto* entry = catalog.eintrag(id);
+    if (!entry || !entry->schema_valide || !entry->visualisierung_hash_aktuell) {
+        data.geometry.modell_id = id;
+        data.geometry.modell_fassung = fassung;
+        try {
+            for (const auto& diagnostic : segelphysik::modelldiagnose(catalog, id, fassung)) {
+                data.geometry.diagnosen.push_back(diagnostic);
+                data.partDiagnostics << diagnosticText(diagnostic);
+            }
+        } catch (const std::exception& error) {
+            data.partDiagnostics << QString::fromUtf8(error.what());
+        }
+        return data;
+    }
+    if (data.modelFormat03) {
+        data.structure = segelphysik::modellstruktur(catalog, id, fassung);
+        data.geometry = segelphysik::darstellungsgeometrie(catalog, id, fassung);
+        for (const auto& group : data.structure.gruppen) {
+            for (const auto& element : group.elemente) {
+                const auto elementId = text(element.id);
+                data.elementGroups.insert(elementId, text(group.id));
+                if (element.bewegung)
+                    data.elementMovements.insert(elementId, *element.bewegung);
+            }
+        }
+        for (const auto& part : data.geometry.teile)
+            for (const auto& point : part.punkte_m) {
+                if (!data.bounds)
+                    data.bounds = std::array<std::array<double, 3>, 2>{point, point};
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    (*data.bounds)[0][axis] = std::min((*data.bounds)[0][axis], point[axis]);
+                    (*data.bounds)[1][axis] = std::max((*data.bounds)[1][axis], point[axis]);
+                }
+            }
+        for (const auto& diagnostic : data.geometry.diagnosen)
+            data.partDiagnostics << diagnosticText(diagnostic);
+        return data;
+    }
     data.inspection = segelphysik::readModelInspection(catalog, id, fassung);
     data.geometry = segelphysik::darstellungsgeometrie(*data.inspection);
     for (const auto& node : segelphysik::getObjectTree(*data.inspection, "objekte")) {
@@ -193,6 +272,7 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
     }
     try {
         const auto structure = segelphysik::modellstruktur(*data.inspection);
+        data.structure = structure;
         data.totalMassKg = structure.gesamtmasse_kg;
         data.bounds = structure.huellquader_m;
         for (const auto& group : structure.gruppen) {
@@ -209,6 +289,34 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
         data.partDiagnostics << QString::fromUtf8(error.what());
     }
     return data;
+}
+
+void loadSelectedModelPhysics(ModelDisplayData& data,
+    const segelphysik::Modellkatalog& catalog)
+{
+    data.inspection = segelphysik::readModelInspection(
+        catalog, data.modelId.toStdString(), data.version.toStdString());
+    const auto structure = segelphysik::modellstruktur(*data.inspection);
+    data.structure = structure;
+    data.totalMassKg = structure.gesamtmasse_kg;
+    data.bounds = structure.huellquader_m;
+    for (const auto& group : structure.gruppen) {
+        for (const auto& element : group.elemente) {
+            const auto elementId = text(element.id);
+            data.elementGroups.insert(elementId, text(group.id));
+            if (element.bewegung)
+                data.elementMovements.insert(elementId, *element.bewegung);
+        }
+    }
+    for (const auto& node : segelphysik::getObjectTree(*data.inspection, "objekte")) {
+        if (node.kind != "element" || node.element_ids.size() != 1) continue;
+        for (const auto& property : segelphysik::getObjectProperties(
+                 *data.inspection, "objekte", {node.id}, false)) {
+            if (property.id != "Hydrodynamik/rolle") continue;
+            if (const auto* role = std::get_if<std::string>(&property.value))
+                data.hydrodynamicRoles.insert(text(node.element_ids.front()), text(*role));
+        }
+    }
 }
 
 bool isOutdatedVersionError(const QString& message)

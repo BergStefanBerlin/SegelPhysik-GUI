@@ -537,20 +537,19 @@ Launch `C:\spdeps\guibuild\Release\segelphysik_gui.exe` (with
 `C:\spdeps\installed\x64-windows\bin` on `PATH`). The build copies the Qt
 platform and style plugins next to the executable.
 
-**Model folder.** The GUI lists every `modells_information.json` in the model folder and in
-its direct subfolders automatically, using the model `name` (fallback `id`,
-then folder name). Selecting an entry displays it immediately; the last model
-is reopened on the next start. The folder is watched: new, removed or renamed
-models update the list, and edits to the files of the shown model redisplay it.
-Each listed model is checked by the Core in the background; models the Core
-does not release for simulation are marked „nur Ansicht“.
+**Model folder.** Format-0.3 catalog entries, structure, diagnostics and
+fingerprint status come from the Core; the GUI does not parse model JSON or
+schemas. The Core resolves the active model and schema roots from
+`%APPDATA%\SegelPhysik\defaults.json`. An explicit command-line argument or
+folder chosen in the GUI selects a folder; the last explicit folder is
+remembered. Model directories are watched and catalog/status changes are
+reloaded through the Core.
 
-Folder selection order: first command-line argument if it is a folder, then
-the folder chosen via „Modellordner wählen“ (remembered), then `modelle` next
-to the executable, then the CMake cache value `SEGELPHYSIK_MODELLE_DIR`
-(default: the shared folder `Segelphysik\Modelle` next to the `CORE` and
-`GUI` checkouts). A model file passed as first argument is
-opened directly.
+The legacy `modells_information.json` fixtures are kept under the sibling
+folder `Segelphysik\Modelle_alt` for compatibility tests. CMake variable
+`SEGELPHYSIK_MODELLE_DIR` points to those legacy fixtures in test builds;
+Format-0.3 tests use `SEGELPHYSIK_MODELFORMAT03_TEST_ROOT` and temporary
+copies where they write data.
 
 **Static mode** computes the equilibrium and shows it.
 

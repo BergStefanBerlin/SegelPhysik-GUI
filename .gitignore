@@ -1,5 +1,6 @@
 build/
 vcpkg_installed/
+.local-test-data/
 .vs/
 *.user
 *.suo

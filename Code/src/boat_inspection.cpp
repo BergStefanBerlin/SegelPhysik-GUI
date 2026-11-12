@@ -39,6 +39,16 @@
 
 namespace {
 QString text(const std::string& value) { return QString::fromStdString(value); }
+QString referenceBadge(const segelphysik::StrukturElement& element)
+{
+    QStringList references;
+    if (element.referenz_visualisierung) references << QStringLiteral("V");
+    if (element.referenz_hydrostatik) references << QStringLiteral("S");
+    if (element.referenz_hydrodynamik) references << QStringLiteral("D");
+    if (element.referenz_aerodynamik) references << QStringLiteral("A");
+    return references.isEmpty()
+        ? QString() : QStringLiteral(" [%1]").arg(references.join(QLatin1Char(' ')));
+}
 forcedisplay::Vec3 vector3(const segelphysik::Vektor3& value)
 {
     return {value[0], value[1], value[2]};
@@ -409,6 +419,7 @@ void BoatInspection::clear(const QString& message)
     ++meshContentGeneration_;
     renderedMeshContentGeneration_ = std::numeric_limits<quint64>::max();
     movements_.clear();
+    referenceBadges_.clear();
     values_->clear();
     valuesStatus_->setText(QStringLiteral("Kein Objekt ausgewählt"));
     diagnostic_->setText(message);
@@ -419,14 +430,56 @@ void BoatInspection::clear(const QString& message)
     scene_->setProperty("hasInspectionMesh", false);
 }
 
-void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspection> snapshot,
-    std::shared_ptr<const segelphysik::Modellkatalog> catalog)
+void BoatInspection::setStructure(const segelphysik::Modellstruktur& structure)
 {
+    clear(QStringLiteral(
+        "Objektbaum und Darstellung geladen. Referenzbuchstaben kennzeichnen nur "
+        "vorhandene Verweise, nicht geladene oder geprüfte Daten."));
+    const QSignalBlocker blocker(tree_);
+    for (const auto& group : structure.gruppen) {
+        auto* groupItem = new QTreeWidgetItem(tree_, {text(group.name)});
+        groupItem->setData(0, Qt::UserRole, text(group.id));
+        groupItem->setData(0, Qt::UserRole + 4, QStringLiteral("gruppe"));
+        for (const auto& element : group.elemente) {
+            const auto id = text(element.id);
+            const auto badge = referenceBadge(element);
+            if (!badge.isEmpty()) referenceBadges_.insert(id, badge);
+            auto* elementItem = new QTreeWidgetItem(groupItem,
+                {text(element.name) + badge});
+            elementItem->setData(0, Qt::UserRole, id);
+            elementItem->setData(0, Qt::UserRole + 1, QStringList{id});
+            elementItem->setData(0, Qt::UserRole + 4, QStringLiteral("element"));
+            QStringList legend;
+            if (element.referenz_visualisierung) legend << QStringLiteral("V: Darstellung");
+            if (element.referenz_hydrostatik) legend << QStringLiteral("S: Hydrostatik");
+            if (element.referenz_hydrodynamik) legend << QStringLiteral("D: Hydrodynamik");
+            if (element.referenz_aerodynamik)
+                legend << QStringLiteral("A: Aerodynamikreferenz (vorläufig ungeprüft)");
+            elementItem->setToolTip(0, legend.isEmpty()
+                ? text(element.id) : text(element.id) + QLatin1Char('\n') +
+                    legend.join(QLatin1Char('\n')));
+        }
+    }
+    tree_->expandToDepth(1);
+}
+
+void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspection> snapshot,
+    std::shared_ptr<const segelphysik::Modellkatalog> catalog, bool loadAerodynamics)
+{
+    QString previousManualElement;
+    if (snapshot_ && snapshot
+        && snapshot_->info().model_id == snapshot->info().model_id)
+        previousManualElement = manualElement_;
     clear(QString());
     catalog_ = std::move(catalog);
     snapshot_ = std::move(snapshot);
     if (!snapshot_) return;
     try {
+        for (const auto& group : segelphysik::modellstruktur(*snapshot_).gruppen)
+            for (const auto& element : group.elemente) {
+                const auto badge = referenceBadge(element);
+                if (!badge.isEmpty()) referenceBadges_.insert(text(element.id), badge);
+            }
         for (const auto& type : segelphysik::getAvailableMeshTypes(*snapshot_)) {
             if (type.id == "quelle") continue;
             const auto meshes = segelphysik::getMesh(*snapshot_, type.id);
@@ -449,7 +502,9 @@ void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspect
         diagnostic_->setStyleSheet(QString());
         updateTree();
         updateMesh();
-        reloadSailConfiguration();
+        if (loadAerodynamics) reloadSailConfiguration();
+        if (!previousManualElement.isEmpty() && sailReference(previousManualElement))
+            setManualMode(previousManualElement, true);
     } catch (const std::exception& error) {
         reportError(error);
     }
@@ -753,7 +808,9 @@ void BoatInspection::updateTree()
                 objectIds.insert(text(node.element_ids.front()));
             }
             auto* item = new QTreeWidgetItem;
-            item->setText(0, text(node.name));
+            const auto badge = node.kind == "element" && node.element_ids.size() == 1
+                ? referenceBadges_.value(text(node.element_ids.front())) : QString();
+            item->setText(0, text(node.name) + badge);
             item->setData(0, Qt::UserRole, text(node.id));
             QStringList elements;
             for (const auto& id : node.element_ids) elements << text(id);
@@ -1026,20 +1083,6 @@ void BoatInspection::appendGeometryNodes()
         if (derived) item->setForeground(0, QColor(QStringLiteral("#e9b64d")));
     }
 
-    for (auto it = elements.begin(); it != elements.end(); ++it) {
-        QSet<QString> unique;
-        for (const auto& mesh : meshes_)
-            if (text(mesh.element_id) == it.key() && mesh.provenance == "quelle")
-                unique.insert(text(mesh.source_id));
-        if (unique.size() > 1) {
-            it.value()->setText(0, it.value()->text(0) + QStringLiteral(" [mehrere Geometriequellen]"));
-            it.value()->setToolTip(0, QStringLiteral(
-                "%1\nEine Modellbeschreibung verweist auf %2 verschiedene Geometriequellen, "
-                "z. B. für Darstellung, Masse oder Hydrostatik. Das sind keine mehreren "
-                "Modellversionen.")
-                .arg(it.value()->data(0, Qt::UserRole).toString()).arg(unique.size()));
-        }
-    }
 }
 
 void BoatInspection::bindCurrentGeometry()
@@ -1064,8 +1107,7 @@ void BoatInspection::updateMesh()
     if (!snapshot_) return;
     QSet<int> requested;
     const auto collect = [&requested](const auto& self, QTreeWidgetItem* item, bool selected) -> void {
-        const bool synthetic = item->data(0, Qt::UserRole + 3).toBool();
-        const bool include = selected || (synthetic && item->isSelected())
+        const bool include = selected || item->isSelected()
             || item->checkState(0) == Qt::Checked;
         const auto index = item->data(0, Qt::UserRole + 2);
         if (include && index.isValid()) requested.insert(index.toInt());

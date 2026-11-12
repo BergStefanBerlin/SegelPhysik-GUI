@@ -32,8 +32,11 @@ struct ModelEntry {
     QString name;
     QString description;
     QString version;   // Modellfassung laut Core
-    QString path;      // vom Core aufgelöste modells_information.json, für den Simulationslauf
+    QString path;      // vom Core aufgeloeste Modelldatei fuer den Simulationslauf
     bool usable = false;
+    bool schemaValid = true;
+    bool visualizationHashCurrent = true;
+    bool fingerprintsCurrent = true;
     int errorCount = 0;
     QStringList diagnostics;
     QVector<ModelProblem> problems;
@@ -55,10 +58,12 @@ CatalogSnapshot loadCatalog(const QString& folder);
 
 // Verzeichnisse und Dateien, deren Änderung einen neuen Katalogabruf
 // auslösen soll (nur Existenzprüfung, kein Lesen des Modellformats).
-QStringList watchedModelPaths(const QString& folder);
+QStringList watchedModelPaths(const QString& folder, QStringList* diagnostics = nullptr);
 
 struct ModelDisplayData {
     std::shared_ptr<const segelphysik::ModelInspection> inspection;
+    segelphysik::Modellstruktur structure;
+    bool modelFormat03 = false;
     QString modelId;
     QString version;
     QString path;
@@ -76,5 +81,7 @@ struct ModelDisplayData {
 // veralteter Fassung).
 ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
     const QString& modelId, const QString& version);
+void loadSelectedModelPhysics(ModelDisplayData& data,
+    const segelphysik::Modellkatalog& catalog);
 
 bool isOutdatedVersionError(const QString& message);
