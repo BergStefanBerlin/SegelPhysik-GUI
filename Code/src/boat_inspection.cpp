@@ -419,6 +419,7 @@ void BoatInspection::clear(const QString& message)
     ++meshContentGeneration_;
     renderedMeshContentGeneration_ = std::numeric_limits<quint64>::max();
     movements_.clear();
+    movementDiagnostics_.clear();
     referenceBadges_.clear();
     values_->clear();
     valuesStatus_->setText(QStringLiteral("Kein Objekt ausgewählt"));
@@ -828,23 +829,53 @@ void BoatInspection::updateTree()
         appendGeometryNodes();
         bindCurrentGeometry();
         for (const auto& node : nodes) {
-            if (node.kind != "element" || node.element_ids.size() != 1) continue;
-            const auto movement = segelphysik::getMovementPreview(*snapshot_, node.element_ids.front());
+            std::optional<segelphysik::InspectionMovementPreview> movement;
+            QStringList movementDiagnostics;
+            if (node.kind == "gruppe") {
+                const auto group = segelphysik::getGroupMovementPreview(*snapshot_, node.name);
+                if (!group) continue;
+                segelphysik::InspectionMovementPreview result;
+                result.kind = group->kind;
+                result.frame = group->frame;
+                result.axis_point_m = group->axis_point_m;
+                result.axis_direction = group->axis_direction;
+                result.reference_label = group->reference_label;
+                result.reference_value = group->reference_value;
+                result.value_unit = group->value_unit;
+                result.minimum_value = group->minimum_value;
+                result.maximum_value = group->maximum_value;
+                result.poses = group->poses;
+                for (const auto& entry : group->diagnostics)
+                    movementDiagnostics << QStringLiteral("%1: %2 (%3)")
+                        .arg(text(entry.fehler_id), text(entry.text), text(entry.fundstelle));
+                movement = std::move(result);
+            } else if (node.kind == "element" && node.element_ids.size() == 1) {
+                movement = segelphysik::getMovementPreview(*snapshot_, node.element_ids.front());
+            }
             if (!movement) continue;
-            const auto id = text(node.element_ids.front());
+            const auto id = text(node.id);
             movements_.insert(id, *movement);
+            movementDiagnostics_.insert(id, movementDiagnostics);
+            items.value(id)->setData(0, Qt::UserRole + 6, id);
             auto* item = new QTreeWidgetItem(items.value(text(node.id)),
                 {QStringLiteral("Bewegungsvorschau · Achse / Normal / Extreme")});
             item->setData(0, Qt::UserRole, text(node.id));
-            item->setData(0, Qt::UserRole + 1, QStringList{id});
+            QStringList elementIds;
+            for (const auto& element : node.element_ids) elementIds << text(element);
+            item->setData(0, Qt::UserRole + 1, elementIds);
             item->setData(0, Qt::UserRole + 3, true);
             item->setData(0, Qt::UserRole + 5, id);
+            item->setData(0, Qt::UserRole + 6, id);
             item->setCheckState(0, Qt::Unchecked);
             QStringList description;
             description << QStringLiteral("Reine Vorschau – verändert weder Quelle noch Simulation.")
                 << QStringLiteral("Normal: Cyan · Minimum: Orange · Maximum: Violett · Achse: Gelb");
             if (!movement->minimum_value) description << QStringLiteral("Minimum: nicht vorhanden");
             if (!movement->maximum_value) description << QStringLiteral("Maximum: nicht vorhanden");
+            if (std::any_of(movement->poses.begin(), movement->poses.end(),
+                [](const auto& pose) { return pose.label == "backbord" || pose.label == "steuerbord"; }))
+                description << QStringLiteral("Backbord: Orange · Steuerbord: Violett");
+            description << movementDiagnostics;
             item->setToolTip(0, description.join(QLatin1Char('\n')));
         }
         tree_->expandToDepth(1);
@@ -886,7 +917,9 @@ void BoatInspection::updateMovementPreview()
                     auto converted = toDisplayParts(pose.meshes);
                     const std::array<std::array<double, 3>, 3> colors = {{
                         {0.25, 0.85, 0.90}, {1.0, 0.55, 0.20}, {0.75, 0.45, 1.0}}};
-                    const auto& color = colors[pose.label == "minimum" ? 1 : pose.label == "maximum" ? 2 : 0];
+                    const auto& color = colors[
+                        pose.label == "minimum" || pose.label == "backbord" ? 1 :
+                        pose.label == "maximum" || pose.label == "steuerbord" ? 2 : 0];
                     for (auto& part : converted)
                         for (int c = 0; c < 3; ++c) part.color[c] = color[c];
                     parts += converted;
@@ -1200,15 +1233,28 @@ void BoatInspection::updateSelection()
     valuesStatus_->setText(selected.isEmpty() ? QStringLiteral("Kein Objekt ausgewählt")
         : QStringLiteral("Auswahl einschließlich aller Unterobjekte"));
     QSet<QString> elements;
+    QSet<QString> movementOwners;
     std::vector<std::string> ids;
-    const auto collect = [&elements](const auto& self, QTreeWidgetItem* item) -> void {
+    const auto collect = [&elements, &movementOwners](const auto& self, QTreeWidgetItem* item) -> void {
         for (const auto& id : item->data(0, Qt::UserRole + 1).toStringList())
             elements.insert(id);
+        const auto owner = item->data(0, Qt::UserRole + 6).toString();
+        if (!owner.isEmpty()) movementOwners.insert(owner);
         for (int i = 0; i < item->childCount(); ++i) self(self, item->child(i));
     };
     for (auto* item : selected) {
         ids.push_back(item->data(0, Qt::UserRole).toString().toStdString());
         collect(collect, item);
+        const auto kind = item->data(0, Qt::UserRole + 4).toString();
+        if (kind != QStringLiteral("element") && kind != QStringLiteral("gruppe"))
+            for (auto* parent = item->parent(); parent; parent = parent->parent()) {
+                const auto parentKind = parent->data(0, Qt::UserRole + 4).toString();
+                if (parentKind != QStringLiteral("element") &&
+                    parentKind != QStringLiteral("gruppe")) continue;
+                const auto owner = parent->data(0, Qt::UserRole + 6).toString();
+                if (!owner.isEmpty()) movementOwners.insert(owner);
+                break;
+            }
     }
     updateMesh();
     updateMovementPreview();
@@ -1233,40 +1279,65 @@ void BoatInspection::updateSelection()
             new ValueItem(values_, {path, QStringLiteral("Geometrie"), QStringLiteral("Verwendungen"),
                 uses.join(QStringLiteral(", ")), QString(), QStringLiteral("vorhanden")});
         }
-        for (const auto& id : elements) {
+        for (const auto& id : movementOwners) {
             if (!movements_.contains(id)) continue;
             const auto movement = movements_.value(id);
+            const auto hasPose = [&movement](const char* label) {
+                return std::any_of(movement.poses.begin(), movement.poses.end(),
+                    [label](const auto& pose) { return pose.label == label && !pose.meshes.empty(); });
+            };
+            const bool normalAvailable = hasPose("normal");
             auto* normal = new ValueItem(values_, {id + QStringLiteral("/vorschau"),
                 QStringLiteral("Bewegung"), QStringLiteral("Normalstellung"),
                 number(movement.reference_value), text(movement.value_unit),
-                QStringLiteral("vorhanden")});
-            normal->setData(0, movementIdRole, id);
-            normal->setData(0, movementActionRole, QStringLiteral("normal"));
+                normalAvailable ? QStringLiteral("vorhanden") : QStringLiteral("nicht_bestimmbar")});
+            if (normalAvailable) {
+                normal->setData(0, movementIdRole, id);
+                normal->setData(0, movementActionRole, QStringLiteral("normal"));
+            }
             normal->setData(3, rawValueRole, movement.reference_value);
             normal->setToolTip(3, QString::number(movement.reference_value, 'g', 17)
                 + QLatin1Char(' ') + text(movement.value_unit));
             for (const auto& action : {QStringLiteral("minimum"), QStringLiteral("maximum")}) {
                 const auto bound = action == QStringLiteral("minimum") ?
                     movement.minimum_value : movement.maximum_value;
+                const bool available = hasPose(action == QStringLiteral("minimum") ? "minimum" : "maximum");
                 auto* row = new ValueItem(values_, {id + QStringLiteral("/vorschau"),
                     QStringLiteral("Bewegung"), action == QStringLiteral("minimum") ?
                         QStringLiteral("Vorschau Minimum") : QStringLiteral("Vorschau Maximum"),
                     bound ? number(*bound) : QStringLiteral("–"),
                     text(movement.value_unit),
-                    bound ? QStringLiteral("vorhanden") : QStringLiteral("nicht_vorhanden")});
+                    !bound ? QStringLiteral("nicht_vorhanden") :
+                        available ? QStringLiteral("vorhanden") : QStringLiteral("nicht_bestimmbar")});
                 row->setToolTip(3, bound ? QString::number(*bound, 'g', 17) :
                     QStringLiteral("Keine Grenze im Core definiert; keine Vorschau verfügbar."));
-                if (bound) {
+                if (bound && available) {
                     row->setData(0, movementIdRole, id);
                     row->setData(0, movementActionRole, action);
                     row->setData(3, rawValueRole, *bound);
                 }
             }
+            for (const auto& pose : movement.poses) {
+                if (pose.label != "backbord" && pose.label != "steuerbord") continue;
+                auto* row = new ValueItem(values_, {id + QStringLiteral("/vorschau"),
+                    QStringLiteral("Bewegung"),
+                    pose.label == "backbord" ? QStringLiteral("Backbordschot") :
+                        QStringLiteral("Steuerbordschot"),
+                    number(pose.value), text(pose.unit), QStringLiteral("vorhanden")});
+                row->setData(0, movementIdRole, id);
+                row->setData(0, movementActionRole, text(pose.label));
+                row->setData(3, rawValueRole, pose.value);
+                row->setToolTip(3, QString::number(pose.value, 'g', 17) +
+                    QLatin1Char(' ') + text(pose.unit) +
+                    QStringLiteral(" – reine Vorschau, keine Modellgrenze"));
+            }
+            for (const auto& message : movementDiagnostics_.value(id)) {
+                auto* row = new ValueItem(values_, {id + QStringLiteral("/vorschau"),
+                    QStringLiteral("Bewegung"), QStringLiteral("Vorschau-Diagnose"),
+                    message, QString(), QStringLiteral("nicht_bestimmbar")});
+                row->setToolTip(3, message);
+            }
         }
-        QHash<QString, QString> elementByNode;
-        for (const auto& node : segelphysik::getObjectTree(*snapshot_, "objekte"))
-            if (node.kind == "element" && node.element_ids.size() == 1)
-                elementByNode.insert(text(node.id), text(node.element_ids.front()));
         const auto properties = segelphysik::getObjectProperties(*snapshot_, "objekte", ids, true);
         for (const auto& property : properties) {
             const auto value = formatValue(property.value);
@@ -1301,7 +1372,7 @@ void BoatInspection::updateSelection()
                     if (color.isValid()) row->setData(3, colorRole, color);
                 }
                 if (text(property.name).contains(QStringLiteral("drehpunkt"))) {
-                    const auto id = elementByNode.value(text(property.node_id));
+                    const auto id = text(property.node_id);
                     if (movements_.contains(id)) {
                         row->setData(0, movementIdRole, id);
                         row->setData(0, movementActionRole, QStringLiteral("pivot"));

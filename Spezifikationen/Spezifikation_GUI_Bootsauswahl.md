@@ -456,6 +456,11 @@ Eine leere Auswahl entfernt alte Auswahlwerte.
 
 ### A-G-00077: Bewegung direkt am Element sichtbar machen
 
+**Status:** Am 12.11.2026 zurückgezogen. Die Elementzuordnung ist für
+gruppenweise definierte Drehungen fachlich falsch. Der historische
+Anforderungstext und die früheren Umsetzungsnachweise bleiben erhalten;
+maßgeblich sind stattdessen A-G-00151 bis A-G-00156 in Abschnitt 12.
+
 Kein eigener Bewegungsreiter. Bei vorhandener Bewegungsdefinition zeigt
 die Tabelle die tatsächlichen Parameter. Eine eindeutig als Vorschau
 gekennzeichnete, am Element zugängliche Einblendung zeigt Dreh-/Kippachse,
@@ -510,3 +515,26 @@ ist unabhängig von der Modellmigration möglich. Die vollständige
 Ein-Quellmesh-Abnahme hängt dagegen von deren erfolgreicher fachlicher
 Prüfung ab. Abweichungen und ausstehende persönliche Sichtabnahme sind
 gesondert auszuweisen; keine geplanten Tests als bestanden darstellen.
+
+## 12. Finalisiert am 12.11.2026: Bewegungs- und Segelvorschauen
+
+**Status:** Fachlich finalisiert auf ausdrücklichen Nutzerauftrag;
+Umsetzung am 12.11.2026 beauftragt und technisch nachgewiesen. Eine etwaige
+persönliche Sichtabnahme bleibt offen. Die
+Anforderungen A-G-00151 bis A-G-00156 ersetzen für Bewegungsvorschauen
+die zurückgezogene A-G-00077. Die GUI verwendet ausschließlich
+Bewegungsdefinitionen und Posen aus dem Core; sie erzeugt keine eigene
+Bewegungsphysik. Für Segelbauch und Bugseite gelten ergänzend
+[Abschnitt 9](Spezifikation_GUI_Segelkonfigurator.md#9-original-buglage-und-gespiegelte-bauchdarstellung)
+und die dortige Winkelkonvention. Der zugehörige GUI-Plan für G-0.22 ist
+[hier](../Umsetzungsplaene/Umsetzungsplan_G-0.22.md) dokumentiert; er umfasst
+ausschließlich GUI-Arbeiten.
+
+| ID | Verbindliche Anforderung | Abnahme |
+|---|---|---|
+| A-G-00151 | Gruppendefinierte Drehungen werden auf Gruppenebene aus dem Core abgefragt und am Gruppenknoten dargestellt; sie werden keinem einzelnen Element zugeschrieben. | Eine gruppendefinierte Drehung erscheint an der Gruppe, nicht am Element. Es werden Core-Identitäten verwendet, keine Namens- oder Geometrieheuristiken. |
+| A-G-00152 | Für jede gültige Bewegungsdefinition an einer Gruppe oder einem Element ist am jeweiligen Definitionsinhaber eine einheitliche Vorschau zugänglich. Sie unterscheidet Neutralstellung sowie vorhandene Minimal- und Maximalstellungen; Achsen werden, soweit definiert, gemäß Core-Definition gezeigt. Einheitliche Darstellung: Neutral Cyan, Minimum Orange, Maximum Violett, Bewegungsachse Gelb. | Alle gültigen Bewegungsarten folgen derselben Bedienung, Beschriftung und Farbzuordnung am jeweiligen Definitionsinhaber. Posen, Achsen und vorhandene Grenzen stimmen mit dem Core überein; fehlende Grenzen werden ausdrücklich als nicht verfügbar angezeigt und nicht geschätzt. |
+| A-G-00153 | Eine Gruppenbewegung zeigt die vollständige bewegte Gruppe in jeder Vorschaupose. | Neutral-, Minimum- und Maximumpose enthalten alle von der Core-Gruppenbewegung betroffenen Elemente gemeinsam; kein Element wird ausgelassen oder als allein bewegtes Objekt dargestellt. |
+| A-G-00154 | Die Segelvorschau zeigt Backbord- und Steuerbordschotvariante. Ein definierter Ausschlag von 0–90° begrenzt die Vorschau nicht auf eine Seite: derselbe Ausschlag ist als Variante zu beiden Seiten darzustellen, ohne die Bewegungsdefinition oder Simulation zu verändern. Die Posen stammen aus dem Core; die GUI berechnet keine zweite Drehung. | Für denselben Ausschlag sind beide Seitenvarianten sichtbar und eindeutig beschriftet. Die bestehende Vorzeichenkonvention bleibt erhalten: positiv Backbord, negativ Steuerbord. |
+| A-G-00155 | Der Segelbauch ist in jeder Seitenvariante passend zur Ziel-Buglage darzustellen. Original-Buglage und Spiegelung richten sich nach Abschnitt 9 und der Core-Spiegelkennzeichnung; die GUI verwendet keine eigene Vorzeichen-, Bildschirm- oder Weltachsenheuristik. | Backbord- und Steuerbordpose zeigen den Bauch jeweils auf der fachlich richtigen Seite. Bei unbekannter Original-Buglage wird die Spiegelung als nicht bestimmbar diagnostiziert und nicht geraten. |
+| A-G-00156 | Bewegungsvorschauen bleiben temporäre, rein lesende Darstellungen. Sie ändern weder Quelldaten, Auswahlidentität, Inspektionskamera noch Simulationszustand. | Vor und nach Ein-/Ausschalten sowie Auswahl einer Vorschaupose sind Quelle, Auswahlidentität, Kamera und Simulationsdaten unverändert. |

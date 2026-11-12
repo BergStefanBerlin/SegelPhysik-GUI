@@ -9,6 +9,7 @@
 #include <QWidget>
 #include <QSet>
 #include <QPointF>
+#include <QStringList>
 
 #include <memory>
 #include <array>
@@ -75,6 +76,7 @@ private:
     QHash<QString, std::vector<segelphysik::InspectionMesh>> previewMeshes_;
     QSet<int> activeMeshes_;
     QHash<QString, segelphysik::InspectionMovementPreview> movements_;
+    QHash<QString, QStringList> movementDiagnostics_;
     QHash<QString, QString> referenceBadges_;
     QTreeWidget* tree_ = nullptr;
     QTreeWidget* values_ = nullptr;

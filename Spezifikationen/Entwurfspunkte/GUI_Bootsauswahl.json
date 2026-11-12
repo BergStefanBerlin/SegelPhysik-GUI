@@ -2,9 +2,9 @@
   "status": "finalisiert",
   "thema": "GUI Bootsauswahl",
   "spezifikation": "../Spezifikation_GUI_Bootsauswahl.md",
-  "stand": "2026-11-02",
+  "stand": "2026-11-12",
   "zielversion": "G-0.8",
-  "ergaenzung": "Abschnitt 11 am 02.11.2026 finalisiert; beide Pläne umgesetzt. Nach anschließender Nutzerfreigabe für ausreichend genaue Physikerhaltung auch die drei Konfliktboote mit expliziten Core-Ableitungen migriert; alle elf Modelle technisch geprüft. Persönliche Abnahme separat; tatsächliche Nachweise im Plan.",
+  "ergaenzung": "Abschnitt 11 am 02.11.2026 finalisiert; beide Pläne umgesetzt. Nach anschließender Nutzerfreigabe für ausreichend genaue Physikerhaltung auch die drei Konfliktboote mit expliziten Core-Ableitungen migriert; alle elf Modelle technisch geprüft. Abschnitt 12 mit A-G-00151 bis A-G-00156 und GUI-Umsetzungsplan G-0.22 am 12.11.2026 finalisiert; Umsetzung nicht beauftragt. Persönliche Abnahme separat; tatsächliche Nachweise im Plan.",
   "nachtraegliche_freigaben": [
     {
       "datum": "2026-11-02",
@@ -26,6 +26,12 @@
       "anforderungen": ["A-G-00069"],
       "umsetzungsschritte": ["U-G-000055", "U-G-000061", "U-G-000062"],
       "status": "technisch_umgesetzt_nutzerabnahme_offen"
+    },
+    {
+      "datum": "2026-11-12",
+      "quelle": "Nutzer finalisiert gruppenbezogene Drehvorschau, einheitliche Neutral-/Minimum-/Maximumdarstellung, beide Segelschotvarianten einschließlich seitenabhängigem Segelbauch sowie reine Darstellung ohne Änderung von Quelle oder Simulation.",
+      "anforderungen": ["A-G-00151", "A-G-00152", "A-G-00153", "A-G-00154", "A-G-00155", "A-G-00156"],
+      "status": "fachlich_finalisiert_implementierung_nicht_beauftragt"
     }
   ],
   "inspektionsstand": "Bestätigt: Core liest einmal, danach bleiben Bäume, Werte und Meshes fix und gültig, unabhängig von Dateiänderungen. Neues Einlesen nur auf ausdrückliche Anforderung. Mesh-Updates und Modifikation später.",
@@ -38,7 +44,7 @@
     "K6": "Bestätigt: gemeinsame Tabelle mit Objekt/Pfad, Überschneidungen einmal, keine automatische Summierung.",
     "K7": "Bestätigt: Wasser gedeckt bordeauxfarben, Himmel heller Bordeaux-Rosé; konkrete Töne per Vorschau."
   },
-  "hinweis": "Finalisiert am 01.11.2026, anschließend Umsetzung beauftragt und technisch nachgewiesen. Angenommene Punkte sind A-G-00057 bis A-G-00066 zugeordnet; ergänzende Integrationsanforderungen A-G-00067 und A-G-00068 stammen aus weiteren Nutzerentscheidungen, A-G-00069 aus der Wiederverwendungsforderung. Persönliche Abnahme offen; tatsächliche Tests und Baselinefehler siehe Umsetzungsplan.",
+  "hinweis": "Finalisiert am 01.11.2026, anschließend Umsetzung beauftragt und technisch nachgewiesen. Angenommene Punkte sind A-G-00057 bis A-G-00066 zugeordnet; ergänzende Integrationsanforderungen A-G-00067 und A-G-00068 stammen aus weiteren Nutzerentscheidungen, A-G-00069 aus der Wiederverwendungsforderung. IDEE-G-00091 bis IDEE-G-00096 wurden am 12.11.2026 A-G-00151 bis A-G-00156 und U-G-000162 bis U-G-000168 aus G-0.22 zugeordnet. Persönliche Abnahme offen; tatsächliche Tests und Baselinefehler siehe Umsetzungsplan.",
   "geltungsbereich": "Reiter Bootsauswahl. Andere Ansichten werden hier nicht ausgestaltet. Übergreifend erfasst sind das Entfernen des Buttons Modellordner wählen aus den anderen Ansichten und der gemeinsame Titelblock oberhalb der Ansichtsauswahlreiter.",
   "punkte": [
     {
@@ -61,12 +67,13 @@
     },
     {
       "id": "IDEE-G-00046",
-      "status": "angenommen",
+      "status": "zurueckgezogen",
       "anforderungen": ["A-G-00077"],
       "umsetzungsschritte": ["U-G-000067", "U-G-000071", "U-G-000072"],
       "thema": "Dreh-/Kippachsen und Normal-/Extremvorschauen",
       "bezug": "../Spezifikation_GUI_Bootsauswahl.md#a-g-00077-bewegung-direkt-am-element-sichtbar-machen",
-      "beschreibung": "Vorschauen am Element aus tatsächlichen Core-Bewegungsdaten; Normalstellung und vorhandene Extreme unterscheidbar. Keine Änderung der Quelle oder Simulation, fehlende Grenzen nicht erfinden."
+      "beschreibung": "Historisch angenommener Punkt. A-G-00077 wurde am 12.11.2026 wegen der falschen Elementzuordnung zurückgezogen; Text und frühere Umsetzungsschritte bleiben als Historie erhalten.",
+      "ersetzt_durch": ["IDEE-G-00091", "IDEE-G-00092", "IDEE-G-00093", "IDEE-G-00094", "IDEE-G-00095", "IDEE-G-00096"]
     },
     {
       "id": "IDEE-G-00047",
@@ -171,6 +178,60 @@
       "offene_details": [
         "Keine Implementierungsblockade; Wasser #65283F, Himmel #C695A5 als Ausgangswerte, persönliche Sichtabnahme später."
       ]
+    },
+    {
+      "id": "IDEE-G-00091",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00151"],
+      "umsetzungsschritte": ["U-G-000162", "U-G-000163", "U-G-000167", "U-G-000168"],
+      "thema": "Gruppendefinierte Drehungen",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Core-definierte Gruppendrehungen auf Gruppenebene abfragen und am Gruppenknoten darstellen, nicht einem einzelnen Element zuschreiben."
+    },
+    {
+      "id": "IDEE-G-00092",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00152"],
+      "umsetzungsschritte": ["U-G-000162", "U-G-000164", "U-G-000167", "U-G-000168"],
+      "thema": "Einheitliche Vorschau für alle Bewegungsdefinitionen",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Für jede gültige Gruppen- oder Elementbewegung Neutralstellung sowie vorhandene Minima und Maxima aus Core-Daten einheitlich vorschauen; fehlende Grenzen nicht schätzen."
+    },
+    {
+      "id": "IDEE-G-00093",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00153"],
+      "umsetzungsschritte": ["U-G-000162", "U-G-000163", "U-G-000167", "U-G-000168"],
+      "thema": "Vollständige Pose der bewegten Gruppe",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Bei Gruppenbewegungen alle betroffenen Gruppenelemente gemeinsam und vollständig in jeder Vorschaupose darstellen."
+    },
+    {
+      "id": "IDEE-G-00094",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00154"],
+      "umsetzungsschritte": ["U-G-000162", "U-G-000165", "U-G-000168"],
+      "thema": "Beidseitige Segelschotvarianten",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Backbord- und Steuerbordschotvariante für denselben Segelausschlag zeigen, auch wenn die Bewegungsdefinition nur 0 bis 90 Grad enthält."
+    },
+    {
+      "id": "IDEE-G-00095",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00155"],
+      "umsetzungsschritte": ["U-G-000162", "U-G-000166", "U-G-000168"],
+      "thema": "Seitenabhängiger Segelbauch",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Bauchdarstellung und gegebenenfalls Core-Spiegelung passend zur Backbord- oder Steuerbordvariante anwenden; unbekannte Original-Buglage nicht erraten."
+    },
+    {
+      "id": "IDEE-G-00096",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00156"],
+      "umsetzungsschritte": ["U-G-000167", "U-G-000168"],
+      "thema": "Seiteneffektfreie Bewegungsvorschau",
+      "bezug": "../Spezifikation_GUI_Bootsauswahl.md#12-finalisiert-am-12112026-bewegungs-und-segelvorschauen",
+      "beschreibung": "Vorschauen bleiben temporär und lesend; Quelldaten, Auswahlidentität, Inspektionskamera und Simulation unverändert lassen."
     }
   ]
 }

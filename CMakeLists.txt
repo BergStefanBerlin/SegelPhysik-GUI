@@ -219,12 +219,21 @@ if(BUILD_TESTING)
             TIMEOUT 120 RUN_SERIAL TRUE
             LABELS "model-format-0.3;ui-integration"
             ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1;SEGELPHYSIK_TEST_SCHEMA_ROOT=${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
+        add_test(NAME gui_group_movement_preview
+            COMMAND segelphysik_gui_graphics_render_tests
+                --group-movement-only "${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
+        set_tests_properties(gui_group_movement_preview PROPERTIES
+            TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "model-format-0.3;ui-integration"
+            ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_SCALE_FACTOR=1;SEGELPHYSIK_TEST_SCHEMA_ROOT=${SEGELPHYSIK_MODELFORMAT03_TEST_ROOT}")
         if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
             set_property(TEST gui_sail_configurator_420 APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
             set_property(TEST gui_unified_montage APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
             set_property(TEST gui_model_format_03_interactions APPEND PROPERTY ENVIRONMENT
+                "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
+            set_property(TEST gui_group_movement_preview APPEND PROPERTY ENVIRONMENT
                 "QT_PLUGIN_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6/plugins")
         endif()
         foreach(scale IN ITEMS 100 150 200)

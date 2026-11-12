@@ -9,6 +9,7 @@
 #include <segelphysik/katalog.hpp>
 #include <segelphysik/defaults.hpp>
 #include <segelphysik/modell.hpp>
+#include <segelphysik/modell_fingerprints.hpp>
 #include <segelphysik/segelkonfigurator.hpp>
 #include <QApplication>
 #include <QTabWidget>
@@ -4491,6 +4492,217 @@ void testWaterMotion(const QString& models, const QString& evidencePath)
     std::cout << bytes.constData();
 }
 
+void runGroupMovementInspectionTests(const QString& sourceRoot)
+{
+    QTemporaryDir fixture;
+    require(fixture.isValid(), "isolated group preview fixture");
+    const auto source = std::filesystem::path(sourceRoot.toStdWString());
+    const auto root = std::filesystem::path(fixture.path().toStdWString());
+    const auto target = root / "420";
+    std::filesystem::create_directories(target / "modells");
+    for (const auto& file : {"schema_data.json", "schema_validation.json"})
+        std::filesystem::copy_file(source / file, root / file);
+    for (const auto& file : {"modells_data.json", "modells_validation.json"})
+        std::filesystem::copy_file(source / "420" / file, target / file);
+    for (const auto& folder : {"visualisation", "mass", "hydrostatics"})
+        std::filesystem::copy(source / "420" / "modells" / folder,
+            target / "modells" / folder, std::filesystem::copy_options::recursive);
+    const auto dataPath = target / "modells_data.json";
+    std::ifstream input(dataPath, std::ios::binary);
+    auto data = nlohmann::json::parse(input);
+    input.close();
+    for (auto& group : data.at("groups"))
+        for (auto& element : group.at("elements"))
+            if (element.contains("physics")) {
+                element["physics"].erase("aerodynamic");
+                if (element["physics"].empty()) element.erase("physics");
+            }
+    data["groups"]["mainsail"]["elements"][0]["placement"]["originalTack"] = "port";
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << data.dump();
+        require(output.good(), "write isolated group preview fixture");
+    }
+    const auto previousSchema = qgetenv("SEGELPHYSIK_TEST_SCHEMA_ROOT");
+    const bool hadSchema = qEnvironmentVariableIsSet("SEGELPHYSIK_TEST_SCHEMA_ROOT");
+    struct RestoreSchema {
+        QByteArray value;
+        bool existed;
+        ~RestoreSchema() {
+            if (existed) qputenv("SEGELPHYSIK_TEST_SCHEMA_ROOT", value);
+            else qunsetenv("SEGELPHYSIK_TEST_SCHEMA_ROOT");
+        }
+    } restore{previousSchema, hadSchema};
+    qputenv("SEGELPHYSIK_TEST_SCHEMA_ROOT", fixture.path().toLocal8Bit());
+    segelphysik::aktualisiere_modell_fingerprints(target,
+        {segelphysik::ModellFingerprintBereich::modelData,
+         segelphysik::ModellFingerprintBereich::visualisation,
+         segelphysik::ModellFingerprintBereich::mass,
+         segelphysik::ModellFingerprintBereich::hydrostatics});
+    const auto catalog = std::make_shared<const segelphysik::Modellkatalog>(
+        segelphysik::modellkatalog(root));
+    const auto* entry = catalog->eintrag("420");
+    require(entry != nullptr && entry->schema_valide, "isolated 420 catalog entry");
+    const auto snapshot = segelphysik::readModelInspection(*catalog, "420", entry->modell_fassung);
+    const auto before = segelphysik::groupMovementPreviewJson(*snapshot, "mainsail");
+    BoatInspection widget;
+    widget.resize(1000, 700);
+    widget.show();
+    widget.setSnapshot(snapshot, catalog, false);
+    QApplication::processEvents();
+    auto* tree = widget.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+    auto* values = widget.findChild<QTreeWidget*>(QStringLiteral("inspectionValues"));
+    require(tree && values, "group preview tree and table exist");
+    QTreeWidgetItem* group = nullptr;
+    QTreeWidgetItem* sail = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const auto id = (*it)->data(0, Qt::UserRole).toString();
+        const auto kind = (*it)->data(0, Qt::UserRole + 4).toString();
+        if (id == QStringLiteral("/gruppen/mainsail") && kind == QStringLiteral("gruppe"))
+            group = *it;
+        if (id == QStringLiteral("/gruppen/mainsail/elemente/Mainsail") &&
+            kind == QStringLiteral("element")) sail = *it;
+    }
+    require(group && sail, "group and sail tree nodes exist");
+    QTreeWidgetItem* preview = nullptr;
+    for (int i = 0; i < group->childCount(); ++i)
+        if (!group->child(i)->data(0, Qt::UserRole + 5).toString().isEmpty())
+            preview = group->child(i);
+    require(preview != nullptr &&
+        preview->data(0, Qt::UserRole + 1).toStringList().size() == 2,
+        "group preview is attached to group with both members");
+    for (int i = 0; i < sail->childCount(); ++i)
+        require(sail->child(i)->data(0, Qt::UserRole + 5).toString().isEmpty(),
+            "group movement is not attached to sail element");
+    const auto camera = widget.scene()->cameraView();
+    preview->setCheckState(0, Qt::Checked);
+    QApplication::processEvents();
+    require(widget.scene()->property("inspectionMovementPoseCount").toInt() == 3,
+        "group preview shows neutral and both sail variants");
+    require(widget.scene()->property("inspectionPivotCount").toInt() == 1,
+        "group preview displays the Core axis");
+    require(widget.scene()->cameraView().position == camera.position &&
+        widget.scene()->cameraView().focalPoint == camera.focalPoint,
+        "group preview preserves the inspection camera");
+    group->setSelected(true);
+    QApplication::processEvents();
+    QTreeWidgetItem* port = nullptr;
+    QTreeWidgetItem* starboard = nullptr;
+    int missingBounds = 0;
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        auto* row = values->topLevelItem(i);
+        const auto action = row->data(0, Qt::UserRole + 13).toString();
+        if (action == QStringLiteral("backbord")) port = row;
+        if (action == QStringLiteral("steuerbord")) starboard = row;
+        if ((row->text(2) == QStringLiteral("Vorschau Minimum") ||
+             row->text(2) == QStringLiteral("Vorschau Maximum")) &&
+            row->text(5) == QStringLiteral("nicht_vorhanden")) ++missingBounds;
+    }
+    require(port && starboard && port->text(3).toDouble() == 90. &&
+        starboard->text(3).toDouble() == -90. && missingBounds == 2,
+        "both signed sides and absent model bounds are shown");
+    port->setSelected(true);
+    QApplication::processEvents();
+    require(widget.scene()->property("inspectionMovementPoseCount").toInt() == 1,
+        "selecting one sail variant shows only that Core pose");
+    values->clearSelection();
+    preview->setCheckState(0, Qt::Unchecked);
+    tree->clearSelection();
+    QApplication::processEvents();
+    require(widget.scene()->property("inspectionMovementPreviewCount").toInt() == 0,
+        "disabling group preview clears only temporary graphics");
+    require(segelphysik::groupMovementPreviewJson(*snapshot, "mainsail") == before,
+        "GUI preview does not mutate Core snapshot");
+    widget.close();
+
+    data["groups"]["mainsail"]["elements"][0]["placement"]["originalTack"] = "unknown";
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << data.dump();
+        require(output.good(), "write unknown tack fixture");
+    }
+    segelphysik::aktualisiere_modell_fingerprints(target,
+        {segelphysik::ModellFingerprintBereich::modelData});
+    const auto unknownCatalog = std::make_shared<const segelphysik::Modellkatalog>(
+        segelphysik::modellkatalog(root));
+    const auto* unknownEntry = unknownCatalog->eintrag("420");
+    require(unknownEntry != nullptr && unknownEntry->schema_valide, "unknown tack catalog entry");
+    const auto unknownSnapshot = segelphysik::readModelInspection(
+        *unknownCatalog, "420", unknownEntry->modell_fassung);
+    widget.setSnapshot(unknownSnapshot, unknownCatalog, false);
+    widget.show();
+    QApplication::processEvents();
+    group = nullptr;
+    sail = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const auto id = (*it)->data(0, Qt::UserRole).toString();
+        if (id == QStringLiteral("/gruppen/mainsail") &&
+            (*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("gruppe")) group = *it;
+        if (id == QStringLiteral("/gruppen/mainsail/elemente/Mainsail") &&
+            (*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) sail = *it;
+    }
+    require(group && sail, "unknown tack tree nodes");
+    group->setSelected(true);
+    QApplication::processEvents();
+    bool diagnostic = false;
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        const auto* row = values->topLevelItem(i);
+        if (row->text(2) == QStringLiteral("Vorschau-Diagnose") &&
+            row->text(3).contains(QStringLiteral("Originalbuglage")) &&
+            row->text(3).contains(QStringLiteral("Mainsail"))) diagnostic = true;
+        require(row->data(0, Qt::UserRole + 13).toString() != QStringLiteral("backbord") &&
+            row->data(0, Qt::UserRole + 13).toString() != QStringLiteral("steuerbord"),
+            "unknown tack must not offer guessed side poses");
+    }
+    require(diagnostic, "unknown tack diagnosis is visible at group");
+    tree->clearSelection();
+    sail->setSelected(true);
+    QApplication::processEvents();
+    for (int i = 0; i < values->topLevelItemCount(); ++i)
+        require(values->topLevelItem(i)->text(2) != QStringLiteral("Vorschau-Diagnose"),
+            "group movement is not offered at the sail element");
+    widget.close();
+
+    data["groups"]["mainsail"]["elements"][1]["display"]["hidden"] = true;
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << data.dump();
+        require(output.good(), "write hidden group member fixture");
+    }
+    segelphysik::aktualisiere_modell_fingerprints(target,
+        {segelphysik::ModellFingerprintBereich::modelData});
+    const auto hiddenCatalog = std::make_shared<const segelphysik::Modellkatalog>(
+        segelphysik::modellkatalog(root));
+    const auto* hiddenEntry = hiddenCatalog->eintrag("420");
+    require(hiddenEntry != nullptr && hiddenEntry->schema_valide, "hidden member catalog entry");
+    const auto hiddenSnapshot = segelphysik::readModelInspection(
+        *hiddenCatalog, "420", hiddenEntry->modell_fassung);
+    widget.setSnapshot(hiddenSnapshot, hiddenCatalog, false);
+    widget.show();
+    QApplication::processEvents();
+    group = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        if ((*it)->data(0, Qt::UserRole).toString() == QStringLiteral("/gruppen/mainsail") &&
+            (*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("gruppe")) group = *it;
+    require(group != nullptr, "hidden member group node");
+    group->setSelected(true);
+    QApplication::processEvents();
+    bool unavailableNormal = false;
+    bool missingMember = false;
+    for (int i = 0; i < values->topLevelItemCount(); ++i) {
+        const auto* row = values->topLevelItem(i);
+        if (row->text(2) == QStringLiteral("Normalstellung")) {
+            unavailableNormal = row->text(5) == QStringLiteral("nicht_bestimmbar") &&
+                row->data(0, Qt::UserRole + 13).toString().isEmpty();
+        }
+        if (row->text(2) == QStringLiteral("Vorschau-Diagnose") &&
+            row->text(3).contains(QStringLiteral("Boom"))) missingMember = true;
+    }
+    require(unavailableNormal && missingMember,
+        "incomplete group geometry is diagnosed and unavailable normal pose is not offered");
+    widget.close();
+}
+
 void runModelFormat03InteractionTests(const QString& sourceRoot)
 {
     struct EnvironmentValue {
@@ -5003,6 +5215,11 @@ int main(int argc, char** argv)
     vtkNew<RenderErrors> renderErrors;
     vtkOutputWindow::SetInstance(renderErrors);
     try {
+        if (app.arguments().size() == 3
+            && app.arguments()[1] == QStringLiteral("--group-movement-only")) {
+            runGroupMovementInspectionTests(app.arguments()[2]);
+            return 0;
+        }
         if (app.arguments().size() == 3
             && app.arguments()[1] == QStringLiteral("--model-format-03-gates")) {
             runModelFormat03InteractionTests(app.arguments()[2]);
