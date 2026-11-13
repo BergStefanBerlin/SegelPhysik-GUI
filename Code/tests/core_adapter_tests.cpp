@@ -1,4 +1,5 @@
 #include "core_adapter.hpp"
+#include "force_display.hpp"
 #include "segelphysik/modell.hpp"
 #include "segelphysik/simulation.hpp"
 
@@ -64,6 +65,9 @@ void testStaticRun(const QString& modelPath,
         "Static run returned an invalid real runtime.");
 
     const auto state = result.states.constLast();
+    const auto displayState = forcedisplay::parseForceState(state);
+    require(displayState.reference.has_value(),
+        "Core point collection must be usable by the GUI force display.");
     require(number(state, QStringLiteral("zeit_s")) == 0.0,
         "Static state has a nonzero simulation time.");
     const auto vectors = state.value(QStringLiteral("vektoren")).toArray();
@@ -83,6 +87,30 @@ void testStaticRun(const QString& modelPath,
         "Static state omitted weight or buoyancy force contributions.");
     require(number(state, QStringLiteral("volumen_m3")) > 0.0,
         "Static reference model has no displacement volume.");
+    const QJsonObject wind{
+        {QStringLiteral("richtung_grad"), 0.},
+        {QStringLiteral("v0_m_s"), 5.},
+        {QStringLiteral("h0_m"), 10.},
+        {QStringLiteral("bootmitgefuehrt"), true},
+        {QStringLiteral("mast_element_id"), QStringLiteral("Mast")},
+        {QStringLiteral("mast_quelle"), QStringLiteral("mast_darstellungsgeometrie")},
+        {QStringLiteral("mastspitze_modell_m"), QJsonArray{0., 0., 10.}}};
+    const auto withWind = runSimulation(modelPath, validation, false, 0., .01, &cancellation,
+        QJsonObject{{QStringLiteral("wind_eingabe"), wind}});
+    require(withWind.completed && !withWind.states.isEmpty()
+            && withWind.states.constLast().value(QStringLiteral("wind")).toObject()
+                .value(QStringLiteral("referenzgeschwindigkeit_m_s")).toDouble() == 5.,
+        "Static result must preserve its wind context.");
+    require(withWind.states.constLast().value(QStringLiteral("referenzpunkte")).toArray()[0]
+            .toObject().value(QStringLiteral("quelle")).toString()
+                == QStringLiteral("mast_darstellungsgeometrie"),
+        "Mast provenance must survive the GUI-to-Core round trip.");
+    auto invalidWind = wind;
+    invalidWind.insert(QStringLiteral("mastspitze_modell_m"), 42);
+    const auto invalid = runSimulation(modelPath, validation, false, 0., .01, &cancellation,
+        QJsonObject{{QStringLiteral("wind_eingabe"), invalidWind}});
+    require(!invalid.completed && !invalid.error.isEmpty(),
+        "Malformed mast position must produce an explicit error.");
 }
 
 void testStationaryRun(const QString& modelPath, const ModelValidation& validation)
@@ -101,6 +129,10 @@ void testStationaryRun(const QString& modelPath, const ModelValidation& validati
     const auto state = result.states.constLast();
     require(state.value(QStringLiteral("stationaer")).isObject(),
         "Stationary result omitted its explicit Core contract.");
+    const auto displayState = forcedisplay::parseForceState(state);
+    require(displayState.reference.has_value() && displayState.sailCenter.has_value()
+            && !displayState.sailCenter->position.has_value(),
+        "Shared stationary points must preserve the inactive replacement SDP.");
     const auto stationary = state.value(QStringLiteral("stationaer")).toObject();
     const auto checkResidual = [](const QJsonObject& context, const QString& key) {
         const auto residual = context.value(key).toArray();
@@ -956,6 +988,50 @@ int main(int argc, char* argv[])
         testTurningReference(QString::fromLocal8Bit(argv[2]));
         testDynamicRun(modelPath, validation);
         testLiveRun(modelPath, validation);
+        {
+            const QJsonObject wind{
+                {QStringLiteral("richtung_grad"), 0.},
+                {QStringLiteral("v0_m_s"), 5.},
+                {QStringLiteral("h0_m"), 10.},
+                {QStringLiteral("bootmitgefuehrt"), false},
+                {QStringLiteral("mast_element_id"), QStringLiteral("Mast")},
+                {QStringLiteral("mastspitze_modell_m"), QJsonArray{0., 0., 10.}}};
+            const QJsonObject start{{QStringLiteral("wind_eingabe"), wind}};
+            QString error;
+            auto live = LiveSimulation::create(modelPath, validation, 0., .01, true, &error, start);
+            require(live != nullptr, "wind live start rejected");
+            std::atomic_bool stop{false};
+            std::thread worker([&] { live->run(stop); });
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (live->progress().states < 2 && !live->progress().finished &&
+                std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            const bool ready = live->progress().states >= 2;
+            const auto old = ready ? live->stateJson(0, &error) : QJsonObject{};
+            const bool queued = ready && live->setWind(90., 8., true, &error);
+            const auto previous = live->progress().states;
+            while (live->progress().states < previous + 3 && !live->progress().finished &&
+                std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            const bool advanced = live->progress().states >= previous + 3;
+            stop.store(true);
+            worker.join();
+            require(ready && queued && advanced, "wind update did not advance");
+            const auto latest = live->stateJson(live->progress().states - 1, &error);
+            require(forcedisplay::parseForceState(latest).reference.has_value(),
+                "Live point collection must be usable by the GUI force display.");
+            require(old.value(QStringLiteral("wind")).toObject()
+                        .value(QStringLiteral("referenzgeschwindigkeit_m_s")).toDouble() == 5. &&
+                    latest.value(QStringLiteral("wind")).toObject()
+                        .value(QStringLiteral("referenzgeschwindigkeit_m_s")).toDouble() == 8. &&
+                    latest.value(QStringLiteral("wind")).toObject()
+                        .value(QStringLiteral("modus")).toString() == QStringLiteral("bootmitgefuehrt") &&
+                    std::abs(latest.value(QStringLiteral("wind")).toObject()
+                        .value(QStringLiteral("wahr")).toObject()
+                        .value(QStringLiteral("herkunft_welt_grad")).toDouble() - 90.) < .1 &&
+                    live->stateJson(0, &error) == old,
+                "live wind update altered history or was not applied");
+        }
         testStartState(modelPath, validation);
         testDrive(modelPath, validation);
         testMovementInput(modelPath);

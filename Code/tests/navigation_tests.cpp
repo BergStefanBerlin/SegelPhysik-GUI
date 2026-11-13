@@ -13,6 +13,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
@@ -129,6 +130,70 @@ void testInstruments()
     pitch.setValues(values);
     require(element(compass, "heading_value").text() == QStringLiteral("090°"), "live heading text");
     require(element(compass, "heading_direction").text() == QStringLiteral("O"), "live heading direction");
+    values.trueWindDirection = 90.;
+    values.apparentWindDirection = 90.;
+    compass.setValues(values);
+    require(element(compass, "runtime_wind_true").attribute(QStringLiteral("transform"))
+                == QStringLiteral("rotate(90 312 405)") &&
+            element(compass, "runtime_wind_apparent").attribute(QStringLiteral("transform"))
+                == QStringLiteral("rotate(90 312 405)") &&
+            element(compass, "runtime_wind_true").attribute(QStringLiteral("fill")) == QStringLiteral("none"),
+        "wind markers must use the same origin angle and distinct fill");
+    for (double direction : {0., 90., 180., 270., 360.}) {
+        values.trueWindDirection = direction;
+        values.apparentWindDirection = direction;
+        compass.setValues(values);
+        const auto expected = QStringLiteral("rotate(%1 312 405)").arg(direction);
+        require(element(compass, "runtime_wind_true").attribute(QStringLiteral("transform")) == expected &&
+                element(compass, "runtime_wind_apparent").attribute(QStringLiteral("transform")) == expected,
+            "both compass markers must follow the wind origin");
+    }
+    values.trueWindDirection = 0.;
+    values.apparentWindDirection = 0.;
+    compass.setValues(values);
+    QDomDocument markerDocument;
+    auto markerRoot = markerDocument.createElement(QStringLiteral("svg"));
+    markerRoot.setAttribute(QStringLiteral("xmlns"), QStringLiteral("http://www.w3.org/2000/svg"));
+    markerRoot.setAttribute(QStringLiteral("viewBox"), QStringLiteral("22 112 580 580"));
+    markerDocument.appendChild(markerRoot);
+    markerRoot.appendChild(markerDocument.importNode(element(compass, "runtime_wind_true"), true));
+    markerRoot.appendChild(markerDocument.importNode(element(compass, "runtime_wind_apparent"), true));
+    for (double offset : {0., 5.}) {
+        markerRoot.lastChildElement().setAttribute(QStringLiteral("transform"),
+            QStringLiteral("rotate(%1 312 405)").arg(offset));
+        QSvgRenderer markers(markerDocument.toByteArray());
+        require(markers.isValid(), "wind marker SVG must render");
+        for (double scale : {1., 1.5, 2.}) {
+            const int size = static_cast<int>(180 * scale);
+            QImage image(size, size, QImage::Format_ARGB32);
+            image.fill(Qt::transparent);
+            { QPainter painter(&image); markers.render(&painter); }
+            std::vector<QPoint> blue;
+            std::vector<QPoint> orange;
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x) {
+                    const auto color = image.pixelColor(x, y);
+                    if (color.alpha() < 128) continue;
+                    if (color.blue() > color.red() + 20 && color.blue() > color.green() + 10)
+                        blue.emplace_back(x, y);
+                    else if (color.red() > color.green() + 25 && color.red() > color.blue() + 20)
+                        orange.emplace_back(x, y);
+                }
+            }
+            require(blue.size() >= 3 && orange.size() >= 3,
+                "both wind markers must remain visible at every DPI");
+            if (offset == 0.) {
+                for (const auto& a : blue)
+                    for (const auto& b : orange)
+                        require((a.x() - b.x()) * (a.x() - b.x()) + (a.y() - b.y()) * (a.y() - b.y()) >= 4,
+                            "nested wind markers must retain a visible pixel gap");
+            }
+        }
+    }
+    values.apparentWindDirection.reset();
+    compass.setValues(values);
+    require(element(compass, "runtime_wind_apparent").attribute(QStringLiteral("display")) ==
+        QStringLiteral("none"), "unavailable wind direction must be hidden");
     require(element(roll, "roll_value").text() == QStringLiteral("-30°"), "live roll text");
     require(element(pitch, "pitch_value").text() == QStringLiteral("+20°"), "live pitch text");
     require(element(roll, "roll_pose").attribute(QStringLiteral("transform"))
@@ -198,22 +263,39 @@ void testOverlay()
     auto* roll = overlay.findChild<QWidget*>(QStringLiteral("navigation_roll"));
     auto* pitch = overlay.findChild<QWidget*>(QStringLiteral("navigation_pitch"));
     auto* speed = overlay.findChild<QWidget*>(QStringLiteral("navigationSpeed"));
+    auto* profile = overlay.findChild<QWidget*>(QStringLiteral("windProfile"));
     auto* magnitude = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedMagnitude"));
     auto* courseRate = overlay.findChild<QLabel*>(QStringLiteral("navigationCourseRate"));
     auto* componentX = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent0"));
     auto* componentY = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent1"));
     auto* componentZ = overlay.findChild<QLabel*>(QStringLiteral("navigationSpeedComponent2"));
-    require(handle && compass && roll && pitch && speed && magnitude && courseRate
+    require(handle && compass && roll && pitch && speed && profile && magnitude && courseRate
             && componentX && componentY && componentZ,
         "three instruments, speed readout and header required");
     require(compass->y() < roll->y() && roll->y() < pitch->y(), "vertical instrument order");
-    require(speed->y() > pitch->y(), "speed readout must be below the attitude instruments");
+    require(speed->mapTo(&overlay, QPoint{}).y() > pitch->y(),
+        "speed readout must be below the attitude instruments");
+    require(std::abs(speed->width() - profile->width()) <= 1,
+        "speed and profile cards must have equal width");
+    navigation::Values profileValues;
+    profileValues.windProfile = {{0.01, 1.}, {5., 6.}};
+    overlay.setValues(profileValues);
+    const auto withoutReference = profile->grab().toImage();
+    profileValues.windReference = std::array<double, 2>{10., 5.};
+    overlay.setValues(profileValues);
+    const auto outsideReference = profile->grab().toImage();
+    const qreal scale = outsideReference.devicePixelRatio();
+    int referencePixels = 0;
+    for (int y = static_cast<int>(22 * scale); y < static_cast<int>(29 * scale); ++y)
+        for (int x = 0; x < outsideReference.width(); ++x)
+            if (outsideReference.pixel(x, y) != withoutReference.pixel(x, y)) ++referencePixels;
+    require(referencePixels > 5, "out-of-range wind reference must be visible without hovering");
     overlay.setValues(navigation::derive(forcedisplay::Pose{}, {1, -1, 1},
         forcedisplay::Vec3{3.0, 4.0, 12.0}));
-    require(magnitude->text() == QStringLiteral("13.000 m/s"), "total speed display");
-    require(componentX->text() == QStringLiteral("3.000 m/s"), "world X speed display");
-    require(componentY->text() == QStringLiteral("4.000 m/s"), "world Y speed display");
-    require(componentZ->text() == QStringLiteral("12.000 m/s"), "world Z speed display");
+    require(magnitude->text() == QStringLiteral("13.0 m/s"), "total speed display");
+    require(componentX->text() == QStringLiteral("3.0 m/s"), "world X speed display");
+    require(componentY->text() == QStringLiteral("4.0 m/s"), "world Y speed display");
+    require(componentZ->text() == QStringLiteral("12.0 m/s"), "world Z speed display");
     require(magnitude->y() < courseRate->y() && courseRate->y() < componentX->y()
             && componentX->y() < componentY->y() && componentY->y() < componentZ->y(),
         "course rate must lie between speed magnitude and all world-axis rows");
@@ -224,7 +306,7 @@ void testOverlay()
         values.courseRateStatus = QStringLiteral("gueltig");
         overlay.setValues(values);
         require(courseRate->text() == (sign < 0.
-                ? QStringLiteral("-90.00 °/s") : QStringLiteral("+90.00 °/s")),
+                ? QStringLiteral("-90.0 °/s") : QStringLiteral("+90.0 °/s")),
             "signed Core rate conversion pi/2 rad/s to 90 degrees/s");
         values.approximate = true;
         overlay.setValues(values);
@@ -236,7 +318,7 @@ void testOverlay()
     zero.courseRateRadS = 0.;
     zero.courseRateStatus = QStringLiteral("gueltig");
     overlay.setValues(zero);
-    require(courseRate->text() == QStringLiteral("0.00 °/s"),
+    require(courseRate->text() == QStringLiteral("0.0 °/s"),
         "numeric zero must not be unavailable");
     overlay.setValues(navigation::Values{});
     require(magnitude->text() == QStringLiteral("– m/s")

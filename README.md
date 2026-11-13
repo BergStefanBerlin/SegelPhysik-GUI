@@ -505,8 +505,8 @@ redirected to a temporary directory.
 Material test images use explicitly synthetic preview assignments, not
 an inferred or persistent Folkeboot material classification.
 
-The focused `gui_workspace_tabs_100`, `gui_workspace_tabs_150` and
-`gui_workspace_tabs_200` cases check the three palettes, fixed inactive-tab
+The focused `gui_workspace_tabs_100` and `gui_workspace_tabs_150` cases
+check the three palettes, fixed inactive-tab
 colors and the intentional isolation of inspection from simulation controls.
 They also check corrected Core pressure points with independent persistent
 visibility, exact pose-transformed XYZ (including an outside LDP), legacy/

@@ -10,6 +10,15 @@
   },
   "punkte": [
     {
+      "id": "IDEE-G-00104",
+      "status": "angenommen",
+      "anforderungen": ["A-G-00163", "A-G-00164"],
+      "thema": "Darstellungsfehler an der Wasseroberflaeche",
+      "bezug": "../Spezifikation_GUI_Grafikprofile_und_Setup.md#51-a-g-00163-und-a-g-00164-darstellungsfehler-an-der-wasseroberfläche",
+      "entscheidung": "Abgesetzte zweite Rumpfform tief unter Wasser bei 420 und Optimist in der dynamischen Ansicht beseitigen; echte Unterwassergeometrie und Wasser erhalten. Eine natuerliche Spiegelung direkt an der Wasseroberflaeche nicht pauschal entfernen. Von unter Wasser soll mehr von der Yacht oberhalb der Wasseroberflaeche erkennbar sein.",
+      "nachweis_offen": "Sichtbarkeit und Bildwirkung in der Unterwasseransicht pruefen; technische Ursache des Fehlbilds untersuchen."
+    },
+    {
       "id": "IDEE-G-00058",
       "status": "angenommen",
       "thema": "Konfiguration im Darstellungsfenster und Geltungsbereich",

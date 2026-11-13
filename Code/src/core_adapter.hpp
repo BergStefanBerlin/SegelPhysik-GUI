@@ -78,6 +78,8 @@ public:
     bool setMovementValue(const QString& elementId, double value, QString* error);
     bool setDynamicForce(bool active, const std::array<double, 3>& force,
         const std::array<double, 3>& point, QString* error);
+    bool setWind(std::optional<double> direction, std::optional<double> speed,
+        std::optional<bool> boatFixed, QString* error);
 
     static constexpr qsizetype maximumStates = 2'000'000;
 

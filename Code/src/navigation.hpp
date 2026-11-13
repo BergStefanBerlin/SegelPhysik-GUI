@@ -9,12 +9,15 @@
 #include <QWidget>
 #include <array>
 #include <optional>
+#include <vector>
 
 class QSvgRenderer;
 class QLabel;
 class QSizeGrip;
 
 namespace navigation {
+
+class WindProfileWidget;
 
 struct Values {
     std::optional<double> heading;
@@ -28,6 +31,11 @@ struct Values {
     std::optional<double> courseRateRadS;
     QString courseRateStatus = QStringLiteral("nicht_verfuegbar");
     bool approximate = false;
+    std::optional<double> trueWindDirection;
+    std::optional<double> apparentWindDirection;
+    std::vector<std::array<double, 2>> windProfile;
+    std::optional<std::array<double, 2>> windReference;
+    QString windDiagnostic;
 };
 
 Values derive(const std::optional<forcedisplay::Pose>& pose,
@@ -83,6 +91,8 @@ private:
     void clampPosition();
     QLabel* handle_;
     QWidget* speedPanel_ = nullptr;
+    QWidget* speedRow_ = nullptr;
+    WindProfileWidget* windProfile_ = nullptr;
     QSizeGrip* sizeGrip_;
     std::array<Instrument*, 3> instruments_;
     QLabel* speedMagnitude_;

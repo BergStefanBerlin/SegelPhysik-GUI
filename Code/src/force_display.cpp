@@ -393,6 +393,54 @@ ForceState parseForceState(const QJsonObject& object)
         state.contributions.push_back(c);
     }
 
+    const auto pointCollection = object.value(QStringLiteral("referenzpunkte"));
+    if (!pointCollection.isUndefined()) {
+        if (!pointCollection.isArray())
+            throw std::runtime_error("CORE-Referenzpunkte: Ungueltige Sammlung.");
+        QHash<QString, QJsonObject> points;
+        for (const auto& value : pointCollection.toArray()) {
+            if (!value.isObject()) throw std::runtime_error("CORE-Referenzpunkt ist kein Objekt.");
+            const auto entry = value.toObject();
+            const auto id = entry.value(QStringLiteral("id")).toString();
+            if (id.isEmpty() || points.contains(id))
+                throw std::runtime_error("CORE-Referenzpunkte: Fehlende oder doppelte Identitaet.");
+            points.insert(id, entry);
+        }
+        const auto readPoint = [&](const QString& id) -> std::optional<Vec3> {
+            if (!points.contains(id))
+                throw std::runtime_error("CORE-Referenzpunkte: Erwarteter Punkt fehlt.");
+            const auto entry = points.value(id);
+            const auto status = entry.value(QStringLiteral("positionsstatus")).toString();
+            const auto position = readOptionalVector(entry.value(QStringLiteral("position_modell_m")), id);
+            if ((status == QStringLiteral("gueltig")) != position.has_value() ||
+                (status != QStringLiteral("gueltig") && status != QStringLiteral("nicht_verfuegbar")))
+                throw std::runtime_error("CORE-Referenzpunkte: Positionsstatus widerspricht Position.");
+            return position;
+        };
+        state.reference = readPoint(QStringLiteral("schwerpunkt"));
+        if (state.lateral) {
+            const auto id = QStringLiteral("lateraldruckpunkt");
+            if (points.value(id).value(QStringLiteral("fachstatus")).toString() != state.lateral->status)
+                throw std::runtime_error("CORE-LDP: Status der Punktesammlung widerspricht Altsicht.");
+            state.lateral->position = readPoint(id);
+        }
+        if (state.sailCenter) {
+            const auto id = QStringLiteral("ersatz_segel");
+            if (points.value(id).value(QStringLiteral("fachstatus")).toString() != state.sailCenter->status)
+                throw std::runtime_error("CORE-SDP: Status der Punktesammlung widerspricht Altsicht.");
+            state.sailCenter->position = readPoint(id);
+        }
+        for (auto& contribution : state.contributions) {
+            const auto id = QStringLiteral("beitrag:") + contribution.id;
+            if (contribution.kind == Kind::Force && contribution.role == QStringLiteral("einzelbeitrag")
+                && contribution.pointKind == QStringLiteral("angriffspunkt")) {
+                if (points.value(id).value(QStringLiteral("fachstatus")).toString() != contribution.state)
+                    throw std::runtime_error("CORE-Kraftpunkt: Status der Punktesammlung widerspricht Altsicht.");
+                contribution.point = readPoint(id);
+            }
+        }
+    }
+
     if (v2) {
         state.hasBalance = true;
         state.balanceStatus = object.value(QStringLiteral("bilanzstatus")).toString();

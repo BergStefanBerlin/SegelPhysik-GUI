@@ -73,6 +73,7 @@ public:
         bool lateralCenter = true;
         bool sailCenter = true;
         bool courseArrow = true;
+        bool windArrows = true;
         bool staticForces = false;
         std::array<forcedisplay::StaticForceStyle, forcedisplay::staticForceCount> staticStyles =
             forcedisplay::staticForceDefaults();
@@ -119,6 +120,8 @@ public:
     MotionGeometry motionGeometry() const;
     const std::optional<forcedisplay::CourseArrowGeometry>& courseArrowGeometry() const
     { return courseArrowGeometry_; }
+    const std::array<std::optional<forcedisplay::ArrowGeometry>, 2>& windArrowGeometry() const
+    { return windArrowGeometry_; }
     const std::optional<forcedisplay::Vec3>& pressurePoint(bool sail) const
     { return pressurePoints_[sail ? 1 : 0]; }
     std::optional<forcedisplay::Pose> statePose() const
@@ -227,6 +230,7 @@ private:
     void rebuildForceGeometry();
     void rebuildSchematicForces();
     void rebuildCourseArrow();
+    void rebuildWindArrows();
     void hideForceVisuals();
     Visual& visualFor(const QString& id);
     vtkRenderer* forceRenderer() const;
@@ -245,6 +249,7 @@ private:
     std::shared_ptr<const DisplayMeshData> prepareMesh(
         const std::shared_ptr<DisplayMeshCache>& cache, const QJsonArray& matrix);
     void applyBodyStyle();
+    void updateReflectionVisibility();
     void applyGraphicsProfile();
     void updateEnvironmentTexture();
     void updateWaterAnimation();
@@ -369,12 +374,15 @@ private:
     vtkSmartPointer<vtkActor> courseArrowActor_;
     vtkSmartPointer<vtkActor> courseArrowHeadActor_;
     std::optional<forcedisplay::CourseArrowGeometry> courseArrowGeometry_;
+    std::array<Visual, 2> windVisuals_;
+    std::array<std::optional<forcedisplay::ArrowGeometry>, 2> windArrowGeometry_;
     std::vector<BodyActor> bodies_;
     QHash<QString, Visual> visuals_;
     QHash<QString, forcedisplay::Vec3> arcBasis_;
     QHash<QString, forcedisplay::ScaledMagnitude> scaled_;
     QVector<forcedisplay::ScreenShape> screenShapes_;
     forcedisplay::ForceState forces_;
+    QJsonObject currentState_;
     forcedisplay::Pose pose_;
     forcedisplay::Pose cameraPose_;
     bool bodyFixedCamera_ = true;

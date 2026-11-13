@@ -170,6 +170,15 @@ private:
     QWidget* testDrivePanel_ = nullptr;
     QGroupBox* movementPanel_ = nullptr;
     QGroupBox* stationaryForcePanel_ = nullptr;
+    QGroupBox* windPanel_ = nullptr;
+    QLineEdit* windDirectionEdit_ = nullptr;
+    QLineEdit* windSpeedEdit_ = nullptr;
+    QLineEdit* windHeightEdit_ = nullptr;
+    QComboBox* windMode_ = nullptr;
+    QLabel* windStatus_ = nullptr;
+    double windDirection_ = 0.;
+    double windSpeed_ = 5.;
+    double windHeight_ = 10.;
     QCheckBox* stationaryForceActive_ = nullptr;
     std::array<QDoubleSpinBox*, 3> stationaryForce_{};
     std::array<QDoubleSpinBox*, 3> stationaryPoint_{};
@@ -204,6 +213,7 @@ private:
     QCheckBox* leverCheck_ = nullptr;
     QCheckBox* lateralCheck_ = nullptr;
     QCheckBox* sailCenterCheck_ = nullptr;
+    QCheckBox* windArrowsCheck_ = nullptr;
     QLabel* pressureStatus_ = nullptr;
     QCheckBox* valuesCheck_ = nullptr;
     QPushButton* refitButton_ = nullptr;

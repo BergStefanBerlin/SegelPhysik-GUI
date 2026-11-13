@@ -1,6 +1,7 @@
 #include "vtk_scene.hpp"
 #include <QJsonArray>
 #include "navigation.hpp"
+#include "segelphysik/wind.hpp"
 #include <QScrollArea>
 
 #include <QColor>
@@ -58,6 +59,7 @@
 #include <vtkShadowMapBakerPass.h>
 #include <vtkShadowMapPass.h>
 #include <vtkShaderProperty.h>
+#include <vtkUniforms.h>
 #include <vtkSkybox.h>
 #include <vtkSphereSource.h>
 #include <vtkSSAOPass.h>
@@ -174,6 +176,77 @@ Vec3 readStateVector(const QJsonObject& state, const QString& field)
         result[static_cast<std::size_t>(axis)] = value.toDouble();
     }
     return result;
+}
+
+void validateWindSnapshot(const QJsonObject& state)
+{
+    const auto value = state.value(QStringLiteral("wind"));
+    if (value.isUndefined()) return;
+    if (!value.isObject()) throw std::runtime_error("Core-Winddaten sind kein Objekt.");
+    const auto wind = value.toObject();
+    for (const auto& field : {QStringLiteral("zeit_s"), QStringLiteral("schritt"),
+                              QStringLiteral("modell_fassung")}) {
+        if (wind.value(field).isUndefined() || wind.value(field) != state.value(field))
+            throw std::runtime_error("Core-Winddaten gehoeren zu einem anderen Ergebnisstand.");
+    }
+}
+
+void readWindNavigation(const QJsonObject& state, navigation::Values& values)
+{
+    validateWindSnapshot(state);
+    const auto wind = state.value(QStringLiteral("wind")).toObject();
+    if (wind.isEmpty()) {
+        values.windDiagnostic = QStringLiteral("Winddaten nicht verfügbar");
+        return;
+    }
+    const auto marker = [](const QJsonObject& object) -> std::optional<double> {
+        const auto angle = object.value(QStringLiteral("herkunft_welt_grad"));
+        if (object.value(QStringLiteral("kompass_sichtbar")).toBool() &&
+            angle.isDouble() && std::isfinite(angle.toDouble()))
+            return angle.toDouble();
+        return {};
+    };
+    values.trueWindDirection = marker(wind.value(QStringLiteral("wahr")).toObject());
+    values.apparentWindDirection = marker(wind.value(QStringLiteral("scheinbar")).toObject());
+    values.windDiagnostic = wind.value(QStringLiteral("diagnose")).toString();
+    std::optional<Vec3> mast;
+    for (const auto& entry : state.value(QStringLiteral("referenzpunkte")).toArray()) {
+        const auto point = entry.toObject();
+        if (point.value(QStringLiteral("id")).toString() != QStringLiteral("mastspitze")) continue;
+        if (point.value(QStringLiteral("positionsstatus")).toString() == QStringLiteral("gueltig"))
+            mast = readStateVector(point, QStringLiteral("position_welt_m"));
+        break;
+    }
+    if (!mast) {
+        if (values.windDiagnostic.isEmpty()) values.windDiagnostic = QStringLiteral("Kein Mast");
+        return;
+    }
+    const auto speed = wind.value(QStringLiteral("referenzgeschwindigkeit_m_s"));
+    const auto height = wind.value(QStringLiteral("referenzhoehe_m"));
+    if (!speed.isDouble() || !height.isDouble() || !std::isfinite(speed.toDouble()) ||
+        !std::isfinite(height.toDouble())) {
+        values.windDiagnostic = QStringLiteral("Ungültiges Windprofil");
+        return;
+    }
+    segelphysik::WindKonfiguration config;
+    config.referenzgeschwindigkeit_m_s = speed.toDouble();
+    config.referenzhoehe_m = height.toDouble();
+    const double upper = (std::floor((*mast)[2] / 5.) + 1.) * 5.;
+    if (!std::isfinite(upper) || upper <= .0002) {
+        values.windDiagnostic = QStringLiteral("Ungültige Masthöhe");
+        return;
+    }
+    try {
+        for (int i = 0; i <= 40; ++i) {
+            const double fraction = i / 40.;
+            const double h = .5 + (upper - .5) * fraction * fraction;
+            values.windProfile.push_back({h, segelphysik::windprofil(config, h)});
+        }
+        values.windReference = std::array<double, 2>{height.toDouble(), speed.toDouble()};
+    } catch (const std::invalid_argument& error) {
+        values.windProfile.clear();
+        values.windDiagnostic = QString::fromUtf8(error.what());
+    }
 }
 
 Vec3 normalized(const Vec3& v)
@@ -1026,6 +1099,21 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     setActorColor(courseArrowHeadActor_, QStringLiteral("#73f3d4"));
     courseArrowActor_->VisibilityOff();
     courseArrowHeadActor_->VisibilityOff();
+    for (std::size_t i = 0; i < windVisuals_.size(); ++i) {
+        auto& visual = windVisuals_[i];
+        visual.lines = vtkSmartPointer<vtkPolyData>::New();
+        visual.head = vtkSmartPointer<vtkPolyData>::New();
+        visual.lineActor = makeOverlayActor(visual.lines);
+        visual.headActor = makeOverlayActor(visual.head);
+        overlay_->AddActor(visual.lineActor);
+        overlay_->AddActor(visual.headActor);
+        const auto color = i == 0 ? QStringLiteral("#57b6ff") : QStringLiteral("#ff9a32");
+        setActorColor(visual.lineActor, color);
+        setActorColor(visual.headActor, color);
+        visual.lineActor->GetProperty()->SetLineWidth(i == 0 ? 6.f : 3.f);
+        visual.lineActor->VisibilityOff();
+        visual.headActor->VisibilityOff();
+    }
 
     // Licht: Lichtset statt Einzellicht, Kantenglättung, Tiefenschälung für
     // Transparenz, Umgebungsverdeckung und Himmel als Umgebungslicht.
@@ -1195,6 +1283,7 @@ void VtkSceneWidget::updateDockedNavigation(const QJsonObject& state,
     values.courseRateStatus = forces.courseRateStatus;
     values.approximate = !forces.stationary.isEmpty()
         && !forces.stationary.value(QStringLiteral("konvergiert")).toBool();
+    readWindNavigation(state, values);
     navigation_->setValues(values);
 }
 
@@ -1236,6 +1325,12 @@ void VtkSceneWidget::clearModel()
     overlay_->RemoveAllViewProps();
     overlay_->AddActor(courseArrowActor_);
     overlay_->AddActor(courseArrowHeadActor_);
+    for (auto& visual : windVisuals_) {
+        overlay_->AddActor(visual.lineActor);
+        overlay_->AddActor(visual.headActor);
+        visual.lineActor->VisibilityOff();
+        visual.headActor->VisibilityOff();
+    }
     addEnvironmentActors();
     bodies_.clear();
     dryLoops_.clear();
@@ -1336,6 +1431,22 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             reflectionActor->GetProperty()->SetDiffuse(0.75);
             reflectionActor->GetProperty()->SetSpecular(0.35);
             reflectionActor->GetProperty()->BackfaceCullingOff();
+            auto* reflectionShader = reflectionActor->GetShaderProperty();
+            reflectionShader->AddVertexShaderReplacement("//VTK::PositionVC::Dec", true,
+                "//VTK::PositionVC::Dec\nout float reflectionHeight;\n", false);
+            reflectionShader->AddVertexShaderReplacement("//VTK::PositionVC::Impl", true,
+                "//VTK::PositionVC::Impl\n"
+                "reflectionHeight = dot(vertexMC.xyz - reflectionWaterOrigin, reflectionWaterNormal);\n", false);
+            reflectionShader->AddFragmentShaderReplacement("//VTK::PositionVC::Dec", true,
+                "//VTK::PositionVC::Dec\nin float reflectionHeight;\n", false);
+            // PBR textures may replace opacity during lighting; fade the final alpha instead.
+            reflectionShader->AddFragmentShaderReplacement("//VTK::TCoord::Impl", true,
+                "//VTK::TCoord::Impl\n"
+                "gl_FragData[0].a *= 1.0 - smoothstep(0.15, 1.5, reflectionHeight);\n", false);
+            const double initialOrigin[3] = {0., 0., 0.};
+            const double initialNormal[3] = {0., 0., 1.};
+            reflectionShader->GetVertexCustomUniforms()->SetUniform3f("reflectionWaterOrigin", initialOrigin);
+            reflectionShader->GetVertexCustomUniforms()->SetUniform3f("reflectionWaterNormal", initialNormal);
             reflectionActor->PickableOff();
             reflectionActor->UseBoundsOff();
             reflectionActor->VisibilityOff();
@@ -1406,6 +1517,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         if (bodies_.empty()) {
             throw std::runtime_error("Kein Modell für die 3D-Ansicht geladen.");
         }
+        validateWindSnapshot(state);
         const auto pose = forcedisplay::readPose(state);
         const auto velocityWorld = readStateVector(
             state, QStringLiteral("geschwindigkeit_welt_m_s"));
@@ -1469,6 +1581,10 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             body.reflection->SetUserTransform(reflectionTransform);
             body.localWaterPlane->SetOrigin(waterOrigin[0], waterOrigin[1], waterOrigin[2]);
             body.localWaterPlane->SetNormal(waterNormal[0], waterNormal[1], waterNormal[2]);
+            body.reflection->GetShaderProperty()->GetVertexCustomUniforms()->SetUniform3f(
+                "reflectionWaterOrigin", waterOrigin.data());
+            body.reflection->GetShaderProperty()->GetVertexCustomUniforms()->SetUniform3f(
+                "reflectionWaterNormal", waterNormal.data());
             body.reflectionClipper->Modified();
             body.cutter->Update();
             auto stripper = vtkSmartPointer<vtkStripper>::New();
@@ -1602,6 +1718,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         ensureReferences();
         updateScaling();
         geometryDirty_ = true;
+        currentState_ = state;
         updateWaterPlane();
         renderer_->ResetCameraClippingRange();
         renderScene();
@@ -1616,6 +1733,12 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
 
 void VtkSceneWidget::clearState()
 {
+    currentState_ = {};
+    for (auto& visual : windVisuals_) {
+        visual.lineActor->VisibilityOff();
+        visual.headActor->VisibilityOff();
+    }
+    windArrowGeometry_ = {};
     const auto previousPosition = cameraPose_.position;
     orthographicScale_ = 0.0;
     orthographicPan_ = {};
@@ -2576,7 +2699,7 @@ QString VtkSceneWidget::graphicsStatus() const
         limitations << QStringLiteral("Wasser-Untereffekte sind nicht wirksam, solange die Wasserfläche ausgeschaltet ist.");
     }
     if (graphicsProfile_.on(graphics::Feature::Reflection)) {
-        limitations << QStringLiteral("Objektspiegelungen sind oberhalb Z=0 beschnitten; transparente Materialien werden nur als Alpha-Näherung gespiegelt.");
+        limitations << QStringLiteral("Objektspiegelungen verblassen mit Abstand zur Wasseroberfläche und sind unter Wasser ausgeblendet; transparente Materialien werden nur als Alpha-Näherung gespiegelt.");
     }
     if (graphicsProfile_.on(graphics::Feature::ColorTexture)
         || graphicsProfile_.on(graphics::Feature::ORM)
@@ -2942,12 +3065,19 @@ void VtkSceneWidget::applyBodyStyle()
         reflectionProperty->SetSpecular(0.35);
         setActorEnvironmentLighting(body.body, graphicsProfile_.on(graphics::Feature::ModelIBL));
         setActorEnvironmentLighting(body.reflection, graphicsProfile_.on(graphics::Feature::ModelIBL));
-        body.reflection->SetVisibility(
-            graphicsProfile_.on(graphics::Feature::Water)
-            && graphicsProfile_.on(graphics::Feature::Reflection) && body.body->GetVisibility());
         body.waterline->SetVisibility(
             graphicsProfile_.on(graphics::Feature::Waterline) && body.body->GetVisibility());
     }
+    updateReflectionVisibility();
+}
+
+void VtkSceneWidget::updateReflectionVisibility()
+{
+    const bool visible = renderer_->GetActiveCamera()->GetPosition()[2] >= 0.0
+        && graphicsProfile_.on(graphics::Feature::Water)
+        && graphicsProfile_.on(graphics::Feature::Reflection);
+    for (auto& body : bodies_)
+        body.reflection->SetVisibility(visible && body.body->GetVisibility());
 }
 
 void VtkSceneWidget::applyGraphicsProfile()
@@ -3160,6 +3290,7 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
         geometryDirty_ = false;
         rebuildForceGeometry();
         rebuildCourseArrow();
+        rebuildWindArrows();
         rebuildEnvironment();
         double bounds[6];
         double overlayBounds[6];
@@ -3212,8 +3343,51 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
         navigationValues.courseRateStatus = forces_.courseRateStatus;
         navigationValues.approximate = !forces_.stationary.isEmpty()
             && !forces_.stationary.value(QStringLiteral("konvergiert")).toBool();
+        readWindNavigation(currentState_, navigationValues);
     }
     navigation_->setValues(navigationValues);
+}
+
+void VtkSceneWidget::rebuildWindArrows()
+{
+    windArrowGeometry_ = {};
+    for (auto& visual : windVisuals_) {
+        visual.lineActor->VisibilityOff();
+        visual.headActor->VisibilityOff();
+    }
+    if (!options_.windArrows || !hasState_ || inspectionMode_) return;
+    std::optional<Vec3> mast;
+    for (const auto& entry : currentState_.value(QStringLiteral("referenzpunkte")).toArray()) {
+        const auto point = entry.toObject();
+        if (point.value(QStringLiteral("id")).toString() == QStringLiteral("mastspitze") &&
+            point.value(QStringLiteral("positionsstatus")).toString() == QStringLiteral("gueltig")) {
+            mast = readStateVector(point, QStringLiteral("position_welt_m"));
+            break;
+        }
+    }
+    if (!mast) return;
+    const auto wind = currentState_.value(QStringLiteral("wind")).toObject();
+    const std::array<QString, 2> names{QStringLiteral("wahr"), QStringLiteral("scheinbar")};
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const auto value = wind.value(names[i]).toObject();
+        if (!value.value(QStringLiteral("pfeil_sichtbar")).toBool()) continue;
+        const auto vector = readStateVector(value, QStringLiteral("stroemung_welt_m_s"));
+        const double magnitude = forcedisplay::norm(vector);
+        if (!std::isfinite(magnitude) || magnitude <= .1) continue;
+        const double length = magnitude * .1;
+        const double headLength = length * .25;
+        windArrowGeometry_[i] = forcedisplay::arrowGeometry(*mast, vector, length, headLength);
+        if (!windArrowGeometry_[i]) continue;
+        const auto& arrow = *windArrowGeometry_[i];
+        PolyBuilder line;
+        PolyBuilder head;
+        line.segment(arrow.start, arrow.headBase);
+        head.cone(arrow.tip, arrow.direction, headLength, headLength * .4);
+        line.storeLines(windVisuals_[i].lines);
+        head.storePolys(windVisuals_[i].head);
+        windVisuals_[i].lineActor->VisibilityOn();
+        windVisuals_[i].headActor->VisibilityOn();
+    }
 }
 
 void VtkSceneWidget::rebuildCourseArrow()
@@ -3940,6 +4114,7 @@ void VtkSceneWidget::rebuildInspectionGrid()
 
 void VtkSceneWidget::rebuildEnvironment()
 {
+    updateReflectionVisibility();
     if (inspectionMode_) {
         rebuildInspectionGrid();
         return;
@@ -3970,7 +4145,8 @@ void VtkSceneWidget::rebuildEnvironment()
         const double grazing = std::pow(1.0 - std::abs(toCamera[2]), 2.5);
         const double opacity = graphicsProfile_.on(graphics::Feature::Fresnel)
             ? mix(graphicsProfile_.waterOpacity, 0.95, grazing) : graphicsProfile_.waterOpacity;
-        const double alpha = fade * std::clamp(opacity, 0.0, 0.95);
+        const double underwaterVisibility = mix(0.35, 1.0, smoothstep(-0.25, 0.0, position[2]));
+        const double alpha = fade * std::clamp(opacity, 0.0, 0.95) * underwaterVisibility;
         const double inspectionWater[3] = {101.0 / 255.0, 40.0 / 255.0, 63.0 / 255.0};
         const double inspectionSky[3] = {198.0 / 255.0, 149.0 / 255.0, 165.0 / 255.0};
         const auto* water = inspectionMode_ ? inspectionWater : waterColor;

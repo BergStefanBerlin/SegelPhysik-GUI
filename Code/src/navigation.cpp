@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -38,6 +39,93 @@ QString angleText(double angle)
     return QStringLiteral("%1%2°").arg(rounded > 0 ? QStringLiteral("+") : QString()).arg(rounded);
 }
 }
+
+class WindProfileWidget final : public QWidget {
+public:
+    explicit WindProfileWidget(QWidget* parent) : QWidget(parent)
+    {
+        setObjectName(QStringLiteral("windProfile"));
+        setMinimumWidth(0);
+    }
+
+    void setValues(const Values& values)
+    {
+        samples_ = values.windProfile;
+        reference_ = values.windReference;
+        diagnostic_ = values.windDiagnostic;
+        setToolTip(reference_
+            ? QStringLiteral("Windprofil ab 0,5 m Höhe\nReferenz: %1 m / %2 m/s")
+                .arg((*reference_)[0], 0, 'f', 2).arg((*reference_)[1], 0, 'f', 1)
+            : diagnostic_);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QColor(QStringLiteral("#294459")));
+        painter.setBrush(QColor(QStringLiteral("#11283a")));
+        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 12, 12);
+        painter.setPen(QColor(QStringLiteral("#8caabd")));
+        auto font = painter.font();
+        font.setPointSizeF(7.);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.drawText(QRect(5, 5, width() - 10, 20), Qt::AlignCenter, QStringLiteral("WINDPROFIL"));
+        if (samples_.empty()) {
+            painter.drawText(rect().adjusted(5, 25, -5, -5), Qt::AlignCenter | Qt::TextWordWrap,
+                diagnostic_.isEmpty() ? QStringLiteral("Kein Mast") : diagnostic_);
+            return;
+        }
+        const double maxHeight = samples_.back()[0];
+        const int plotTop = 26;
+        const QRectF plot(28., plotTop, std::max(1, width() - 36),
+            std::max(1, height() - plotTop - 28));
+        double maxSpeed = 0.;
+        for (const auto& sample : samples_) maxSpeed = std::max(maxSpeed, sample[1]);
+        if (reference_ && (*reference_)[0] <= maxHeight)
+            maxSpeed = std::max(maxSpeed, (*reference_)[1]);
+        maxSpeed = std::max(10., std::ceil(maxSpeed / 10.) * 10.);
+        painter.setPen(QPen(QColor(QStringLiteral("#7892a3")), 1.));
+        painter.drawLine(plot.bottomLeft(), plot.topLeft());
+        painter.drawLine(plot.bottomLeft(), plot.bottomRight());
+        font.setBold(false);
+        font.setPointSizeF(6.);
+        painter.setFont(font);
+        painter.drawText(QRectF(1, plot.top() - 3, 26, 13), Qt::AlignRight,
+            QString::number(maxHeight, 'f', 0) + QStringLiteral(" m"));
+        painter.drawText(QRectF(1, plot.bottom() - 8, 26, 13), Qt::AlignRight,
+            QStringLiteral("0 m"));
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 2, plot.width(), 16),
+            Qt::AlignLeft, QStringLiteral("0"));
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 2, plot.width(), 16),
+            Qt::AlignCenter, QString::number(maxSpeed / 2., 'f', 0));
+        painter.drawText(QRectF(plot.left(), plot.bottom() + 2, plot.width(), 16),
+            Qt::AlignRight, QString::number(maxSpeed, 'f', 0) + QStringLiteral(" m/s"));
+        QPainterPath curve;
+        for (std::size_t i = 0; i < samples_.size(); ++i) {
+            const QPointF point(plot.left() + plot.width() * samples_[i][1] / maxSpeed,
+                plot.bottom() - plot.height() * samples_[i][0] / maxHeight);
+            if (i == 0) curve.moveTo(point); else curve.lineTo(point);
+        }
+        painter.setPen(QPen(QColor(QStringLiteral("#63d5e2")), 1.5));
+        painter.drawPath(curve);
+        if (reference_ && (*reference_)[0] <= maxHeight) {
+            const QPointF point(plot.left() + plot.width() * (*reference_)[1] / maxSpeed,
+                plot.bottom() - plot.height() * (*reference_)[0] / maxHeight);
+            painter.setBrush(QColor(QStringLiteral("#ffbd16")));
+            painter.setPen(Qt::NoPen);
+            painter.drawEllipse(point, 3., 3.);
+        }
+    }
+
+private:
+    std::vector<std::array<double, 2>> samples_;
+    std::optional<std::array<double, 2>> reference_;
+    QString diagnostic_;
+};
 
 Values derive(const std::optional<forcedisplay::Pose>& pose,
     const forcedisplay::Vec3& cameraOffset,
@@ -170,6 +258,22 @@ Instrument::Instrument(Kind kind, QWidget* parent)
     errorDisk_.setAttribute(QStringLiteral("r"), QStringLiteral("165.5"));
     errorDisk_.setAttribute(QStringLiteral("fill"), QStringLiteral("#ff0000"));
     mutableFace.insertAfter(errorDisk_, dangerRing_);
+    if (kind == Kind::Compass) {
+        auto outerWind = document_.createElement(QStringLiteral("polygon"));
+        outerWind.setAttribute(QStringLiteral("id"), QStringLiteral("runtime_wind_true"));
+        outerWind.setAttribute(QStringLiteral("points"), QStringLiteral("288,195 336,195 312,237"));
+        outerWind.setAttribute(QStringLiteral("fill"), QStringLiteral("none"));
+        outerWind.setAttribute(QStringLiteral("stroke"), QStringLiteral("#57b6ff"));
+        outerWind.setAttribute(QStringLiteral("stroke-width"), QStringLiteral("5"));
+        auto innerWind = document_.createElement(QStringLiteral("polygon"));
+        innerWind.setAttribute(QStringLiteral("id"), QStringLiteral("runtime_wind_apparent"));
+        innerWind.setAttribute(QStringLiteral("points"), QStringLiteral("302,204 322,204 312,224"));
+        innerWind.setAttribute(QStringLiteral("fill"), QStringLiteral("#ff9a32"));
+        mutableFace.appendChild(outerWind);
+        mutableFace.appendChild(innerWind);
+        elements_.insert(QStringLiteral("runtime_wind_true"), outerWind);
+        elements_.insert(QStringLiteral("runtime_wind_apparent"), innerWind);
+    }
     setValues({});
 }
 
@@ -210,6 +314,8 @@ void Instrument::setValues(const Values& values)
         text(QStringLiteral("heading_direction"), valid ? compassDirection(*primary) : QString());
         rotation(QStringLiteral("heading_pointer"), valid ? primary : std::nullopt);
         rotation(QStringLiteral("camera_symbol"), values.cameraAzimuth);
+        rotation(QStringLiteral("runtime_wind_true"), values.trueWindDirection);
+        rotation(QStringLiteral("runtime_wind_apparent"), values.apparentWindDirection);
     } else {
         const QString prefix = kind_ == Kind::Roll ? QStringLiteral("roll") : QStringLiteral("pitch");
         text(prefix + QStringLiteral("_value"), valid ? angleText(*primary) : QStringLiteral("FEHLER"));
@@ -286,25 +392,28 @@ Overlay::Overlay(QWidget* viewport)
         "QWidget#navigationSpeed { background:#11283a; border:1px solid #294459; "
         "border-radius:12px; }"
         "QLabel { background:transparent; color:#dce7ef; }"
-        "QLabel#navigationSpeedTitle { color:#8caabd; font-size:8pt; "
+        "QLabel#navigationSpeedTitle { color:#8caabd; font-size:6pt; "
         "font-weight:700; letter-spacing:1px; }"
-        "QLabel#navigationSpeedMagnitude { color:#63d5e2; font-size:13pt; "
+        "QLabel#navigationSpeedMagnitude { color:#63d5e2; font-size:9pt; "
         "font-weight:700; }"
-        "QLabel#navigationSpeedAxis { color:#8caabd; font-size:8pt; }"));
+        "QLabel#navigationSpeedAxis { color:#8caabd; font-size:8pt; }"
+        "QLabel#navigationCourseRate, QLabel#navigationSpeedComponent0, "
+        "QLabel#navigationSpeedComponent1, QLabel#navigationSpeedComponent2 { font-size:8pt; }"));
     auto* speedLayout = new QGridLayout(speedPanel);
-    speedLayout->setContentsMargins(8, 6, 8, 6);
-    speedLayout->setHorizontalSpacing(8);
+    speedLayout->setContentsMargins(3, 6, 3, 6);
+    speedLayout->setHorizontalSpacing(2);
     speedLayout->setVerticalSpacing(2);
     auto* title = new QLabel(QStringLiteral("GESCHWINDIGKEIT"), speedPanel);
     title->setObjectName(QStringLiteral("navigationSpeedTitle"));
     speedLayout->addWidget(title, 0, 0, 1, 2);
     speedMagnitude_ = new QLabel(QStringLiteral("– m/s"), speedPanel);
     speedMagnitude_->setObjectName(QStringLiteral("navigationSpeedMagnitude"));
-    speedLayout->addWidget(speedMagnitude_, 1, 0, 1, 2);
+    speedLayout->addWidget(speedMagnitude_, 1, 0);
     courseRate_ = new QLabel(QStringLiteral("-- °/s"), speedPanel);
     courseRate_->setObjectName(QStringLiteral("navigationCourseRate"));
     courseRate_->setStyleSheet(QStringLiteral("color:#63d5e2; font-weight:700;"));
-    speedLayout->addWidget(courseRate_, 2, 0, 1, 2);
+    courseRate_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    speedLayout->addWidget(courseRate_, 1, 1);
     const std::array<QString, 3> axes{
         QStringLiteral("Welt-X"), QStringLiteral("Welt-Y"), QStringLiteral("Welt-Z")};
     for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
@@ -314,10 +423,21 @@ Overlay::Overlay(QWidget* viewport)
         speedComponents_[axis]->setObjectName(
             QStringLiteral("navigationSpeedComponent%1").arg(axis));
         speedComponents_[axis]->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        speedLayout->addWidget(name, static_cast<int>(axis) + 3, 0);
-        speedLayout->addWidget(speedComponents_[axis], static_cast<int>(axis) + 3, 1);
+        speedLayout->addWidget(name, static_cast<int>(axis) + 2, 0);
+        speedLayout->addWidget(speedComponents_[axis], static_cast<int>(axis) + 2, 1);
+        speedLayout->setRowStretch(static_cast<int>(axis) + 2, 1);
     }
-    layout->addWidget(speedPanel);
+    speedRow_ = new QWidget(this);
+    auto* speedRowLayout = new QHBoxLayout(speedRow_);
+    speedRowLayout->setContentsMargins(0, 0, 0, 0);
+    speedRowLayout->setSpacing(6);
+    speedPanel->setMinimumWidth(0);
+    windProfile_ = new WindProfileWidget(speedRow_);
+    speedPanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    windProfile_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    speedRowLayout->addWidget(speedPanel, 1);
+    speedRowLayout->addWidget(windProfile_, 1);
+    layout->addWidget(speedRow_);
     sizeGrip_->setObjectName(QStringLiteral("navigationSizeGrip"));
     sizeGrip_->installEventFilter(this);
     sizeGrip_->setToolTip(QStringLiteral("Navigationsanzeigen durch Ziehen vergrößern oder verkleinern"));
@@ -342,17 +462,17 @@ void Overlay::setDocked(bool docked)
     layout()->setEnabled(!docked);
     layout()->setSpacing(docked ? 6 : 0);
     if (docked) {
-        speedPanel_->setFixedHeight(speedPanel_->sizeHint().height());
+        speedRow_->setFixedHeight(speedPanel_->sizeHint().height());
         speedPanel_->layout()->setSizeConstraint(QLayout::SetNoConstraint);
-        setMinimumSize(100, speedPanel_->height() + 3 * 100 + 18);
+        setMinimumSize(100, speedRow_->height() + 3 * 100 + 18);
         setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         resize(180, 670);
         layoutDocked();
     } else {
         setMaximumWidth(QWIDGETSIZE_MAX);
         speedPanel_->layout()->setSizeConstraint(QLayout::SetDefaultConstraint);
-        speedPanel_->setMinimumHeight(0);
-        speedPanel_->setMaximumHeight(QWIDGETSIZE_MAX);
+        speedRow_->setMinimumHeight(0);
+        speedRow_->setMaximumHeight(QWIDGETSIZE_MAX);
         setMinimumSize(0, 0);
         fitToViewport();
     }
@@ -361,8 +481,9 @@ void Overlay::setDocked(bool docked)
 void Overlay::setValues(const Values& values)
 {
     for (auto* instrument : instruments_) instrument->setValues(values);
+    windProfile_->setValues(values);
     speedMagnitude_->setText(values.speed
-        ? QStringLiteral("%1 m/s").arg(*values.speed, 0, 'f', 3)
+        ? QStringLiteral("%1 m/s").arg(*values.speed, 0, 'f', 1)
         : QStringLiteral("– m/s"));
     const QString convention = QStringLiteral(
         "Kursdrehrate um die Weltvertikale; positiv gegen den Uhrzeigersinn "
@@ -371,8 +492,8 @@ void Overlay::setValues(const Values& values)
     if (values.courseRateRadS && std::isfinite(*values.courseRateRadS)) {
         const double rate = degrees(*values.courseRateRadS);
         courseRate_->setText(QStringLiteral("%1%2 °/s%3")
-            .arg(rate > 0.0 && std::abs(rate) >= 0.005 ? QStringLiteral("+") : QString(),
-                forcedisplay::formatFixed(rate, 2),
+            .arg(rate > 0.0 && std::abs(rate) >= 0.05 ? QStringLiteral("+") : QString(),
+                forcedisplay::formatFixed(rate, 1),
                 values.approximate ? QStringLiteral(" ≈") : QString()));
         courseRate_->setToolTip(convention + QStringLiteral(
             "\nCore: %1 rad/s = %2 °/s\nStatus: %3%4")
@@ -387,7 +508,7 @@ void Overlay::setValues(const Values& values)
     }
     for (std::size_t axis = 0; axis < speedComponents_.size(); ++axis) {
         speedComponents_[axis]->setText(values.velocityWorld
-            ? QStringLiteral("%1 m/s").arg((*values.velocityWorld)[axis], 0, 'f', 3)
+            ? QStringLiteral("%1 m/s").arg((*values.velocityWorld)[axis], 0, 'f', 1)
             : QStringLiteral("– m/s"));
     }
 }
@@ -425,7 +546,7 @@ void Overlay::resizeEvent(QResizeEvent* event)
 void Overlay::layoutDocked()
 {
     constexpr int gap = 6;
-    const int speedHeight = speedPanel_->height();
+    const int speedHeight = speedRow_->height();
     const int available = std::max(3, height() - speedHeight - 3 * gap);
     int y = 0;
     for (int i = 0; i < 3; ++i) {
@@ -434,7 +555,7 @@ void Overlay::layoutDocked()
         instruments_[static_cast<std::size_t>(i)]->setGeometry(0, y, width(), next - previous);
         y += next - previous + gap;
     }
-    speedPanel_->setGeometry(0, y, width(), speedHeight);
+    speedRow_->setGeometry(0, y, width(), speedHeight);
 }
 
 bool Overlay::eventFilter(QObject* watched, QEvent* event)

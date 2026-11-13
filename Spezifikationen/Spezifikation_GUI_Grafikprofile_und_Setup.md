@@ -260,6 +260,41 @@ Modellwechsel, Kameraentfernung und Krängung prüfen. Kein Wasser im trockenen
 Innenraum; Reflexion folgt Bootspose und Kamera. Deaktivierte
 Normalanimation ergibt ein zeitlich unverändertes Bild bei fester Kamera.
 
+### 5.1 A-G-00163 und A-G-00164: Darstellungsfehler an der Wasseroberfläche
+
+**Status:** Nachtrag vom 13.11.2026 fachlich freigegeben; Umsetzung,
+Tests und persönliche Sichtabnahme offen. Der zugehörige
+Punkt steht in der [Entwurfspunkteliste](Entwurfspunkte/GUI_Grafikprofile_und_Setup.json);
+die Ausführung ist im [Plan G-0.23](../Umsetzungsplaene/Umsetzungsplan_G-0.23.md)
+vorgesehen und ausdrücklich beauftragt.
+
+**A-G-00163 – Abgesetztes Spiegelungsfehlbild beseitigen.**
+In der dynamischen Ansicht wurde bei 420 und Optimist eine abgesetzte,
+stark sichtbare zweite Rumpfform tief unter der Wasseroberfläche beobachtet.
+Sie wirkt wie ein falsch platzierter Schatten oder eine zusätzliche
+Spiegelung. Dieser Darstellungsfehler soll behoben werden: Es darf keine
+solche losgelöste zweite Yacht beziehungsweise Rumpfform erscheinen.
+Die sichtbare echte Unterwassergeometrie und die Wasseroberfläche dürfen
+dabei nicht verschwinden. Eine natürliche, direkt zur Wasseroberfläche
+gehörende Spiegelung ist von dem Fehlbild zu unterscheiden und soll nicht
+pauschal entfernt werden.
+
+**A-G-00164 – Sicht von unter Wasser verbessern.** Bei Betrachtung von
+unter Wasser soll der oberhalb der
+Wasseroberfläche liegende Teil der Yacht besser erkennbar sein. Die
+konkrete Ausgestaltung und die messbaren Grenzen der Sichtbarkeit sind
+noch zu klären. Die bisherige statische Untersuchung legt einen
+Zusammenhang mit dem gemeinsamen Spiegelungsrenderer nahe; ein konkreter
+fehlerhafter Transform oder eine einzelne Ursache ist nicht nachgewiesen.
+
+**Abnahmeprüfung, noch nicht ausgeführt:** 420 und Optimist bei laufender Dynamik sowie
+in angehaltenem Zustand aus steiler und flacher Ansicht über Wasser und
+von unter Wasser betrachten. Das abgesetzte Fehlbild darf nicht auftreten;
+echte Yachtgeometrie und Wasser bleiben erhalten. Spiegelung ein- und
+ausschalten und die Darstellung mit dem bisherigen Verhalten vergleichen;
+bei Unterwasseransicht die Erkennbarkeit der Yacht oberhalb der
+Wasseroberfläche gesondert beurteilen.
+
 ## 6. Bootsmaterialien und Texturen
 
 Vorhandene Oberflächenkennungen und Farben bleiben gültig.

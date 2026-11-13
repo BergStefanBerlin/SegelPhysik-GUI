@@ -513,6 +513,79 @@ MainWindow::MainWindow(QWidget* parent)
     }
     panelLayout->addWidget(stationaryForcePanel_);
 
+    windPanel_ = new QGroupBox(QStringLiteral("Wahrer Wind"));
+    windPanel_->setObjectName(QStringLiteral("windPanel"));
+    auto* windForm = new QFormLayout(windPanel_);
+    windDirectionEdit_ = new QLineEdit(QStringLiteral("0,0"));
+    windDirectionEdit_->setObjectName(QStringLiteral("windDirection"));
+    windSpeedEdit_ = new QLineEdit(QStringLiteral("5,0"));
+    windSpeedEdit_->setObjectName(QStringLiteral("windSpeed"));
+    windHeightEdit_ = new QLineEdit(QStringLiteral("10,0"));
+    windHeightEdit_->setObjectName(QStringLiteral("windHeight"));
+    windMode_ = new QComboBox;
+    windMode_->setObjectName(QStringLiteral("windMode"));
+    windMode_->addItem(QStringLiteral("Weltfest"), false);
+    windMode_->addItem(QStringLiteral("Mit Boot mitgeführt"), true);
+    windStatus_ = new QLabel;
+    windStatus_->setWordWrap(true);
+    windForm->addRow(QStringLiteral("Herkunft (°)"), windDirectionEdit_);
+    windForm->addRow(QStringLiteral("v0 (m/s)"), windSpeedEdit_);
+    windForm->addRow(QStringLiteral("h0 (m)"), windHeightEdit_);
+    windForm->addRow(QStringLiteral("Dynamik"), windMode_);
+    windForm->addRow(windStatus_);
+    panelLayout->addWidget(windPanel_);
+    const auto windInput = [this](QLineEdit* edit, double& stored, bool direction, bool height) {
+        if (!edit->isModified()) return;
+        bool ok = false;
+        auto raw = edit->text().trimmed();
+        raw.replace(QLatin1Char(','), QLatin1Char('.'));
+        const double parsed = raw.toDouble(&ok);
+        const double before = stored;
+        if (!ok || !std::isfinite(parsed)) {
+            windStatus_->setText(QStringLiteral("Ungültige Zahl; vorheriger Wert bleibt erhalten."));
+        } else {
+            double value = parsed;
+            if (direction) {
+                value = std::fmod(value, 360.);
+                if (value < 0.) value += 360.;
+            } else {
+                value = std::clamp(value, .01, 100.);
+            }
+            QString error;
+            if (live_ && simulationThread_ && lastRunDynamic_.value_or(false) &&
+                !height && !live_->setWind(direction ? std::optional<double>(value) : std::nullopt,
+                    direction ? std::nullopt : std::optional<double>(value), {}, &error)) {
+                windStatus_->setText(error);
+            } else {
+                stored = value;
+                windStatus_->setText(value != parsed && !direction
+                    ? QStringLiteral("Wert auf den zulässigen Bereich begrenzt.")
+                    : live_ && simulationThread_
+                        ? QStringLiteral("Änderung für den nächsten Schritt angefordert.")
+                        : QString());
+            }
+        }
+        if (stored == before && (!ok || !std::isfinite(parsed)))
+            edit->setToolTip(QStringLiteral("Vorheriger gültiger Wert bleibt erhalten."));
+        else edit->setToolTip(QString());
+        edit->setText(QString::number(stored, 'f', 1).replace(QLatin1Char('.'), QLatin1Char(',')));
+    };
+    connect(windDirectionEdit_, &QLineEdit::editingFinished, this,
+        [this, windInput] { windInput(windDirectionEdit_, windDirection_, true, false); });
+    connect(windSpeedEdit_, &QLineEdit::editingFinished, this,
+        [this, windInput] { windInput(windSpeedEdit_, windSpeed_, false, false); });
+    connect(windHeightEdit_, &QLineEdit::editingFinished, this,
+        [this, windInput] { windInput(windHeightEdit_, windHeight_, false, true); });
+    connect(windMode_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (!live_ || !simulationThread_ || !lastRunDynamic_.value_or(false)) return;
+        QString error;
+        if (!live_->setWind({}, {}, windMode_->itemData(index).toBool(), &error)) {
+            const QSignalBlocker blocker(windMode_);
+            windMode_->setCurrentIndex(index == 0 ? 1 : 0);
+            windStatus_->setText(error);
+        } else windStatus_->setText(QStringLiteral("Moduswechsel für den nächsten Schritt angefordert."));
+    });
+
     testDrivePanel_ = new QGroupBox(QStringLiteral("Testantrieb (temporaer)"));
     testDrivePanel_->setObjectName(QStringLiteral("testDrivePanel"));
     auto* testLayout = new QFormLayout(testDrivePanel_);
@@ -1195,6 +1268,15 @@ QWidget* MainWindow::buildDisplayPanel()
     layout->addWidget(new QLabel(QStringLiteral("Druckpunkte")));
     layout->addWidget(lateralCheck_);
     layout->addWidget(sailCenterCheck_);
+    windArrowsCheck_ = new QCheckBox(QStringLiteral("Windpfeile anzeigen"));
+    windArrowsCheck_->setObjectName(QStringLiteral("displayWindArrows"));
+    windArrowsCheck_->setChecked(true);
+    layout->addWidget(windArrowsCheck_);
+    auto* windLegend = new QLabel(QStringLiteral(
+        "<span style='color:#57b6ff'>━ Wahrer Wind</span>  "
+        "<span style='color:#ff9a32'>━ Scheinbarer Wind</span>"));
+    windLegend->setWordWrap(true);
+    layout->addWidget(windLegend);
     pressureStatus_ = new QLabel;
     pressureStatus_->setObjectName(QStringLiteral("pressureStatus"));
     pressureStatus_->setWordWrap(true);
@@ -1224,7 +1306,7 @@ QWidget* MainWindow::buildDisplayPanel()
     valuesCheck_->setChecked(true);
     layout->addWidget(valuesCheck_);
 
-    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_, sailCenterCheck_};
+    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_, sailCenterCheck_, windArrowsCheck_};
     for (auto* check : forceChecks_) {
         displayChecks << check;
     }
@@ -1664,6 +1746,7 @@ void MainWindow::applyDisplayOptions(bool restoreHistory)
     options.leverArm = leverCheck_->isChecked();
     options.lateralCenter = lateralCheck_->isChecked();
     options.sailCenter = sailCenterCheck_->isChecked();
+    options.windArrows = windArrowsCheck_->isChecked();
     if (workspaceIndex_ > 0) {
         options.forces = false;
         options.staticForces = true;
@@ -2622,6 +2705,27 @@ void MainWindow::startSimulation()
     statusLabel_->setToolTip(QString());
     statusLabel_->setStyleSheet(QString());
     QJsonObject stationary;
+    const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
+    segelphysik::MastspitzenErgebnis mast;
+    if (opened && opened->data.inspection)
+        mast = segelphysik::bestimmeMastspitze(*opened->data.inspection);
+    else mast.diagnose = "Modellinspektion fuer Mastspitze nicht verfuegbar";
+    QJsonObject wind{{QStringLiteral("richtung_grad"), windDirection_},
+        {QStringLiteral("v0_m_s"), windSpeed_},
+        {QStringLiteral("h0_m"), windHeight_},
+        {QStringLiteral("bootmitgefuehrt"), !dynamic || windMode_->currentData().toBool()},
+        {QStringLiteral("mast_element_id"), QString::fromStdString(mast.element_id)},
+        {QStringLiteral("mast_quelle"), QString::fromStdString(mast.quelle)},
+        {QStringLiteral("mast_diagnose"), QString::fromStdString(mast.diagnose)}};
+    if (mast.position_modell_m) {
+        wind.insert(QStringLiteral("mastspitze_modell_m"),
+            QJsonArray{(*mast.position_modell_m)[0], (*mast.position_modell_m)[1],
+                       (*mast.position_modell_m)[2]});
+        windStatus_->clear();
+    } else {
+        windStatus_->setText(QString::fromStdString(mast.diagnose));
+    }
+    start.insert(QStringLiteral("wind_eingabe"), wind);
     stationary.insert(QStringLiteral("aktiv"), stationaryForceActive_->isChecked());
     stationary.insert(QStringLiteral("kurvenfahrt"), true);
     stationary.insert(QStringLiteral("modellfest"), true);
@@ -2967,6 +3071,11 @@ void MainWindow::setBusy(bool busy)
     cameraFramePanel_->setVisible(dynamic);
     stationaryForcePanel_->setVisible(true);
     stationaryForcePanel_->setEnabled(hasModel && (!busy || (dynamic && running)));
+    windPanel_->setEnabled(hasModel);
+    windDirectionEdit_->setEnabled(!busy || (dynamic && running));
+    windSpeedEdit_->setEnabled(!busy || (dynamic && running));
+    windHeightEdit_->setEnabled(!busy);
+    windMode_->setEnabled(dynamic && (!busy || running));
     movementPanel_->setVisible(!movementSliders_.isEmpty());
     for (auto* fixed : stationaryMovements_) {
         movementLayout_->setRowVisible(fixed, true);
@@ -2995,6 +3104,10 @@ void MainWindow::updateModeControls()
     parameterForm_->setRowVisible(durationSpin_, false);
     parameterForm_->setRowVisible(stepSpin_, false);
     parameterForm_->setRowVisible(realtimeCheck_, false);
+    if (!modeCombo_->currentData().toBool()) {
+        const QSignalBlocker blocker(windMode_);
+        windMode_->setCurrentIndex(1);
+    }
     setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
 }
 

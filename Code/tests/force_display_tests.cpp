@@ -498,6 +498,56 @@ void testLateralCenter()
     require(corrected.sailCenter && corrected.sailCenter->position
         && nearVec(*corrected.sailCenter->position, {.5, .2, 3.}),
         "Replacement SDP must use all three supplied coordinates.");
+    auto migrated = parse(base(
+        R"(,"druckpunkte":{"lateral":{"auswertung_version":2,"status":"gueltig","position_modell_m":[9,0,-0.7]},"ersatz_segel":{"status":"gueltig","quelle":"fremdkraft","position_modell_m":[0.5,0.2,3]}})"));
+    migrated.insert(QStringLiteral("referenzpunkte"), QJsonArray{
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("schwerpunkt")},
+            {QStringLiteral("positionsstatus"), QStringLiteral("gueltig")},
+            {QStringLiteral("position_modell_m"), QJsonArray{2., 0., 0.}}},
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("lateraldruckpunkt")},
+            {QStringLiteral("fachstatus"), QStringLiteral("gueltig")},
+            {QStringLiteral("positionsstatus"), QStringLiteral("gueltig")},
+            {QStringLiteral("geschwindigkeitsstatus"), QStringLiteral("nicht_verfuegbar")},
+            {QStringLiteral("position_modell_m"), QJsonArray{4., 0., -1.}}},
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("ersatz_segel")},
+            {QStringLiteral("fachstatus"), QStringLiteral("gueltig")},
+            {QStringLiteral("positionsstatus"), QStringLiteral("gueltig")},
+            {QStringLiteral("position_modell_m"), QJsonArray{1., 0., 3.}}}});
+    const auto migratedState = parseForceState(migrated);
+    require(migratedState.reference && (*migratedState.reference)[0] == 2.
+            && migratedState.lateral->position && (*migratedState.lateral->position)[0] == 4.
+            && migratedState.sailCenter->position && (*migratedState.sailCenter->position)[0] == 1.,
+        "Current point displays must use the shared collection even without point velocity.");
+    auto invalidPoints = migrated;
+    auto entries = invalidPoints.value(QStringLiteral("referenzpunkte")).toArray();
+    entries.append(entries.first());
+    invalidPoints.insert(QStringLiteral("referenzpunkte"), entries);
+    bool duplicateRejected = false;
+    try { (void)parseForceState(invalidPoints); }
+    catch (const std::runtime_error&) { duplicateRejected = true; }
+    require(duplicateRejected, "Duplicate shared point identities must be rejected.");
+    auto missingContribution = migrated;
+    missingContribution.insert(QStringLiteral("vektoren"), QJsonArray{QJsonObject{
+        {QStringLiteral("id"), QStringLiteral("force")},
+        {QStringLiteral("art"), QStringLiteral("kraft")},
+        {QStringLiteral("rolle"), QStringLiteral("einzelbeitrag")},
+        {QStringLiteral("punktart"), QStringLiteral("angriffspunkt")},
+        {QStringLiteral("punkt_m"), QJsonArray{1., 2., 3.}}}});
+    bool missingRejected = false;
+    try { (void)parseForceState(missingContribution); }
+    catch (const std::runtime_error&) { missingRejected = true; }
+    require(missingRejected, "Shared collection must not silently fall back for a missing force point.");
+    auto forcePoints = missingContribution.value(QStringLiteral("referenzpunkte")).toArray();
+    forcePoints.append(QJsonObject{
+        {QStringLiteral("id"), QStringLiteral("beitrag:force")},
+        {QStringLiteral("fachstatus"), QStringLiteral("gueltig")},
+        {QStringLiteral("positionsstatus"), QStringLiteral("gueltig")},
+        {QStringLiteral("position_modell_m"), QJsonArray{4., 5., 6.}}});
+    missingContribution.insert(QStringLiteral("referenzpunkte"), forcePoints);
+    const auto forceState = parseForceState(missingContribution);
+    require(!forceState.contributions.isEmpty() && forceState.contributions.front().point
+            && nearVec(*forceState.contributions.front().point, {4., 5., 6.}),
+        "Force display must use its matching shared point.");
     require(valid.lateral->evaluationVersion == 0, "Legacy LDP must not claim corrected evaluation.");
     for (const char* status : {"inaktiv", "kraft_null"}) {
         auto data = parse(base(""));

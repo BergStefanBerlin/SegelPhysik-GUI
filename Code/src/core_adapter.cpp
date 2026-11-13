@@ -3,6 +3,7 @@
 #include "segelphysik/aufbereitung.hpp"
 #include "segelphysik/modell.hpp"
 #include "segelphysik/simulation.hpp"
+#include "segelphysik/wind.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -157,6 +158,45 @@ std::optional<segelphysik::DynamischeFremdkraftKonfiguration> dynamicForceConfig
     return result;
 }
 
+segelphysik::Zustand startWind(const QJsonObject& input,
+    const segelphysik::Modell& model, const segelphysik::Zustand& state)
+{
+    const auto value = input.value(QStringLiteral("wind_eingabe"));
+    if (value.isUndefined()) return state;
+    if (!value.isObject()) throw std::invalid_argument("Windvorgaben fehlen.");
+    const auto wind = value.toObject();
+    for (const auto& field : {QStringLiteral("richtung_grad"), QStringLiteral("v0_m_s"),
+                              QStringLiteral("h0_m")})
+        if (!hasFiniteNumber(wind, field))
+            throw std::invalid_argument("Windvorgaben enthalten ungueltige Zahlen.");
+    if (!wind.value(QStringLiteral("bootmitgefuehrt")).isBool())
+        throw std::invalid_argument("Windvorgaben ohne Richtungsmodus.");
+    segelphysik::WindKonfiguration config;
+    config.herkunft_welt_grad = wind.value(QStringLiteral("richtung_grad")).toDouble();
+    config.referenzgeschwindigkeit_m_s = wind.value(QStringLiteral("v0_m_s")).toDouble();
+    config.referenzhoehe_m = wind.value(QStringLiteral("h0_m")).toDouble();
+    config.modus = wind.value(QStringLiteral("bootmitgefuehrt")).toBool()
+        ? segelphysik::WindModus::bootmitgefuehrt : segelphysik::WindModus::weltfest;
+    std::optional<segelphysik::Vektor3> point;
+    const auto pointValue = wind.value(QStringLiteral("mastspitze_modell_m"));
+    if (!pointValue.isUndefined() && !pointValue.isNull() && !pointValue.isArray())
+        throw std::invalid_argument("Mastspitze muss ein Vektor sein.");
+    if (pointValue.isArray())
+        point = finiteArray<3>(wind, QStringLiteral("mastspitze_modell_m"));
+    const auto element = wind.value(QStringLiteral("mast_element_id")).toString().toStdString();
+    const auto diagnosis = wind.value(QStringLiteral("mast_diagnose")).toString().toStdString();
+    const auto source = wind.value(QStringLiteral("mast_quelle"));
+    if (!source.isUndefined() && !source.isString())
+        throw std::invalid_argument("Mastquelle muss eine Zeichenkette sein.");
+    if (point && source.isString() && source.toString().isEmpty())
+        throw std::invalid_argument("Mastquelle darf nicht leer sein.");
+    auto withMast = state;
+    if (point && source.isString() && !source.toString().isEmpty())
+        withMast.mast = segelphysik::MastReferenz{
+            point, element, source.toString().toStdString(), diagnosis, model.fassung};
+    return segelphysik::wind_start(model, withMast, config, point, element, diagnosis);
+}
+
 } // namespace
 
 ModelValidation validateModel(const QString& modelPath)
@@ -251,7 +291,10 @@ SimulationResult runSimulation(const QString& modelPath,
         auto physicalStart = start;
         physicalStart.remove(QStringLiteral("stationaer"));
         physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
+        physicalStart.remove(QStringLiteral("wind_eingabe"));
         options.start = startState(physicalStart, dynamic || start.contains(QStringLiteral("stationaer")));
+        if (start.contains(QStringLiteral("wind_eingabe")))
+            options.start = startWind(start, segelphysik::lade_modell(nativePath(modelPath)), options.start);
         if (!dynamic && start.contains(QStringLiteral("dynamische_fremdkraft")))
             throw std::invalid_argument("Dynamische Fremdkraft ist nur im dynamischen Lauf erlaubt.");
         options.dynamische_fremdkraft = dynamicForceConfiguration(start, options.start);
@@ -368,6 +411,11 @@ SimulationResult runSimulation(const QString& modelPath,
 }
 
 struct LiveSimulation::Impl {
+    struct WindChange {
+        std::optional<double> direction;
+        std::optional<double> speed;
+        std::optional<bool> boatFixed;
+    };
     std::unique_ptr<segelphysik::Modellaufbereitung> workerPreparation;
     std::unique_ptr<segelphysik::Modellaufbereitung> displayPreparation;
     QString modelId;
@@ -382,6 +430,7 @@ struct LiveSimulation::Impl {
     std::vector<segelphysik::Bewegungsereignis> pendingMovementEvents;
     std::size_t nextMovementEvent = 1;
     std::optional<segelphysik::DynamischeFremdkraftKonfiguration> pendingForce;
+    std::optional<WindChange> pendingWind;
     QString testDriveStatus;
 
     mutable std::mutex mutex;
@@ -417,6 +466,10 @@ struct LiveSimulation::Impl {
         if (pendingForce) {
             testDriveStatus += QStringLiteral("\nLauf beendet: Fremdkraftaenderung wurde nicht mehr angewandt.");
             pendingForce.reset();
+        }
+        if (pendingWind) {
+            testDriveStatus += QStringLiteral("\nLauf beendet: Windaenderung wurde nicht mehr angewandt.");
+            pendingWind.reset();
         }
         status = finalStatus;
         diagnostic = detail;
@@ -464,6 +517,7 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     try {
         auto physicalStart = start;
         physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
+        physicalStart.remove(QStringLiteral("wind_eingabe"));
         live->impl_->start = startState(physicalStart, true);
         const auto force = dynamicForceConfiguration(start, live->impl_->start);
         if (live->impl_->start.letzte_bewegungsereigniskennung
@@ -474,6 +528,7 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
         live->impl_->workerPreparation = std::make_unique<segelphysik::Modellaufbereitung>(
             segelphysik::lade_modell(nativePath(modelPath)));
         const auto& model = live->impl_->workerPreparation->modell();
+        live->impl_->start = startWind(start, model, live->impl_->start);
         live->impl_->displayPreparation =
             std::make_unique<segelphysik::Modellaufbereitung>(model);
         if (testDrive) {
@@ -560,15 +615,25 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
             std::vector<segelphysik::TestantriebEreignis> events;
             std::vector<segelphysik::Bewegungsereignis> movementEvents;
             std::optional<segelphysik::DynamischeFremdkraftKonfiguration> forceChange;
+            std::optional<Impl::WindChange> windChange;
             {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 events.swap(d.pendingTestEvents);
                 movementEvents.swap(d.pendingMovementEvents);
                 forceChange.swap(d.pendingForce);
+                windChange.swap(d.pendingWind);
             }
-            const auto stepStart = forceChange
+            auto stepStart = forceChange
                 ? segelphysik::dynamische_fremdkraft_aendern(
                     d.workerPreparation->modell(), state, *forceChange) : state;
+            if (windChange) {
+                std::optional<segelphysik::WindModus> mode;
+                if (windChange->boatFixed)
+                    mode = *windChange->boatFixed ? segelphysik::WindModus::bootmitgefuehrt
+                                                  : segelphysik::WindModus::weltfest;
+                stepStart = segelphysik::wind_aendern(stepStart, windChange->direction,
+                    windChange->speed, mode);
+            }
             auto next = d.workerPreparation->schritt(stepStart,
                 target - state.zeit_s, events, movementEvents);
             if (forceChange) {
@@ -660,6 +725,34 @@ bool LiveSimulation::setDynamicForce(bool active, const std::array<double, 3>& f
         return false;
     }
     d.pendingForce = segelphysik::DynamischeFremdkraftKonfiguration{active, force, point};
+    return true;
+}
+
+bool LiveSimulation::setWind(std::optional<double> direction, std::optional<double> speed,
+    std::optional<bool> boatFixed, QString* error)
+{
+    auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (d.finished || !d.start.wind) {
+        if (error) *error = QStringLiteral("Kein laufender Versuch mit Windkontext.");
+        return false;
+    }
+    auto change = d.pendingWind.value_or(Impl::WindChange{});
+    if (direction) change.direction = direction;
+    if (speed) change.speed = speed;
+    if (boatFixed) change.boatFixed = boatFixed;
+    try {
+        std::optional<segelphysik::WindModus> mode;
+        if (change.boatFixed)
+            mode = *change.boatFixed ? segelphysik::WindModus::bootmitgefuehrt
+                                     : segelphysik::WindModus::weltfest;
+        const auto& current = d.states.empty() ? d.start : d.states.back();
+        (void)segelphysik::wind_aendern(current, change.direction, change.speed, mode);
+    } catch (const std::invalid_argument& exception) {
+        if (error) *error = QString::fromUtf8(exception.what());
+        return false;
+    }
+    d.pendingWind = change;
     return true;
 }
 
