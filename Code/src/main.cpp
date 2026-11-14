@@ -26,8 +26,7 @@ int main(int argc, char* argv[])
         window.setModelFolder(remembered);
         window.selectInitialModel({});
     } else if (info.isDir()
-        && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_data.json")))
-        && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_information.json")))) {
+        && !QFileInfo::exists(QDir(argument).filePath(QStringLiteral("modells_data.json")))) {
         // Katalogordner
         window.setModelFolder(argument);
         window.selectInitialModel({});

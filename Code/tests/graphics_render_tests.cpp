@@ -144,6 +144,41 @@ QAction* menuAction(QMenu* menu, const QString& label)
 
 enum class SailDialogTestAction { Accept, Cancel, RejectInvalid };
 
+void toggleMovementContextAction(QTreeWidget* tree, QTreeWidgetItem* item, bool checked)
+{
+    tree->scrollToItem(item);
+    QApplication::processEvents();
+    const auto rect = tree->visualItemRect(item);
+    require(rect.isValid() && !rect.isEmpty(), "movement owner is visible");
+    bool triggered = false;
+    bool invalidState = false;
+    QTimer driver;
+    driver.setInterval(10);
+    QObject::connect(&driver, &QTimer::timeout, &driver, [&] {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            auto* menu = qobject_cast<QMenu*>(widget);
+            if (!menu || !menu->isVisible()) continue;
+            auto* action = menuAction(menu, QStringLiteral("Bewegungsvorschau"));
+            invalidState = action && action->isEnabled()
+                && (!action->isCheckable() || action->isChecked() == checked);
+            if (action && action->isEnabled() && !invalidState) {
+                triggered = true;
+                action->trigger();
+            }
+            menu->close();
+            driver.stop();
+            return;
+        }
+    });
+    driver.start();
+    const auto local = rect.center();
+    QContextMenuEvent context(QContextMenuEvent::Mouse, local,
+        tree->viewport()->mapToGlobal(local));
+    QApplication::sendEvent(tree->viewport(), &context);
+    require(!invalidState, "movement context action reflects current state");
+    waitUntil([&] { return triggered; }, "movement context action not available");
+}
+
 void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
     const QString& actionText, const QString& dialogValue = {},
     SailDialogTestAction dialogAction = SailDialogTestAction::Accept,
@@ -164,6 +199,7 @@ void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
     const QPoint local = rect.center();
     const QPoint global = tree->viewport()->mapToGlobal(local);
     bool actionTriggered = false;
+    bool actionUnavailable = false;
     bool dialogAccepted = dialogValue.isEmpty();
     QTimer driver;
     driver.setInterval(10);
@@ -173,7 +209,12 @@ void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
                 auto* menu = qobject_cast<QMenu*>(widget);
                 if (!menu || !menu->isVisible()) continue;
                 auto* action = menuAction(menu, actionText);
-                if (!action || !action->isEnabled()) continue;
+                if (!action || !action->isEnabled()) {
+                    actionUnavailable = true;
+                    menu->close();
+                    driver.stop();
+                    break;
+                }
                 actionTriggered = true;
                 if (!dialogValue.isEmpty()) {
                     QTimer::singleShot(100, tree, [&] {
@@ -249,6 +290,13 @@ void invokeSailContextAction(QTreeWidget* tree, const QString& elementId,
     driver.start();
     QContextMenuEvent context(QContextMenuEvent::Mouse, local, global);
     QApplication::sendEvent(tree->viewport(), &context);
+    if (actionUnavailable) {
+        const auto* diagnostic = tree->window()->findChild<QLabel*>(
+            QStringLiteral("inspectionDiagnostics"));
+        throw std::runtime_error(("GUI context action unavailable: "
+            + elementId.toStdString() + " / " + actionText.toStdString()
+            + (diagnostic ? " / " + diagnostic->text().toStdString() : "")).c_str());
+    }
     try {
         waitUntil([&] { return actionTriggered && dialogAccepted; },
             "GUI context action or Fock dialog timed out");
@@ -572,14 +620,19 @@ void waitUntil(const std::function<bool()>& ready, const char* message)
 
 void confirmDynamicRun(MainWindow& window, double seconds, bool realtime = true)
 {
-    QTimer::singleShot(0, &window, [&window, seconds, realtime] {
+    auto* timer = new QTimer(&window);
+    timer->setInterval(10);
+    QObject::connect(timer, &QTimer::timeout, &window, [&window, seconds, realtime, timer] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("dynamicRunDialog"));
-        require(dialog, "Start must open the dynamic run dialog.");
+        if (!dialog || !dialog->isVisible()) return;
+        timer->stop();
+        timer->deleteLater();
         dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runDuration"))->setValue(seconds);
         dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runStep"))->setValue(.01);
         dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(realtime);
         dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
     });
+    timer->start();
 }
 
 void testPicking(VtkSceneWidget& scene, const QJsonObject& state,
@@ -2342,20 +2395,18 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     firstGeometry->setCheckState(0, Qt::Unchecked);
     tree->clearSelection();
     for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
+        const auto id = (*it)->data(0, Qt::UserRole + 6).toString();
         if (id.isEmpty()) continue;
         ++movementPreviews;
         const auto previewCamera = inspectionScene->cameraView();
-        (*it)->setCheckState(0, Qt::Checked);
+        toggleMovementContextAction(tree, *it, true);
         inspectionScene->renderNow();
         require(inspectionScene->property("inspectionMovementPreviewCount").toInt() > 0,
             "checked movement preview is visible without changing simulation");
         require(inspectionScene->cameraView().position == previewCamera.position
                 && inspectionScene->cameraView().focalPoint == previewCamera.focalPoint,
             "movement preview preserves inspection camera");
-        require((*it)->toolTip(0).contains(QStringLiteral("Normal:")),
-            "movement preview explains pose colors");
-        (*it)->setCheckState(0, Qt::Unchecked);
+        toggleMovementContextAction(tree, *it, false);
         require(inspectionScene->property("inspectionMovementPreviewCount").toInt() == 0,
             "unchecking preview removes only temporary movement graphics");
     }
@@ -2412,83 +2463,7 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     inspectionScene->setInspectionSelection({QStringLiteral("mass")}, true);
     require(inspectionScene->inspectionOpacity(QStringLiteral("mass")) == 1.0,
         "selected element is opaque");
-    const auto singleFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source"));
-    segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("quader/modells_information.json")).toStdWString()),
-        std::filesystem::path(singleFolder.toStdWString()));
-    window.setModelFolder(singleFolder);
-    window.selectInitialModel(QStringLiteral("quader"));
-    waitUntil([&] { return tree->topLevelItemCount() == 1
-        && inspectionScene->property("hasInspectionMesh").toBool(); },
-        "single-source model GUI load timeout");
-    inspectionScene->renderNow();
-    int singleSources = 0;
-    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
-            "schema 3 must not retain competing source references");
-        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) ++singleSources;
-    }
-    require(singleSources == 1 && inspectionScene->property("hasInspectionMesh").toBool(),
-        "strict single-source model renders through the same GUI pipeline");
-    require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3.bmp")), "BMP"),
-        "strict single-source render screenshot");
-    const auto derivedFolder = QDir(temporary.path()).filePath(QStringLiteral("single-source-derived"));
-    segelphysik::konvertiere_modell_v3(
-        std::filesystem::path(QDir(models).filePath(QStringLiteral("optimist/modells_information.json")).toStdWString()),
-        std::filesystem::path(derivedFolder.toStdWString()), true);
-    window.setModelFolder(derivedFolder);
-    window.selectInitialModel(QStringLiteral("optimist"));
-    waitUntil([&] { return tree->topLevelItemCount() == 1
-        && inspectionScene->property("hasInspectionMesh").toBool(); },
-        "derived single-source boat GUI load timeout");
-    QSet<QString> sourceOwners;
-    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        require(!(*it)->text(0).contains(QStringLiteral("Bestandsquellen")),
-            "derived boat has no competing sources");
-        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")) {
-            const auto owners = (*it)->data(0,Qt::UserRole+1).toStringList();
-            require(owners.size() == 1 && !sourceOwners.contains(owners.front()),
-                "derived boat exposes exactly one source per element");
-            sourceOwners.insert(owners.front());
-        }
-        if (!(*it)->data(0, Qt::UserRole + 2).isValid())
-            require((*it)->text(0) != QStringLiteral("hydrostatik_volumen")
-                    && (*it)->text(0) != QStringLiteral("massen_mesh"),
-                "physical derivations are not duplicate object references");
-    }
-    require(sourceOwners.size() > 1, "derived model retains existing canonical objects");
-    tree->expandAll();
-    QTreeWidgetItem* derivedVolumeElement = nullptr;
-    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
-        if ((*it)->data(0, Qt::UserRole + 4).toString() == QStringLiteral("element")
-            && (*it)->data(0, Qt::UserRole + 1).toStringList()
-                .contains(QStringLiteral("Schwert"))) {
-            derivedVolumeElement = *it;
-            break;
-        }
-    }
-    require(derivedVolumeElement != nullptr, "derived volume element is present in the object tree");
-    tree->clearSelection();
-    tree->setCurrentItem(derivedVolumeElement);
-    derivedVolumeElement->setSelected(true);
-    inspectionScene->renderNow();
-    require(values->topLevelItemCount() > 0, "derived element selection exposes all properties");
-    bool derivedUseListed = false;
-    for (QTreeWidgetItemIterator it(values); *it; ++it)
-    {
-        if ((*it)->text(2) == QStringLiteral("Verwendungen")
-            && (*it)->text(3).contains(QStringLiteral("hydrostatik_volumen (Ableitung)")))
-            derivedUseListed = true;
-    }
-    require(derivedUseListed, "property table retains derived physical uses");
-    require(window.grab().save(evidence.filePath(QStringLiteral("boat_schema3_derived.bmp")), "BMP"),
-        "single-source boat with actual derived volume screenshot");
-    tree->clearSelection();
-    tree->setCurrentItem(derivedVolumeElement);
-    derivedVolumeElement->setSelected(true);
-    checkMovementBounds(true);
     report.insert(QStringLiteral("boatInspectionTreesMeshesValuesFixedSnapshotAndLayout"), true);
-    report.insert(QStringLiteral("unifiedModelFormatRendered"), true);
 }
 
 void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& report)
@@ -2850,7 +2825,9 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     fixedSwordInput->setValue(50.);
     confirmDynamicRun(movementWindow, 0.);
     movementRun->click();
-    require(movementStop->isEnabled(), "dynamic run did not enable the stop control");
+    waitUntil([&] { return movementStop->isEnabled() || unexpectedDialog; },
+        "dynamic run did not enable the stop control");
+    require(!unexpectedDialog, "unexpected dynamic start error");
     auto* movementTimeline = movementWindow.findChild<QSlider*>();
     waitUntil([&] { return movementTimeline->maximum() > 0 || unexpectedDialog; },
         "fixed-movement run did not publish its first Core states");
@@ -3934,6 +3911,10 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
                 if (element["physics"].empty()) element.erase("physics");
             }
     data["groups"]["mainsail"]["elements"][0]["placement"]["originalTack"] = "port";
+    data["groups"]["mainsail"]["elements"][0]["placement"]["translation_m"] =
+        {0.8507067519354837, 0., 1.35};
+    data["groups"]["mainsail"]["elements"][0]["placement"]["rotation_xyzw"] =
+        {0., 0., 0., 1.};
     {
         std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
         output << data.dump();
@@ -3954,11 +3935,13 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
         {segelphysik::ModellFingerprintBereich::modelData,
          segelphysik::ModellFingerprintBereich::visualisation,
          segelphysik::ModellFingerprintBereich::mass,
-         segelphysik::ModellFingerprintBereich::hydrostatics});
+         segelphysik::ModellFingerprintBereich::hydrostatics,
+         segelphysik::ModellFingerprintBereich::aerodynamics});
     const auto catalog = std::make_shared<const segelphysik::Modellkatalog>(
         segelphysik::modellkatalog(root));
     const auto* entry = catalog->eintrag("420");
     require(entry != nullptr && entry->schema_valide, "isolated 420 catalog entry");
+    (void)segelphysik::lade_modell(dataPath);
     const auto snapshot = segelphysik::readModelInspection(*catalog, "420", entry->modell_fassung);
     const auto before = segelphysik::groupMovementPreviewJson(*snapshot, "mainsail");
     BoatInspection widget;
@@ -3980,21 +3963,25 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
             kind == QStringLiteral("element")) sail = *it;
     }
     require(group && sail, "group and sail tree nodes exist");
-    QTreeWidgetItem* preview = nullptr;
+    const auto* diagnostics = widget.findChild<QLabel*>(QStringLiteral("inspectionDiagnostics"));
+    const auto movementError = QStringLiteral("group owns movement preview: %1")
+        .arg(diagnostics ? diagnostics->text() : QString()).toStdString();
+    require(!group->data(0, Qt::UserRole + 6).toString().isEmpty(), movementError.c_str());
     for (int i = 0; i < group->childCount(); ++i)
-        if (!group->child(i)->data(0, Qt::UserRole + 5).toString().isEmpty())
-            preview = group->child(i);
-    require(preview != nullptr &&
-        preview->data(0, Qt::UserRole + 1).toStringList().size() == 2,
-        "group preview is attached to group with both members");
+        require(group->child(i)->data(0, Qt::UserRole + 4).toString()
+                == QStringLiteral("element"),
+            "group contains objects rather than a preview action");
     for (int i = 0; i < sail->childCount(); ++i)
         require(sail->child(i)->data(0, Qt::UserRole + 5).toString().isEmpty(),
             "group movement is not attached to sail element");
     const auto camera = widget.scene()->cameraView();
-    preview->setCheckState(0, Qt::Checked);
+    toggleMovementContextAction(tree, group, true);
     QApplication::processEvents();
+    const auto previewMessage = QStringLiteral("group preview pose count %1: %2")
+        .arg(widget.scene()->property("inspectionMovementPoseCount").toInt())
+        .arg(diagnostics ? diagnostics->text() : QString()).toStdString();
     require(widget.scene()->property("inspectionMovementPoseCount").toInt() == 3,
-        "group preview shows neutral and both sail variants");
+        previewMessage.c_str());
     require(widget.scene()->property("inspectionPivotCount").toInt() == 1,
         "group preview displays the Core axis");
     require(widget.scene()->cameraView().position == camera.position &&
@@ -4022,14 +4009,255 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
     require(widget.scene()->property("inspectionMovementPoseCount").toInt() == 1,
         "selecting one sail variant shows only that Core pose");
     values->clearSelection();
-    preview->setCheckState(0, Qt::Unchecked);
+    toggleMovementContextAction(tree, group, false);
     tree->clearSelection();
     QApplication::processEvents();
     require(widget.scene()->property("inspectionMovementPreviewCount").toInt() == 0,
         "disabling group preview clears only temporary graphics");
     require(segelphysik::groupMovementPreviewJson(*snapshot, "mainsail") == before,
         "GUI preview does not mutate Core snapshot");
+    widget.setSnapshot(snapshot, catalog, true);
+    QString cameraError;
+    require(widget.setCameraPreset(QStringLiteral("backbord"), &cameraError),
+        "axis view available for 0.3 sail configuration");
+    int savedActions = 0;
+    bool saveFailed = false;
+    std::shared_ptr<const segelphysik::Modellkatalog> currentCatalog = catalog;
+    std::shared_ptr<const segelphysik::ModelInspection> currentSnapshot = snapshot;
+    widget.onSailConfigurationFinished = [&](const QString& id, bool saved, const QString&,
+        std::shared_ptr<const segelphysik::Modellkatalog>, const QString&) {
+        if (!saved) { saveFailed = true; return; }
+        require(id == QStringLiteral("420"), "GUI reports saved model identity");
+        currentCatalog = std::make_shared<const segelphysik::Modellkatalog>(
+            segelphysik::modellkatalog(root));
+        const auto* current = currentCatalog->eintrag("420");
+        require(current && current->fingerprints_aktuell, "saved GUI model is valid");
+        currentSnapshot = segelphysik::readModelInspection(
+            *currentCatalog, "420", current->modell_fassung);
+        widget.setSnapshot(currentSnapshot, currentCatalog, true);
+        widget.setEnabled(true);
+        ++savedActions;
+    };
+    const auto waitForSave = [&](int expected) {
+        const auto message = QStringLiteral("0.3 GUI sail action %1 was not saved").arg(expected)
+            .toStdString();
+        waitUntil([&] { return savedActions == expected || saveFailed; },
+            message.c_str());
+        require(!saveFailed, "0.3 GUI sail action failed");
+        QApplication::processEvents();
+    };
+    invokeSailContextAction(tree, QStringLiteral("Mainsail"),
+        QStringLiteral("Großsegel automatisch setzen"));
+    waitForSave(1);
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Fock automatisch setzen"));
+    waitForSave(2);
+    invokeSailContextAction(tree, QStringLiteral("Mainsail"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+    invokeSailContextAction(tree, QStringLiteral("Mainsail"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, false);
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+    const auto modelBytes = [&] {
+        std::ifstream input(dataPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+    const auto beforeManual = modelBytes();
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("10"));
+    invokeSailContextAction(tree, QStringLiteral("Jib"), QStringLiteral("Backbordbug"));
+    require(savedActions == 2 && modelBytes() == beforeManual,
+        "manual offset and tack remain in memory until the mode is left");
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, false);
+    waitForSave(3);
+    const auto savedConfig = segelphysik::leseSegelKonfiguration(*currentCatalog, *currentSnapshot);
+    const auto jibPose = sailPose(savedConfig, QStringLiteral("Jib"));
+    require(jibPose && std::abs(jibPose->fock_versatz_cm - 10.) < 1e-7 &&
+        jibPose->original_buglage == segelphysik::SegelBuglage::Backbord,
+        "GUI retains jib offset and original tack after reload");
+    const auto jibReference = sailReference(savedConfig, QStringLiteral("Jib"));
+    require(jibReference.has_value(), "jib corner reference retained after reload");
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+    const auto beforeDrag = modelBytes();
+    bool dragged = false;
+    for (const auto& view : {QStringLiteral("backbord"), QStringLiteral("steuerbord"),
+                             QStringLiteral("bug"), QStringLiteral("heck"),
+                             QStringLiteral("oben"), QStringLiteral("unten")}) {
+        require(widget.setCameraPreset(view, &cameraError), "manual sail camera available");
+        widget.scene()->renderNow();
+        const auto handle = widget.scene()->inspectionScreenPointForWorld(
+            posedSailPoint(*jibReference, *jibPose, jibReference->ecken.schothorn_m));
+        const auto pivot = widget.scene()->inspectionScreenPointForWorld(
+            posedSailPoint(*jibReference, *jibPose, jibReference->ecken.hals_m));
+        const auto lever = handle - pivot;
+        const auto length = std::hypot(lever.x(), lever.y());
+        if (length < 30 || !widget.scene()->rect().adjusted(10, 10, -10, -10)
+                .contains(handle.toPoint())) continue;
+        const auto preparations = widget.scene()->workCounters().meshPreparations;
+        const auto boundsBefore = inspectionGeometryBounds(widget.scene());
+        dragInspectionPoint(widget.scene(), handle,
+            handle + QPointF(-lever.y() / length * 12, lever.x() / length * 12));
+        const auto drag = widget.scene()->onInspectionDrag;
+        require(static_cast<bool>(drag), "manual drag handler exists");
+        const QPointF start(200., 200.);
+        drag(QStringLiteral("Jib"), {}, start, VtkSceneWidget::InspectionDragPhase::Start);
+        drag(QStringLiteral("Jib"), {}, start + QPointF(20., 10.),
+            VtkSceneWidget::InspectionDragPhase::Move);
+        drag(QStringLiteral("Jib"), {}, start + QPointF(20., 10.),
+            VtkSceneWidget::InspectionDragPhase::Finish);
+        require(savedActions == 3 && modelBytes() == beforeDrag,
+            "multiple manual gestures do not write model data");
+        require(widget.scene()->workCounters().meshPreparations == preparations,
+            "manual drag does not rebuild the model meshes");
+        require(inspectionGeometryBounds(widget.scene()) != boundsBefore,
+            "manual drag visibly updates the sail before saving");
+        invokeSailContextAction(tree, QStringLiteral("Jib"),
+            QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, false);
+        waitForSave(4);
+        const auto after = segelphysik::leseSegelKonfiguration(*currentCatalog, *currentSnapshot);
+        const auto rotated = sailPose(after, QStringLiteral("Jib"));
+        require(rotated && rotated->rotation_xyzw != jibPose->rotation_xyzw &&
+            rotated->translation_m != jibPose->translation_m,
+            "leaving manual mode saves both rotation and translation");
+        dragged = true;
+        break;
+    }
+    require(dragged, "jib corner can be rotated in an axis view");
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("12"));
+    const auto beforeForeign = modelBytes();
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::app);
+        output << " ";
+        require(output.good(), "write isolated external model change");
+    }
+    const auto foreignData = modelBytes();
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, false);
+    waitUntil([&] { return saveFailed; }, "conflicting manual save was not rejected");
+    require(widget.manualModeActive() && modelBytes() == foreignData,
+        "failed manual save retains the draft and does not overwrite external changes");
+    invokeSailContextAction(tree, QStringLiteral("Jib"),
+        QStringLiteral("Ungespeicherte Änderungen verwerfen"));
+    require(!widget.manualModeActive(), "discard exits the retained manual draft");
     widget.close();
+    {
+        std::ofstream output(dataPath, std::ios::binary | std::ios::trunc);
+        output << beforeForeign;
+        require(output.good(), "restore isolated model after conflict");
+    }
+
+    {
+        QTemporaryDir settings;
+        require(settings.isValid(), "workspace-exit settings fixture");
+        QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikManualExitTests"));
+        QCoreApplication::setApplicationName(QStringLiteral("ManualExit"));
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+        bool unexpectedDialog = false;
+        QTimer errors;
+        QObject::connect(&errors, &QTimer::timeout, [&] {
+            for (auto* top : QApplication::topLevelWidgets()) {
+                auto* message = qobject_cast<QMessageBox*>(top);
+                if (!message || !message->isVisible()) continue;
+                unexpectedDialog = true;
+                message->reject();
+            }
+        });
+        errors.start(20);
+        MainWindow window;
+        window.setModelFolder(fixture.path());
+        window.selectInitialModel(QStringLiteral("420"));
+        window.show();
+        auto* run = window.findChild<QPushButton*>(QStringLiteral("primaryButton"));
+        auto* workspace = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+        auto* mainTree = window.findChild<QTreeWidget*>(QStringLiteral("inspectionObjectTree"));
+        auto* modelName = window.findChild<QLabel*>(QStringLiteral("modelName"));
+        auto* cameraCombo = window.findChild<QComboBox*>(QStringLiteral("inspectionCameraPreset"));
+        BoatInspection* mainInspection = nullptr;
+        for (auto* parent = mainTree ? mainTree->parentWidget() : nullptr; parent;
+             parent = parent->parentWidget()) {
+            if ((mainInspection = dynamic_cast<BoatInspection*>(parent))) break;
+        }
+        require(run && workspace && mainTree && modelName && cameraCombo,
+            "manual workspace-exit controls");
+        require(mainInspection, "manual workspace-exit inspection");
+        waitUntil([&] { return run->isEnabled() || unexpectedDialog; },
+            "workspace-exit model load timeout");
+        require(!unexpectedDialog, "workspace-exit model load failed");
+#ifdef _WIN32
+        struct ResourceLocks {
+            std::vector<HANDLE> handles;
+            std::vector<std::filesystem::path> paths;
+            ~ResourceLocks() {
+                for (const auto handle : handles) CloseHandle(handle);
+                for (const auto& path : paths) {
+                    std::error_code error;
+                    std::filesystem::remove(path, error);
+                }
+            }
+        } resourceLocks;
+        for (const auto* folder : {"visualisation", "mass", "hydrostatics", "aerodynamics"}) {
+            const auto path = target / "modells" / folder / "locked-test.dat";
+            std::filesystem::create_directories(path.parent_path());
+            {
+                std::ofstream output(path, std::ios::binary);
+                output << "unreferenced data";
+                require(output.good(), "write isolated resource");
+            }
+            resourceLocks.paths.push_back(path);
+            const auto handle = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            require(handle != INVALID_HANDLE_VALUE, "lock isolated resource");
+            resourceLocks.handles.push_back(handle);
+        }
+#endif
+        const auto axisIndex = cameraCombo->findData(QStringLiteral("backbord"));
+        require(axisIndex >= 0, "manual workspace-exit axis camera available");
+        cameraCombo->setCurrentIndex(axisIndex);
+        require(QMetaObject::invokeMethod(cameraCombo, "activated", Q_ARG(int, axisIndex)),
+            "manual workspace-exit axis camera selected");
+        invokeSailContextAction(mainTree, QStringLiteral("Jib"),
+            QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+        require(mainInspection->manualModeActive(), "manual workspace-exit mode entered");
+        invokeSailContextAction(mainTree, QStringLiteral("Jib"),
+            QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("13"));
+        const auto initialVersion = modelName->toolTip();
+        const auto initialBytes = modelBytes();
+        workspace->setCurrentIndex(1);
+        try {
+            waitUntil([&] {
+                return (!mainInspection->manualModeActive()
+                    && modelName->toolTip() != initialVersion && run->isEnabled())
+                    || unexpectedDialog;
+            }, "leaving the workspace did not save and reload the manual draft");
+        } catch (const std::exception&) {
+            const auto* message = window.findChild<QLabel*>(QStringLiteral("inspectionDiagnostics"));
+            const auto detail = QStringLiteral(
+                "workspace exit: changed=%1, version=%2, ready=%3, manual=%4, saving=%5, diagnostic=%6")
+                .arg(modelBytes() != initialBytes).arg(modelName->toolTip() != initialVersion)
+                .arg(run->isEnabled()).arg(mainInspection->manualModeActive())
+                .arg(mainInspection->sailSaveInProgress()).arg(message ? message->text() : QString());
+            throw std::runtime_error(detail.toStdString());
+        }
+        require(!unexpectedDialog, "workspace-exit save failed");
+        require(modelBytes() != initialBytes, "workspace-exit persisted the manual draft");
+        workspace->setCurrentIndex(0);
+        invokeSailContextAction(mainTree, QStringLiteral("Jib"),
+            QStringLiteral("Manuelles Verschieben"), {}, SailDialogTestAction::Accept, true);
+        invokeSailContextAction(mainTree, QStringLiteral("Jib"),
+            QStringLiteral("Höhenversatz entlang Vorliek (cm)…"), QStringLiteral("14"));
+        const auto beforeClose = modelBytes();
+        window.close();
+        waitUntil([&] { return (!window.isVisible() && modelBytes() != beforeClose)
+                || unexpectedDialog; }, "closing did not save the manual draft");
+        require(!unexpectedDialog, "closing save failed");
+        errors.stop();
+    }
 
     data["groups"]["mainsail"]["elements"][0]["placement"]["originalTack"] = "unknown";
     {
@@ -4202,7 +4430,12 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     auto* modelList = window.findChild<QListWidget*>(QStringLiteral("modelList"));
     auto* run = window.findChild<QPushButton*>(QStringLiteral("primaryButton"));
     auto* status = window.findChild<QLabel*>(QStringLiteral("status"));
-    require(modelList && run && status, "MainWindow exposes model list, status and simulation action");
+    auto* refresh = window.findChild<QPushButton*>(QStringLiteral("refreshModelsButton"));
+    require(modelList && run && status && refresh, "MainWindow exposes model list, status and actions");
+    const auto refreshCatalog = [&] {
+        waitUntil([&] { return refresh->isEnabled(); }, "manual refresh not available");
+        refresh->click();
+    };
     try {
         waitUntil([&] {
             return modelList->count() == 1
@@ -4338,12 +4571,16 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     require(std::any_of(scenes.cbegin(), scenes.cend(), [](const auto* scene) {
         return scene->workCounters().meshPreparations > 0;
     }), "successful hash refresh reloads visualization into the VTK views");
-    QElapsedTimer watcherSuppression;
-    watcherSuppression.start();
-    waitUntil([&] { return watcherSuppression.elapsed() >= 700; },
-        "fingerprint watcher suppression expires before testing later model changes");
-
     auto dataPath = destination / "bleistift" / "modells_data.json";
+    const auto checkedCatalog = loadCatalog(fixture.path());
+    const auto* checkedEntry = checkedCatalog.catalog
+        ? checkedCatalog.catalog->eintrag("bleistift") : nullptr;
+    require(checkedEntry && checkedEntry->status == "verwendbar",
+        "snapshot catalog ready before external change");
+    const auto checkedInspection = segelphysik::readModelInspection(
+        *checkedCatalog.catalog, "bleistift", checkedEntry->modell_fassung);
+    const auto checkedValidation = validateModel(QString::fromStdWString(dataPath.wstring()));
+    require(checkedValidation.valid, "snapshot model valid before external change");
     auto data = nlohmann::json::parse([&] {
         std::ifstream input(dataPath, std::ios::binary);
         return std::string(std::istreambuf_iterator<char>(input),
@@ -4355,10 +4592,25 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << data.dump();
         require(output.good(), "write schema-invalid isolated model data");
     }
+    require(run->isEnabled(), "external edits are not watched automatically");
+    std::atomic_bool snapshotCancelled{false};
+    const auto snapshotRun = runSimulation(QString::fromStdWString(dataPath.wstring()),
+        checkedValidation, false, 0., 0.01, &snapshotCancelled, {}, checkedInspection);
+    require(snapshotRun.completed && !snapshotRun.states.isEmpty(),
+        "simulation reuses checked snapshot without rereading an externally changed model");
+    QString snapshotError;
+    require(LiveSimulation::create(QString::fromStdWString(dataPath.wstring()),
+        checkedValidation, 0.1, 0.01, false, &snapshotError, {}, std::nullopt, checkedInspection)
+        != nullptr, "dynamic preparation reuses checked snapshot");
+    refreshCatalog();
+    bool eventLoopResponsive = false;
+    QTimer::singleShot(0, [&] { eventLoopResponsive = true; });
+    waitUntil([&] { return eventLoopResponsive; },
+        "GUI event loop remains responsive while the Core reloads the model");
     waitUntil([&] {
         return !run->isEnabled()
             && status->toolTip().contains(QStringLiteral("CORE-MOD"));
-    }, "file watcher reload blocks simulation after schema-invalid model change");
+    }, "manual reload blocks a schema-invalid changed model");
     invokeContext(false);
     {
         std::ifstream input(source / "bleistift" / "modells_data.json", std::ios::binary);
@@ -4368,8 +4620,58 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << originalData;
         require(output.good(), "restore original isolated model data");
     }
+    refreshCatalog();
     waitUntil([&] { return run->isEnabled(); },
-        "watcher revalidates model after repair");
+        "manual refresh revalidates model after repair");
+    auto oldValidation = validateModel(QString::fromStdWString(dataPath.wstring()));
+    require(oldValidation.valid, "restored temporary model is valid");
+    std::atomic_bool cancelled{false};
+    const auto validRun = runSimulation(QString::fromStdWString(dataPath.wstring()),
+        oldValidation, false, 0., 0.01, &cancelled);
+    require(validRun.completed && !validRun.states.isEmpty(),
+        "valid static simulation completes after the Core revision check");
+    oldValidation.fingerprint = QStringLiteral("outdated");
+    QString liveError;
+    require(!LiveSimulation::create(QString::fromStdWString(dataPath.wstring()),
+        oldValidation, 0.1, 0.01, false, &liveError) &&
+        liveError.contains(QStringLiteral("Modellfassung")),
+        "dynamic preparation rejects an outdated model revision");
+    const auto staleRun = runSimulation(QString::fromStdWString(dataPath.wstring()),
+        oldValidation, false, 0., 0.01, &cancelled);
+    require(!staleRun.completed && staleRun.error.contains(QStringLiteral("Modellfassung")),
+        "static simulation rejects an outdated model revision");
+
+    auto* workspace = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    require(workspace, "workspace tabs available for simulation preparation");
+    workspace->setCurrentIndex(2);
+    confirmDynamicRun(window, .1, false);
+    run->click();
+    workspace->setCurrentIndex(1);
+    waitUntil([&] { return run->isEnabled(); },
+        "workspace change during preparation releases the controls");
+    require(status->text().contains(QStringLiteral("Reiter gewechselt")),
+        "cancelled preparation must not start a simulation in another workspace");
+    workspace->setCurrentIndex(2);
+    bool simulationError = false;
+    QTimer errorDriver;
+    QObject::connect(&errorDriver, &QTimer::timeout, [&] {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            auto* message = qobject_cast<QMessageBox*>(widget);
+            if (message && message->isVisible()) {
+                simulationError = true;
+                message->reject();
+            }
+        }
+    });
+    errorDriver.start(10);
+    confirmDynamicRun(window, .1, false);
+    run->click();
+    waitUntil([&] { return run->isEnabled() || simulationError; },
+        "valid dynamic simulation after asynchronous preflight");
+    errorDriver.stop();
+    require(!simulationError && status->text().contains(QStringLiteral("abgeschlossen")),
+        "valid dynamic simulation completes after the Core preflight");
+    workspace->setCurrentIndex(0);
 
     const auto resourceRelative = data["groups"]["body"]["elements"][0]
         ["display"]["geometry"].get<std::string>();
@@ -4382,6 +4684,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     }();
     require(std::filesystem::remove(resourcePath),
         "remove isolated geometry resource to exercise watcher");
+    refreshCatalog();
     waitUntil([&] {
         return !run->isEnabled()
             && status->toolTip().contains(QStringLiteral("CORE-MOD"));
@@ -4391,6 +4694,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << resourceBytes;
         require(output.good(), "restore isolated geometry resource");
     }
+    refreshCatalog();
     waitUntil([&] { return run->isEnabled(); },
         "resource restoration triggers Core revalidation");
 
@@ -4399,6 +4703,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << "{";
         require(output.good(), "corrupt isolated watched schema file");
     }
+    refreshCatalog();
     waitUntil([&] {
         return !run->isEnabled()
             && status->toolTip().contains(QStringLiteral("CORE-MOD"));
@@ -4408,6 +4713,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << schemaDataBytes;
         require(output.good(), "restore isolated schema file");
     }
+    refreshCatalog();
     waitUntil([&] { return run->isEnabled(); },
         "schema restoration triggers Core revalidation");
 
@@ -4416,6 +4722,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << "{";
         require(output.good(), "corrupt isolated validation schema file");
     }
+    refreshCatalog();
     waitUntil([&] {
         return !run->isEnabled()
             && status->toolTip().contains(QStringLiteral("CORE-MOD"));
@@ -4425,6 +4732,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << schemaValidationBytes;
         require(output.good(), "restore isolated validation schema file");
     }
+    refreshCatalog();
     waitUntil([&] { return run->isEnabled(); },
         "validation schema restoration triggers Core revalidation");
 
@@ -4440,6 +4748,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << validationData.dump();
         require(output.good(), "corrupt isolated watched validation file");
     }
+    refreshCatalog();
     waitUntil([&] {
         return !run->isEnabled()
             && status->toolTip().contains(QStringLiteral("CORE-MOD"));
@@ -4449,6 +4758,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << validValidationBytes;
         require(output.good(), "restore isolated validation file");
     }
+    refreshCatalog();
     waitUntil([&] { return run->isEnabled(); },
         "validation restoration triggers Core revalidation");
     window.close();
@@ -4511,10 +4821,16 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     defaultsWindow.selectInitialModel(QStringLiteral("bleistift"));
     defaultsWindow.show();
     auto* defaultsList = defaultsWindow.findChild<QListWidget*>(QStringLiteral("modelList"));
-    require(defaultsList, "defaults-backed MainWindow model list");
+    auto* defaultsRefresh = defaultsWindow.findChild<QPushButton*>(QStringLiteral("refreshModelsButton"));
+    require(defaultsList && defaultsRefresh, "defaults-backed MainWindow model list and refresh");
+    const auto refreshDefaults = [&] {
+        waitUntil([&] { return defaultsRefresh->isEnabled(); }, "defaults refresh not available");
+        defaultsRefresh->click();
+    };
     waitUntil([&] { return defaultsList->count() == 1; },
         "GUI loads the model root from defaults.json");
     writeDefaults(QString::fromStdWString(alternateRoot.wstring()));
+    refreshDefaults();
     waitUntil([&] { return defaultsList->count() == 0; },
         "defaults file watcher switches the configured catalog root");
     QString defaultsDialogText;
@@ -4535,12 +4851,14 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
         output << "{";
         require(output.good(), "write invalid isolated defaults JSON");
     }
+    refreshDefaults();
     waitUntil([&] {
         return !defaultsDialogText.isEmpty()
             && defaultsDialogText.contains(QStringLiteral("defaults.json"));
     }, "invalid defaults changes are surfaced instead of falling back silently");
     dialogDriver.stop();
     writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    refreshDefaults();
     waitUntil([&] { return defaultsList->count() == 1; },
         "valid defaults restore the configured GUI catalog");
     const auto showsFolder = [&](const QString& folderName) {
@@ -4576,12 +4894,14 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     dialogDriver.start();
     require(std::filesystem::remove(std::filesystem::path(defaultsPath.toStdWString())),
         "remove isolated defaults file to exercise watcher recovery");
+    refreshDefaults();
     waitUntil([&] {
         return !defaultsDialogText.isEmpty()
             && defaultsDialogText.contains(QStringLiteral("defaults.json"));
     }, "missing defaults file is surfaced through the watched parent directory");
     dialogDriver.stop();
     writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    refreshDefaults();
     waitUntil([&] { return defaultsList->count() == 1; },
         "recreated defaults file restores configured GUI catalog");
 #ifdef _WIN32
@@ -4605,6 +4925,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     defaultsDialogText.clear();
     dialogDriver.start();
     writeDefaults(QString::fromStdWString(alternateRoot.wstring()));
+    refreshDefaults();
     waitUntil([&] {
         return !defaultsDialogText.isEmpty()
             && defaultsDialogText.contains(QStringLiteral("defaults.json"));
@@ -4612,6 +4933,7 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
     dialogDriver.stop();
     defaultsReadLock.close();
     writeDefaults(QString::fromStdWString(defaultRoot.wstring()));
+    refreshDefaults();
     waitUntil([&] { return defaultsList->count() == 1; },
         "readable defaults restore GUI configuration after access error");
 #endif
@@ -5138,31 +5460,46 @@ int main(int argc, char** argv)
             attitude->setChecked(false);
             require(!views->isVisible(), "Dynamic attitude toggle must hide the right views.");
             attitude->setChecked(true);
+            bool dialogAnswered = false;
             const auto answerRunDialog = [&](bool accept, double seconds) {
-                QTimer::singleShot(0, &window, [&, accept, seconds] {
+                dialogAnswered = false;
+                auto* timer = new QTimer(&window);
+                timer->setInterval(10);
+                QObject::connect(timer, &QTimer::timeout, &window, [&, accept, seconds, timer] {
                     auto* dialog = window.findChild<QDialog*>(QStringLiteral("dynamicRunDialog"));
-                    require(dialog, "Start must open the dynamic run dialog.");
+                    if (!dialog || !dialog->isVisible()) return;
+                    timer->stop();
+                    timer->deleteLater();
                     dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runDuration"))->setValue(seconds);
                     dialog->findChild<QDoubleSpinBox*>(QStringLiteral("runStep"))->setValue(.01);
                     dialog->findChild<QCheckBox*>(QStringLiteral("runRealtime"))->setChecked(true);
+                    dialogAnswered = true;
                     if (accept)
                         dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
                     else dialog->reject();
                 });
+                timer->start();
             };
             answerRunDialog(false, .7);
             run->click();
-            require(duration->value() == 10. && table->topLevelItemCount() == 0,
+            waitUntil([&] { return (dialogAnswered && run->isEnabled()) || unexpectedDialog; },
+                "Cancelled dynamic start timeout.");
+            require(!unexpectedDialog && duration->value() == 10. && table->topLevelItemCount() == 0,
                 "Cancelled start must preserve parameters and not run.");
             answerRunDialog(true, .2);
             bool liveInputsEnabled = false;
-            QTimer::singleShot(70, &window, [&] {
+            QTimer liveInputTimer;
+            QObject::connect(&liveInputTimer, &QTimer::timeout, [&] {
+                auto* status = window.findChild<QLabel*>(QStringLiteral("status"));
+                if (!status || !status->text().startsWith(QStringLiteral("Dynamik läuft"))) return;
+                liveInputTimer.stop();
                 liveInputsEnabled = activeForce->isEnabled() && fixedInputs.front()->isEnabled();
                 if (!liveInputsEnabled) return;
                 window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryForceX"))->setValue(175.);
                 window.findChild<QDoubleSpinBox*>(QStringLiteral("stationaryPointZ"))->setValue(2.);
                 fixedInputs.front()->setValue(fixedValue + 1.);
             });
+            liveInputTimer.start(10);
             run->click();
             waitUntil([&] { return run->isEnabled() || unexpectedDialog; }, "Short dynamic run timeout.");
             require(!unexpectedDialog && liveInputsEnabled && scene->statePose() && table->topLevelItemCount() > 0,
@@ -5187,7 +5524,9 @@ int main(int argc, char** argv)
             filter->clear();
             answerRunDialog(false, .8);
             run->click();
-            require(table->topLevelItemCount() == rowCount && scene->statePose()
+            waitUntil([&] { return (dialogAnswered && run->isEnabled()) || unexpectedDialog; },
+                "Later cancelled dynamic start timeout.");
+            require(!unexpectedDialog && table->topLevelItemCount() == rowCount && scene->statePose()
                     && duration->value() == .2,
                 "Cancelling a later start must retain prior results and confirmed run parameters.");
             const auto pose = scene->statePose();

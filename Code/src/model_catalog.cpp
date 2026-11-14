@@ -1,10 +1,7 @@
 #include "model_catalog.hpp"
 
 #include <segelphysik/core.hpp>
-#include <segelphysik/defaults.hpp>
 
-#include <QDir>
-#include <QDirIterator>
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
@@ -18,7 +15,6 @@
 namespace {
 
 const QString modelFileName = QStringLiteral("modells_data.json");
-const QString legacyModelFileName = QStringLiteral("modells_information.json");
 
 std::filesystem::path nativePath(const QString& path)
 {
@@ -37,12 +33,6 @@ QString diagnosticText(const segelphysik::KatalogDiagnose& diagnostic)
         : QStringLiteral("%1: %2 (%3)")
               .arg(text(diagnostic.fehler_id), text(diagnostic.text),
                   text(diagnostic.fundstelle));
-}
-
-QFileInfoList modelDirectories(const QDir& dir)
-{
-    return dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot,
-        QDir::Name | QDir::IgnoreCase);
 }
 
 } // namespace
@@ -146,64 +136,6 @@ CatalogSnapshot loadCatalog(const QString& folder)
         snapshot.error = QString::fromUtf8(error.what());
     }
     return snapshot;
-}
-
-QStringList watchedModelPaths(const QString& folder, QStringList* diagnostics)
-{
-    QStringList paths;
-    const auto watchDirectory = [&](QDir directory) {
-        while (!directory.exists() && directory.cdUp()) {}
-        if (directory.exists()) paths << directory.absolutePath();
-    };
-    const auto report = [&](const std::exception& error) {
-        if (!diagnostics) throw;
-        diagnostics->push_back(QString::fromUtf8(error.what()));
-    };
-    try {
-        const QFileInfo configuration(QString::fromStdWString(
-            segelphysik::laufzeit_defaults_datei().wstring()));
-        if (configuration.exists()) paths << configuration.absoluteFilePath();
-        watchDirectory(configuration.dir());
-    } catch (const std::exception& error) {
-        report(error);
-    }
-    const QDir dir(folder);
-    if (folder.isEmpty() || !dir.exists()) {
-        if (!folder.isEmpty()) watchDirectory(QFileInfo(folder).dir());
-        paths.removeDuplicates();
-        return paths;
-    }
-    paths << dir.absolutePath();
-    auto directories = modelDirectories(dir);
-    directories.prepend(QFileInfo(dir.absolutePath()));
-    bool format03 = false;
-    for (const auto& sub : directories) {
-        const QDir subDir(sub.absoluteFilePath());
-        if (!subDir.exists(modelFileName) && !subDir.exists(legacyModelFileName)) continue;
-        format03 = format03 || subDir.exists(modelFileName);
-        paths << subDir.absolutePath();
-        QDirIterator entries(subDir.absolutePath(),
-            QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
-            QDirIterator::Subdirectories);
-        while (entries.hasNext()) {
-            const QFileInfo entry(entries.next());
-            paths << entry.absoluteFilePath();
-        }
-    }
-    if (format03) {
-        try {
-            const QDir schemas(QString::fromStdWString(
-                segelphysik::schemaordner_fuer_modellordner(nativePath(folder)).wstring()));
-            watchDirectory(schemas);
-            for (const auto& schema : {QStringLiteral("schema_data.json"),
-                     QStringLiteral("schema_validation.json")})
-                if (schemas.exists(schema)) paths << schemas.absoluteFilePath(schema);
-        } catch (const std::exception& error) {
-            report(error);
-        }
-    }
-    paths.removeDuplicates();
-    return paths;
 }
 
 ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,

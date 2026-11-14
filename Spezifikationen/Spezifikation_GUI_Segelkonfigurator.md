@@ -1,5 +1,15 @@
 # GUI-Spezifikation: Segelkonfigurator in der Bootsauswahl
 
+**Aktuelle Umsetzung fuer Modellformat 0.3:** Die Segelaktionen liegen im
+Kontextmenue der Elemente `Mainsail` und `Jib`. Der Core verwendet benannte
+Montagepunkte und speichert das `placement` im Modell; nach erfolgreichem
+Speichern uebernimmt der Core die neue Revision in den geprueften Katalog
+und die GUI laedt den Snapshot neu. Nur der `modelData`-Fingerprint wird
+aktualisiert; externe Ressourcen werden erst beim erneuten Einlesen
+geprueft. Die nachfolgenden
+0.2-Elementnamen und Datei-/Indexangaben sind historisch. Tests verwenden
+weiterhin ausschliesslich Modellkopien.
+
 **Status:** FINAL fachlich spezifiziert auf Nutzerauftrag vom 06.11.2026.
 **Arbeitszielversion:** G-0.13. Keine Implementierung oder Nutzerabnahme
 behauptet; kein Commit, Tag, Push oder Release beauftragt.

@@ -24,7 +24,6 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFileSystemWatcher>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -343,6 +342,8 @@ MainWindow::MainWindow(QWidget* parent)
     header->addStretch();
     chooseFolderButton_ = new QPushButton(QStringLiteral("Modellordner wählen"));
     chooseFolderButton_->setObjectName(QStringLiteral("primaryButton"));
+    refreshModelsButton_ = new QPushButton(QStringLiteral("Modelle aktualisieren"));
+    refreshModelsButton_->setObjectName(QStringLiteral("refreshModelsButton"));
     root->addLayout(header);
     auto* workspaceRow = new QHBoxLayout;
     workspaceRow->addWidget(workspaceTabs);
@@ -394,11 +395,60 @@ MainWindow::MainWindow(QWidget* parent)
     catalogLayout->addWidget(catalogCaption);
     catalogLayout->addWidget(folderLabel_);
     catalogLayout->addWidget(modelList_, 1);
+    catalogLayout->addWidget(refreshModelsButton_);
     catalogLayout->addWidget(chooseFolderButton_);
     mainArea->addWidget(catalogPanel);
     workspaceStack_ = new QStackedWidget;
     workspaceStack_->setObjectName(QStringLiteral("workspaceStack"));
     inspection_ = new BoatInspection;
+    inspection_->onSailConfigurationSaving = [this] {
+        sailSaveInProgress_ = true;
+        setBusy(true);
+    };
+    inspection_->onManualModeChanged = [this](bool) {
+        setBusy(openThread_ != nullptr || simulationThread_ != nullptr);
+    };
+    inspection_->onSailConfigurationFinished = [this](const QString& id, bool saved,
+        const QString& revision, std::shared_ptr<const segelphysik::Modellkatalog> updatedCatalog,
+        const QString& catalogError) {
+        sailSaveInProgress_ = false;
+        if (!saved && inspection_->manualModeActive()) {
+            closeAfterSailSave_ = false;
+            auto* tabs = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+            if (tabs && tabs->currentIndex() != 0) tabs->setCurrentIndex(0);
+            statusLabel_->setText(QStringLiteral(
+                "Segeländerungen nicht gespeichert; die Vorschau bleibt erhalten."));
+            statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+            setBusy(openThread_ != nullptr || simulationThread_ != nullptr);
+            return;
+        }
+        if (saved && closeAfterSailSave_) {
+            closeAfterSailSave_ = false;
+            QTimer::singleShot(0, this, [this] { close(); });
+            return;
+        }
+        closeAfterSailSave_ = false;
+        modelCache_.clear();
+        if (saved && id == modelId_ && updatedCatalog && !catalogReloadPending_) {
+            auto updated = catalog_;
+            updated.catalog = std::move(updatedCatalog);
+            for (auto& entry : updated.entries)
+                if (entry.id == id) entry.version = revision;
+            reopenAfterCatalog_ = true;
+            applyCatalog(updated);
+            return;
+        }
+        if (saved && !catalogError.isEmpty())
+            showError(QStringLiteral("Segel gespeichert, Modellaktualisierung fehlgeschlagen"),
+                catalogError);
+        if (id == modelId_) reopenAfterCatalog_ = true;
+        if (!saved) {
+            statusLabel_->setText(QStringLiteral("Segelkonfiguration nicht bestätigt; Modell wird geprüft."));
+            statusLabel_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+        }
+        reloadCatalog();
+        setBusy(openThread_ != nullptr || simulationThread_ != nullptr);
+    };
     workspaceStack_->addWidget(inspection_);
     connect(inspectionCameraCombo_, &QComboBox::activated, this, [this] {
         QString error;
@@ -735,14 +785,11 @@ MainWindow::MainWindow(QWidget* parent)
     valuesDock_->setWidget(valuesStack_);
     addDockWidget(Qt::BottomDockWidgetArea, valuesDock_);
 
-    folderWatcher_ = new QFileSystemWatcher(this);
-    rescanTimer_ = new QTimer(this);
-    rescanTimer_->setSingleShot(true);
-    rescanTimer_->setInterval(400);
     liveTimer_ = new QTimer(this);
     liveTimer_->setInterval(liveIntervalMs);
 
     connect(chooseFolderButton_, &QPushButton::clicked, this, [this] { chooseModelFolder(); });
+    connect(refreshModelsButton_, &QPushButton::clicked, this, [this] { refreshModels(); });
     connect(modelList_, &QListWidget::currentItemChanged, this,
         [this](QListWidgetItem* current, QListWidgetItem*) {
             if (current == nullptr) {
@@ -763,20 +810,11 @@ MainWindow::MainWindow(QWidget* parent)
             QMenu menu(this);
             auto* update = menu.addAction(QStringLiteral("Visualisation-Hash erneuern"));
             update->setEnabled(fingerprintThread_ == nullptr && simulationThread_ == nullptr
-                && openThread_ == nullptr && catalogThread_ == nullptr
-                && !fingerprintWatcherSuppressed_);
+                && openThread_ == nullptr && catalogThread_ == nullptr);
             connect(update, &QAction::triggered, this,
                 [this, id] { updateVisualizationFingerprint(id); });
             menu.exec(modelList_->viewport()->mapToGlobal(position));
         });
-    connect(folderWatcher_, &QFileSystemWatcher::directoryChanged, this,
-        [this](const QString&) { scheduleFolderRescan(); });
-    connect(folderWatcher_, &QFileSystemWatcher::fileChanged, this,
-        [this](const QString&) { scheduleFolderRescan(); });
-    connect(rescanTimer_, &QTimer::timeout, this, [this] {
-        if (fingerprintWatcherSuppressed_ || fingerprintThread_ != nullptr) return;
-        reloadCatalog();
-    });
     connect(liveTimer_, &QTimer::timeout, this, [this] { updateLiveProgress(); });
     connect(runButton_, &QPushButton::clicked, this, [this] { startSimulation(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancellation_.store(true); });
@@ -805,6 +843,17 @@ MainWindow::MainWindow(QWidget* parent)
 
 void MainWindow::updateWorkspace(int index)
 {
+    if (workspaceIndex_ == 0 && index != 0 && inspection_->manualModeActive()) {
+        const bool pending = inspection_->finishManualMode();
+        if (pending && !sailSaveInProgress_) {
+            auto* tabs = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+            if (tabs) {
+                const QSignalBlocker blocker(tabs);
+                tabs->setCurrentIndex(workspaceIndex_);
+            }
+            return;
+        }
+    }
     if (workspaceIndex_ >= 0 && workspaceIndex_ != index) {
         saveDisplaySettings();
         closeGraphics();
@@ -1470,6 +1519,11 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    if (inspection_->sailSaveInProgress() || inspection_->finishManualMode()) {
+        closeAfterSailSave_ = sailSaveInProgress_;
+        event->ignore();
+        return;
+    }
     QSettings settings;
     settings.setValue(QStringLiteral("fenster/geometrie"), saveGeometry());
     settings.setValue(QStringLiteral("fenster/zustand"), saveState());
@@ -1891,7 +1945,7 @@ void MainWindow::setModelFolder(const QString& folder)
     cameraCombo_->setEnabled(false);
     inspectionCameraCombo_->setEnabled(false);
     inspection_->clear(QStringLiteral("Modellordner wird eingelesen …"));
-    setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
+    setBusy(true);
     reloadCatalog();
 }
 
@@ -1905,9 +1959,10 @@ void MainWindow::selectInitialModel(const QString& preferred)
     }
 }
 
-void MainWindow::scheduleFolderRescan()
+void MainWindow::refreshModels()
 {
-    if (fingerprintWatcherSuppressed_ || fingerprintThread_ != nullptr) return;
+    if (fingerprintThread_ != nullptr || sailSaveInProgress_ || simulationThread_ != nullptr
+        || inspection_->manualModeActive()) return;
     modelCache_.clear();
     ++openGeneration_;
     validation_ = {};
@@ -1915,6 +1970,7 @@ void MainWindow::scheduleFolderRescan()
         resetResults();
         scene_->clearModel();
         for (auto* view : staticScenes_) view->clearModel();
+        inspection_->clear(QStringLiteral("Modell wird erneut geprüft …"));
         cameraCombo_->setEnabled(false);
         inspectionCameraCombo_->setEnabled(false);
         statusLabel_->setText(QStringLiteral("Modell wird erneut geprüft …"));
@@ -1923,7 +1979,7 @@ void MainWindow::scheduleFolderRescan()
     }
     setBusy(true);
     reopenAfterCatalog_ = true;
-    rescanTimer_->start();
+    reloadCatalog();
 }
 
 void MainWindow::reloadCatalog()
@@ -2033,26 +2089,6 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
         }
     }
 
-    const auto watched = folderWatcher_->files() + folderWatcher_->directories();
-    if (!watched.isEmpty()) {
-        folderWatcher_->removePaths(watched);
-    }
-    try {
-        QStringList diagnostics;
-        const auto paths = watchedModelPaths(modelFolder_, &diagnostics);
-        if (!paths.isEmpty()) {
-            const auto failed = folderWatcher_->addPaths(paths);
-            if (!failed.isEmpty())
-                showError(QStringLiteral("Modellüberwachung"),
-                    QStringLiteral("Diese Pfade konnten nicht überwacht werden:\n%1")
-                        .arg(failed.join(QLatin1Char('\n'))));
-        }
-        if (!diagnostics.isEmpty())
-            showError(QStringLiteral("Modellüberwachung"), diagnostics.join(QLatin1Char('\n')));
-    } catch (const std::exception& error) {
-        showError(QStringLiteral("Modellüberwachung"), QString::fromUtf8(error.what()));
-    }
-
     if (selectionPending_) {
         applyPendingSelection();
         return;
@@ -2084,6 +2120,8 @@ void MainWindow::applyCatalog(const CatalogSnapshot& snapshot)
             statusLabel_->setText(QStringLiteral("Das gewählte Modell ist nicht mehr verfügbar."));
             setBusy(openThread_ != nullptr);
         }
+    } else if (modelId_.isEmpty() && !running && openThread_ == nullptr) {
+        setBusy(false);
     }
     reopenAfterCatalog_ = false;
 }
@@ -2130,6 +2168,8 @@ void MainWindow::applyPendingSelection()
         } else {
             modelList_->setCurrentItem(target);
         }
+    } else {
+        setBusy(simulationThread_ != nullptr || openThread_ != nullptr);
     }
 }
 
@@ -2146,8 +2186,7 @@ const ModelEntry* MainWindow::entryFor(const QString& id) const
 void MainWindow::updateVisualizationFingerprint(const QString& modelId)
 {
     if (fingerprintThread_ != nullptr || simulationThread_ != nullptr
-        || openThread_ != nullptr || catalogThread_ != nullptr
-        || fingerprintWatcherSuppressed_) return;
+        || openThread_ != nullptr || catalogThread_ != nullptr) return;
     const auto* entry = entryFor(modelId);
     if (!entry || !entry->schemaValid || entry->visualizationHashCurrent
         || QFileInfo(entry->path).fileName() != QStringLiteral("modells_data.json")) {
@@ -2158,8 +2197,6 @@ void MainWindow::updateVisualizationFingerprint(const QString& modelId)
     statusLabel_->setText(QStringLiteral("Visualisation-Fingerprint wird aktualisiert …"));
     statusLabel_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
     const auto catalogFolder = modelFolder_;
-    rescanTimer_->stop();
-    fingerprintWatcherSuppressed_ = true;
     auto* thread = QThread::create([this, modelFolder, catalogFolder] {
         QString error;
         try {
@@ -2170,9 +2207,6 @@ void MainWindow::updateVisualizationFingerprint(const QString& modelId)
             error = QString::fromUtf8(exception.what());
         }
         QMetaObject::invokeMethod(this, [this, catalogFolder, error] {
-            QTimer::singleShot(600, this, [this] {
-                fingerprintWatcherSuppressed_ = false;
-            });
             if (modelFolder_ != catalogFolder) return;
             if (!error.isEmpty()) {
                 fingerprintThread_.clear();
@@ -2221,7 +2255,7 @@ void MainWindow::resetResults()
 
 void MainWindow::openModel(const QString& id)
 {
-    if (simulationThread_ != nullptr) {
+    if (simulationThread_ != nullptr || sailSaveInProgress_ || inspection_->manualModeActive()) {
         return;
     }
     const auto* entry = entryFor(id);
@@ -2270,10 +2304,11 @@ void MainWindow::openModel(const QString& id)
         QString error;
         ModelValidation validation;
         try {
+            if (!catalog)
+                throw std::runtime_error("Kein Modellkatalog verfügbar.");
+            (void)segelphysik::katalog_datei(*catalog, selected.id.toStdString(),
+                selected.version.toStdString());
             if (!opened) {
-                if (!catalog) {
-                    throw std::runtime_error("Kein Modellkatalog verfügbar.");
-                }
                 auto fresh = std::make_shared<OpenedModel>();
                 fresh->data = loadDisplayData(*catalog, selected.id, selected.version);
                 if (!fresh->data.geometry.teile.empty())
@@ -2296,6 +2331,9 @@ void MainWindow::openModel(const QString& id)
                     loadSelectedModelPhysics(opened->data, *catalog);
                 }
                 if (opened->data.inspection) {
+                    if (!opened->sailConfiguration && catalog)
+                        opened->sailConfiguration = segelphysik::leseSegelKonfiguration(
+                            *catalog, *opened->data.inspection);
                     const auto& info = opened->data.inspection->info();
                     validation.modelId = QString::fromStdString(info.model_id);
                     validation.fingerprint = QString::fromStdString(info.model_version);
@@ -2423,8 +2461,8 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     const ModelValidation& validation)
 {
     QString error;
-    inspection_->setSnapshot(opened->data.inspection, catalog_.catalog,
-        !opened->data.modelFormat03);
+    inspection_->setSnapshot(opened->data.inspection, catalog_.catalog, true,
+        opened->sailConfiguration);
     inspection_->setEnabled(true);
     scene_->setElementGroups(opened->data.elementGroups);
     hydrodynamicRoles_ = opened->data.hydrodynamicRoles;
@@ -2638,10 +2676,14 @@ void MainWindow::startSimulation()
             QStringLiteral("Bitte zuerst ein vom Core akzeptiertes Modell laden."));
         return;
     }
-    if (simulationThread_ != nullptr && simulationThread_->isRunning()) {
+    if (simulationThread_ != nullptr) {
         return;
     }
+    startValidatedSimulation();
+}
 
+void MainWindow::startValidatedSimulation()
+{
     const auto* workspace = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
     const bool dynamic = workspace && workspace->currentIndex() == 2;
     for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it) {
@@ -2750,13 +2792,15 @@ void MainWindow::startSimulation()
     const QString path = modelPath_;
     const QString id = modelId_;
     const auto validation = validation_;
+    const auto inspection = opened ? opened->data.inspection : nullptr;
     statusLabel_->setText(QStringLiteral("Statischer Core-Lauf läuft …"));
     timeLabel_->setText(QStringLiteral("Simulationszeit: –  ·  Rechenzeit: läuft"));
     setBusy(true);
 
     const int generation = simulationGeneration_;
-    auto* thread = QThread::create([this, path, id, validation, start, generation] {
-        const auto result = runSimulation(path, validation, false, 0.0, 0.01, &cancellation_, start);
+    auto* thread = QThread::create([this, path, id, validation, start, generation, inspection] {
+        const auto result = runSimulation(path, validation, false, 0.0, 0.01,
+            &cancellation_, start, inspection);
         QMetaObject::invokeMethod(this,
             [this, id, result, generation] {
                 if (id != modelId_ || generation != simulationGeneration_) {
@@ -2780,12 +2824,41 @@ void MainWindow::startSimulation()
 
 void MainWindow::startLiveSimulation(double duration, double step, bool paced, const QJsonObject& start)
 {
-    QString error;
-    std::shared_ptr<LiveSimulation> live =
-        LiveSimulation::create(modelPath_, validation_, duration, step, paced, &error, start);
+    const auto path = modelPath_;
+    const auto validation = validation_;
+    const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
+    const auto inspection = opened ? opened->data.inspection : nullptr;
+    const int generation = simulationGeneration_;
+    statusLabel_->setText(QStringLiteral("Dynamischer Core-Lauf wird vorbereitet …"));
+    setBusy(true);
+    auto live = std::make_shared<std::shared_ptr<LiveSimulation>>();
+    auto error = std::make_shared<QString>();
+    auto* thread = QThread::create([path, validation, duration, step, paced, start, live, error,
+                                    inspection] {
+        *live = LiveSimulation::create(path, validation, duration, step, paced, error.get(),
+            start, std::nullopt, inspection);
+    });
+    simulationThread_ = thread;
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    connect(thread, &QThread::finished, this, [this, thread, path, generation, paced, live, error] {
+        if (simulationThread_ == thread) simulationThread_ = nullptr;
+        if (shuttingDown_.load()) return;
+        if (generation != simulationGeneration_ || path != modelPath_) {
+            setBusy(openThread_ != nullptr || simulationThread_ != nullptr);
+            return;
+        }
+        startPreparedLiveSimulation(*live, paced, *error);
+    });
+    thread->start();
+}
+
+void MainWindow::startPreparedLiveSimulation(
+    const std::shared_ptr<LiveSimulation>& live, bool paced, const QString& error)
+{
     if (!live) {
         statusLabel_->setText(QStringLiteral("Core-Lauf nicht gestartet"));
         showError(QStringLiteral("Core-Simulation"), error);
+        setBusy(false);
         return;
     }
     live_ = live;
@@ -2816,7 +2889,7 @@ void MainWindow::simulationFinished()
 {
     if (defaultsReloadPending_) {
         defaultsReloadPending_ = false;
-        scheduleFolderRescan();
+        refreshModels();
         return;
     }
     const auto* tabs = findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
@@ -3064,9 +3137,11 @@ void MainWindow::displayState(qsizetype index, bool force)
 
 void MainWindow::setBusy(bool busy)
 {
+    busy = busy || sailSaveInProgress_;
     const bool hasModel = validation_.valid && !modelPath_.isEmpty();
     const bool dynamic = modeCombo_->currentData().toBool();
     const bool running = simulationThread_ != nullptr;
+    const bool editing = inspection_->manualModeActive();
     testDrivePanel_->hide();
     cameraFramePanel_->setVisible(dynamic);
     stationaryForcePanel_->setVisible(true);
@@ -3089,10 +3164,11 @@ void MainWindow::setBusy(bool busy)
     testDriveCheck_->setEnabled(hasModel && dynamic && (!busy || running));
     testForceSpin_->setEnabled(!busy && dynamic);
     testSpeedSpin_->setEnabled(!busy && dynamic);
-    chooseFolderButton_->setEnabled(!running);
-    modelList_->setEnabled(!running);
+    chooseFolderButton_->setEnabled(!busy && !running && !editing);
+    refreshModelsButton_->setEnabled(!busy && !running && !editing && fingerprintThread_ == nullptr);
+    modelList_->setEnabled(!busy && !running && !editing);
     modeCombo_->setEnabled(!busy && hasModel);
-    runButton_->setEnabled(!busy && hasModel);
+    runButton_->setEnabled(!busy && hasModel && !editing);
     cancelButton_->setEnabled(running);
     durationSpin_->setEnabled(!busy && dynamic);
     stepSpin_->setEnabled(!busy && dynamic);

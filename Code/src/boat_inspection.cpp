@@ -26,6 +26,7 @@
 #include <QStyle>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QThread>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -283,13 +284,31 @@ BoatInspection::BoatInspection(QWidget* parent) : QWidget(parent)
     });
     connect(tree_, &QWidget::customContextMenuRequested, this, [this](const QPoint& position) {
         auto* item = tree_->itemAt(position);
-        if (!item || item->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element"))
-            return;
+        if (!item) return;
+        const auto kind = item->data(0, Qt::UserRole + 4).toString();
+        const auto owner = item->data(0, Qt::UserRole + 6).toString();
         const auto ids = item->data(0, Qt::UserRole + 1).toStringList();
-        if (ids.size() != 1
-            || (ids.front() != QStringLiteral("Großsegel") && ids.front() != QStringLiteral("Fock")))
+        if (kind == QStringLiteral("element") && ids.size() == 1
+            && (ids.front() == QStringLiteral("Mainsail") || ids.front() == QStringLiteral("Jib"))
+            && (!movements_.contains(owner)
+                || (snapshot_ && catalog_ && sailReference(ids.front())))) {
+            showSailContextMenu(ids.front(), tree_->viewport()->mapToGlobal(position));
             return;
-        showSailContextMenu(ids.front(), tree_->viewport()->mapToGlobal(position));
+        }
+        if ((kind == QStringLiteral("gruppe") || kind == QStringLiteral("element"))
+            && movements_.contains(owner)) {
+            QMenu menu(this);
+            auto* preview = menu.addAction(QStringLiteral("Bewegungsvorschau"));
+            preview->setCheckable(true);
+            preview->setChecked(activeMovementPreviews_.contains(owner));
+            connect(preview, &QAction::toggled, this, [this, owner](bool enabled) {
+                if (enabled) activeMovementPreviews_.insert(owner);
+                else activeMovementPreviews_.remove(owner);
+                updateMovementPreview();
+            });
+            menu.exec(tree_->viewport()->mapToGlobal(position));
+            return;
+        }
     });
     scene_->onInspectionContextMenu = [this](const QString& id, const QPoint& position) {
         showSailContextMenu(id, position);
@@ -315,6 +334,11 @@ BoatInspection::BoatInspection(QWidget* parent) : QWidget(parent)
         onSailDrag(elementId, handle, point, phase);
     };
     scene_->onInspectionInteractionCancelled = [this] { cancelSailDrag(); };
+}
+
+BoatInspection::~BoatInspection()
+{
+    if (saveThread_) saveThread_->wait();
 }
 
 QWidget* BoatInspection::valuesWidget() const { return valuesPanel_; }
@@ -410,7 +434,12 @@ void BoatInspection::clear(const QString& message)
     sailConfiguration_ = {};
     configuredMeshes_.clear();
     previewMeshes_.clear();
+    manualMeshes_.clear();
+    manualBaseConfiguration_.reset();
+    renderedManualPose_.reset();
+    manualChanges_ = false;
     manualElement_.clear();
+    if (onManualModeChanged) onManualModeChanged(false);
     dragElement_.clear();
     const QSignalBlocker treeBlock(tree_);
     tree_->clear();
@@ -420,6 +449,7 @@ void BoatInspection::clear(const QString& message)
     renderedMeshContentGeneration_ = std::numeric_limits<quint64>::max();
     movements_.clear();
     movementDiagnostics_.clear();
+    activeMovementPreviews_.clear();
     referenceBadges_.clear();
     values_->clear();
     valuesStatus_->setText(QStringLiteral("Kein Objekt ausgewählt"));
@@ -465,7 +495,8 @@ void BoatInspection::setStructure(const segelphysik::Modellstruktur& structure)
 }
 
 void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspection> snapshot,
-    std::shared_ptr<const segelphysik::Modellkatalog> catalog, bool loadAerodynamics)
+    std::shared_ptr<const segelphysik::Modellkatalog> catalog, bool loadAerodynamics,
+    std::optional<segelphysik::SegelKonfigurationSnapshot> sailConfiguration)
 {
     QString previousManualElement;
     if (snapshot_ && snapshot
@@ -503,7 +534,10 @@ void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspect
         diagnostic_->setStyleSheet(QString());
         updateTree();
         updateMesh();
-        if (loadAerodynamics) reloadSailConfiguration();
+        if (loadAerodynamics) {
+            if (sailConfiguration) applySailConfiguration(std::move(*sailConfiguration));
+            else reloadSailConfiguration();
+        }
         if (!previousManualElement.isEmpty() && sailReference(previousManualElement))
             setManualMode(previousManualElement, true);
     } catch (const std::exception& error) {
@@ -514,7 +548,7 @@ void BoatInspection::setSnapshot(std::shared_ptr<const segelphysik::ModelInspect
 void BoatInspection::showSailContextMenu(const QString& elementId,
     const QPoint& globalPosition)
 {
-    if (elementId != QStringLiteral("Großsegel") && elementId != QStringLiteral("Fock"))
+    if (elementId != QStringLiteral("Mainsail") && elementId != QStringLiteral("Jib"))
         return;
     if (!snapshot_ || !catalog_ || !sailReference(elementId)) {
         diagnostic_->setText(QStringLiteral(
@@ -524,7 +558,23 @@ void BoatInspection::showSailContextMenu(const QString& elementId,
     }
 
     QMenu menu(this);
-    auto* automatic = menu.addAction(elementId == QStringLiteral("Fock")
+    for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+        if ((*it)->data(0, Qt::UserRole + 4).toString() != QStringLiteral("element")
+            || (*it)->data(0, Qt::UserRole + 1).toStringList() != QStringList{elementId}) continue;
+        const auto owner = (*it)->data(0, Qt::UserRole + 6).toString();
+        if (movements_.contains(owner)) {
+            auto* preview = menu.addAction(QStringLiteral("Bewegungsvorschau"));
+            preview->setCheckable(true);
+            preview->setChecked(activeMovementPreviews_.contains(owner));
+            connect(preview, &QAction::toggled, this, [this, owner](bool enabled) {
+                if (enabled) activeMovementPreviews_.insert(owner);
+                else activeMovementPreviews_.remove(owner);
+                updateMovementPreview();
+            });
+        }
+        break;
+    }
+    auto* automatic = menu.addAction(elementId == QStringLiteral("Jib")
         ? QStringLiteral("Fock automatisch setzen")
         : QStringLiteral("Großsegel automatisch setzen"));
     connect(automatic, &QAction::triggered, this,
@@ -534,9 +584,13 @@ void BoatInspection::showSailContextMenu(const QString& elementId,
     manual->setChecked(manualElement_ == elementId);
     connect(manual, &QAction::toggled, this,
         [this, elementId](bool checked) { setManualMode(elementId, checked); });
-    if (elementId == QStringLiteral("Fock") && manualElement_ == elementId) {
+    if (elementId == QStringLiteral("Jib") && manualElement_ == elementId) {
         auto* offset = menu.addAction(QStringLiteral("Höhenversatz entlang Vorliek (cm)…"));
         connect(offset, &QAction::triggered, this, [this] { promptFockOffset(); });
+    }
+    if (manualElement_ == elementId && manualChanges_) {
+        auto* discard = menu.addAction(QStringLiteral("Ungespeicherte Änderungen verwerfen"));
+        connect(discard, &QAction::triggered, this, [this] { discardManualChanges(); });
     }
 
     menu.addSeparator();
@@ -565,12 +619,13 @@ void BoatInspection::showSailContextMenu(const QString& elementId,
 void BoatInspection::setManualMode(const QString& elementId, bool enabled)
 {
     if (!enabled) {
-        if (elementId.isEmpty() || manualElement_ == elementId) {
-            cancelSailDrag();
-            manualElement_.clear();
-            scene_->setInspectionEditTarget({});
-            scene_->setInspectionHandles({});
-        }
+        if (elementId.isEmpty() || manualElement_ == elementId) finishManualMode();
+        return;
+    }
+    if (!manualElement_.isEmpty() && manualElement_ != elementId) {
+        diagnostic_->setText(QStringLiteral(
+            "Bitte zuerst die manuelle Bearbeitung des anderen Segels beenden."));
+        diagnostic_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
         return;
     }
     if (!scene_->inspectionEditView()) {
@@ -585,11 +640,57 @@ void BoatInspection::setManualMode(const QString& elementId, bool enabled)
         return;
     }
     cancelSailDrag();
+    if (manualElement_.isEmpty()) manualBaseConfiguration_ = sailConfiguration_;
     manualElement_ = elementId;
     scene_->setInspectionEditTarget(elementId);
+    ++meshContentGeneration_;
+    updateMesh();
     updateSailHandles();
     diagnostic_->setText(QStringLiteral(
         "Manuelles Verschieben: Fläche zieht parallel zur Ansichtsebene; semantische Eckgriffe drehen starr."));
+    diagnostic_->setStyleSheet(QString());
+    if (onManualModeChanged) onManualModeChanged(true);
+}
+
+bool BoatInspection::finishManualMode()
+{
+    if (manualElement_.isEmpty()) return false;
+    if (saveThread_) return true;
+    cancelSailDrag();
+    if (manualChanges_) {
+        const auto pose = sailPose(manualElement_);
+        if (!pose) {
+            diagnostic_->setText(QStringLiteral("Die bearbeitete Segellage ist nicht verfügbar."));
+            diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+            return true;
+        }
+        segelphysik::SegelAktionAnforderung request{};
+        request.aktion = segelphysik::SegelAktion::AbsoluteLage;
+        request.element_id = manualElement_.toStdString();
+        request.absolute_lage = *pose;
+        confirmSailAction(request);
+        return true;
+    }
+    manualElement_.clear();
+    manualBaseConfiguration_.reset();
+    renderedManualPose_.reset();
+    scene_->setInspectionEditTarget({});
+    scene_->setInspectionHandles({});
+    if (onManualModeChanged) onManualModeChanged(false);
+    return false;
+}
+
+void BoatInspection::discardManualChanges()
+{
+    if (!manualBaseConfiguration_ || saveThread_) return;
+    sailConfiguration_ = *manualBaseConfiguration_;
+    previewMeshes_.remove(manualElement_);
+    manualMeshes_.clear();
+    manualChanges_ = false;
+    ++meshContentGeneration_;
+    updateMesh();
+    finishManualMode();
+    diagnostic_->setText(QStringLiteral("Ungespeicherte Segeländerungen wurden verworfen."));
     diagnostic_->setStyleSheet(QString());
 }
 
@@ -604,12 +705,12 @@ void BoatInspection::runAutomaticPlacement(const QString& elementId)
 
 void BoatInspection::promptFockOffset()
 {
-    if (manualElement_ != QStringLiteral("Fock") || !sailReference(QStringLiteral("Fock"))) {
+    if (manualElement_ != QStringLiteral("Jib") || !sailReference(QStringLiteral("Jib"))) {
         diagnostic_->setText(QStringLiteral("Für die Fock liegt keine eindeutige Core-Referenz vor."));
         return;
     }
-    const double currentOffset = sailPose(QStringLiteral("Fock"))
-        ? sailPose(QStringLiteral("Fock"))->fock_versatz_cm : 0.0;
+    const double currentOffset = sailPose(QStringLiteral("Jib"))
+        ? sailPose(QStringLiteral("Jib"))->fock_versatz_cm : 0.0;
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("Fock-Versatz"));
     auto* layout = new QVBoxLayout(&dialog);
@@ -642,7 +743,7 @@ void BoatInspection::promptFockOffset()
     if (!valid || !std::isfinite(offset)) return;
     segelphysik::SegelAktionAnforderung request{};
     request.aktion = segelphysik::SegelAktion::FockVersatzCm;
-    request.element_id = QStringLiteral("Fock").toStdString();
+    request.element_id = QStringLiteral("Jib").toStdString();
     request.ebene = segelphysik::SegelEbene::XY;
     request.fock_versatz_cm = offset;
     confirmSailAction(request);
@@ -664,7 +765,16 @@ void BoatInspection::reloadSailConfiguration()
 {
     if (!catalog_ || !snapshot_) return;
     try {
-        auto configuration = segelphysik::leseSegelKonfiguration(*catalog_, *snapshot_);
+        applySailConfiguration(segelphysik::leseSegelKonfiguration(*catalog_, *snapshot_));
+    } catch (const std::exception& error) {
+        reportError(error);
+    }
+}
+
+void BoatInspection::applySailConfiguration(
+    segelphysik::SegelKonfigurationSnapshot configuration)
+{
+    try {
         if (configuration.status == segelphysik::SegelKonfigurationsStatus::Fehler) {
             showConfigurationDiagnostics(configuration.diagnosen);
             if (configuration.diagnosen.empty()) {
@@ -699,7 +809,7 @@ void BoatInspection::updateConfiguredMeshes(
 {
     configuredMeshes_.clear();
     for (const auto& mesh : meshes)
-        if (mesh.element_id == "Großsegel" || mesh.element_id == "Fock")
+        if (mesh.element_id == "Mainsail" || mesh.element_id == "Jib")
             configuredMeshes_[text(mesh.element_id)].push_back(mesh);
     ++meshContentGeneration_;
     updateSailHandles();
@@ -712,77 +822,203 @@ void BoatInspection::previewSailAction(
         const auto result = segelphysik::pruefeSegelAktion(sailConfiguration_, request);
         const auto elementId = text(request.element_id);
         if (result.status == segelphysik::SegelErgebnisStatus::Fehler) {
-            previewMeshes_.remove(elementId);
+            if (manualChanges_) previewMeshes_[elementId] = manualMeshes_;
+            else previewMeshes_.remove(elementId);
+            const auto pose = sailPose(elementId);
+            if (!pose || !showFastSailPose(*pose)) {
+                ++meshContentGeneration_;
+                updateMesh();
+            }
             showConfigurationDiagnostics(result.diagnosen);
+            if (result.diagnosen.empty()) {
+                diagnostic_->setText(QStringLiteral("Die Segelvorschau konnte nicht geprüft werden."));
+                diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+            }
         } else {
-            previewMeshes_[elementId] = result.meshes;
-            diagnostic_->setText(QStringLiteral("Unbestätigte Vorschau – Änderungen werden erst beim Loslassen gespeichert."));
+            if (!result.lage || !showFastSailPose(*result.lage)) {
+                previewMeshes_[elementId] = result.meshes;
+                ++meshContentGeneration_;
+                updateMesh();
+                if (result.lage && text(result.lage->element_id) == manualElement_
+                    && renderedManualPose_)
+                    renderedManualPose_ = *result.lage;
+            }
+            diagnostic_->setText(QStringLiteral("Ungespeicherte Vorschau – gespeichert wird beim Beenden der manuellen Bearbeitung."));
             diagnostic_->setStyleSheet(QString());
         }
-        ++meshContentGeneration_;
-        updateMesh();
         updateSailHandles();
     } catch (const std::exception& error) {
         reportError(error);
     }
 }
 
+bool BoatInspection::showFastSailPose(const segelphysik::SegelLage& pose)
+{
+    if (!renderedManualPose_ || pose.element_id != renderedManualPose_->element_id
+        || text(pose.element_id) != manualElement_) return false;
+    auto inverse = renderedManualPose_->rotation_xyzw;
+    for (std::size_t i = 0; i < 3; ++i) inverse[i] = -inverse[i];
+    std::array<double, 16> matrix{};
+    for (std::size_t column = 0; column < 3; ++column) {
+        forcedisplay::Vec3 axis{};
+        axis[column] = 1.;
+        const auto rotated = rotateByQuaternion(pose.rotation_xyzw,
+            rotateByQuaternion(inverse, axis));
+        for (std::size_t row = 0; row < 3; ++row)
+            matrix[row * 4 + column] = rotated[row];
+    }
+    for (std::size_t row = 0; row < 3; ++row) {
+        matrix[row * 4 + 3] = pose.translation_m[row];
+        for (std::size_t column = 0; column < 3; ++column)
+            matrix[row * 4 + 3] -= matrix[row * 4 + column]
+                * renderedManualPose_->translation_m[column];
+    }
+    matrix[15] = 1.;
+    return scene_->setInspectionRigidTransform(manualElement_, matrix);
+}
+
+bool BoatInspection::stageSailAction(const segelphysik::SegelAktionAnforderung& request)
+{
+    try {
+        const auto result = segelphysik::pruefeSegelAktion(sailConfiguration_, request);
+        if (result.status != segelphysik::SegelErgebnisStatus::Vorschau || !result.lage) {
+            showConfigurationDiagnostics(result.diagnosen);
+            if (result.diagnosen.empty()) {
+                diagnostic_->setText(QStringLiteral("Die Segeländerung konnte nicht vorgemerkt werden."));
+                diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+            }
+            return false;
+        }
+        for (auto& pose : sailConfiguration_.lagen) {
+            if (pose.element_id != request.element_id) continue;
+            pose = *result.lage;
+            manualMeshes_ = result.meshes;
+            previewMeshes_[text(request.element_id)] = manualMeshes_;
+            manualChanges_ = true;
+            if (!showFastSailPose(*result.lage)) {
+                ++meshContentGeneration_;
+                updateMesh();
+            }
+            updateSailHandles();
+            diagnostic_->setText(QStringLiteral(
+                "Änderung vorgemerkt – gespeichert wird beim Beenden der manuellen Bearbeitung."));
+            diagnostic_->setStyleSheet(QString());
+            return true;
+        }
+        diagnostic_->setText(QStringLiteral("Die bearbeitete Segellage ist nicht verfügbar."));
+        diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+    } catch (const std::exception& error) {
+        reportError(error);
+    }
+    return false;
+}
+
 void BoatInspection::confirmSailAction(
     const segelphysik::SegelAktionAnforderung& request)
 {
+    if (saveThread_) {
+        diagnostic_->setText(QStringLiteral("Die Segelkonfiguration wird noch gespeichert."));
+        diagnostic_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
+        return;
+    }
     if (!catalog_ || !snapshot_) {
         diagnostic_->setText(QStringLiteral("Keine Core-Modellreferenz für die Konfiguration verfügbar."));
         diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
         return;
     }
-    try {
-        const auto result = segelphysik::bestaetigeSegelAktion(*catalog_, *snapshot_,
-            sailConfiguration_, request, sailConfiguration_.revision);
-        const auto elementId = text(request.element_id);
-        if (result.status != segelphysik::SegelErgebnisStatus::Gespeichert) {
-            previewMeshes_.remove(elementId);
-            ++meshContentGeneration_;
-            QStringList failureLines;
-            for (const auto& d : result.diagnosen)
-                failureLines << QStringLiteral("%1: %2")
-                    .arg(text(d.code), text(d.nachricht));
-            showConfigurationDiagnostics(result.diagnosen);
-            if (failureLines.isEmpty())
-                failureLines << QStringLiteral(
-                    "Core hat die Segeländerung nicht dauerhaft bestätigt.");
-            reloadSailConfiguration();
-            const auto reloadMessage = diagnostic_->text();
-            if (!reloadMessage.isEmpty() && !failureLines.contains(reloadMessage))
-                failureLines << reloadMessage;
-            diagnostic_->setText(failureLines.join(QLatin1Char('\n')));
-            diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
-            updateMesh();
-            updateSailHandles();
-            return;
+    if (!manualElement_.isEmpty() && request.aktion != segelphysik::SegelAktion::AbsoluteLage) {
+        if (text(request.element_id) == manualElement_) stageSailAction(request);
+        else {
+            diagnostic_->setText(QStringLiteral(
+                "Bitte zuerst die manuelle Bearbeitung des anderen Segels beenden."));
+            diagnostic_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
         }
-        sailConfiguration_.revision = result.revision;
-        if (result.lage) {
-            for (std::size_t i = 0; i < sailConfiguration_.referenzen.size()
-                && i < sailConfiguration_.lagen.size(); ++i) {
-                if (text(sailConfiguration_.referenzen[i].element_id) == elementId) {
-                    sailConfiguration_.lagen[i] = *result.lage;
-                    break;
-                }
+        return;
+    }
+    const auto catalog = catalog_;
+    const auto snapshot = snapshot_;
+    const auto configuration = sailConfiguration_;
+    const auto modelId = text(snapshot->info().model_id);
+    diagnostic_->setText(QStringLiteral("Segelkonfiguration wird gespeichert …"));
+    diagnostic_->setStyleSheet(QString());
+    setEnabled(false);
+    if (onSailConfigurationSaving) onSailConfigurationSaving();
+    auto result = std::make_shared<segelphysik::SegelKonfigurationErgebnis>();
+    auto updatedCatalog = std::make_shared<std::shared_ptr<const segelphysik::Modellkatalog>>();
+    auto catalogError = std::make_shared<QString>();
+    auto* thread = QThread::create([catalog, snapshot, configuration, request, result,
+                                    updatedCatalog, catalogError] {
+        try {
+            *result = segelphysik::bestaetigeSegelAktion(*catalog, *snapshot,
+                configuration, request, configuration.revision);
+        } catch (const std::exception& error) {
+            result->diagnosen.push_back({"CORE-SEG-0017", error.what(), request.element_id});
+        }
+        if (result->status == segelphysik::SegelErgebnisStatus::Gespeichert) {
+            try {
+                *updatedCatalog = std::make_shared<const segelphysik::Modellkatalog>(
+                    segelphysik::katalog_nach_segel_speicherung(*catalog,
+                        snapshot->info().model_id, snapshot->info().model_version,
+                        result->revision));
+            } catch (const std::exception& error) {
+                *catalogError = QString::fromUtf8(error.what());
             }
         }
-        if (!result.meshes.empty()) configuredMeshes_[elementId] = result.meshes;
-        previewMeshes_.remove(elementId);
-        ++meshContentGeneration_;
-        diagnostic_->setText(QStringLiteral("Segelkonfiguration dauerhaft gespeichert."));
-        diagnostic_->setStyleSheet(QString());
-        updateMesh();
-        updateSailHandles();
-    } catch (const std::exception& error) {
-        previewMeshes_.remove(text(request.element_id));
-        ++meshContentGeneration_;
-        reportError(error);
-        updateMesh();
-    }
+    });
+    saveThread_ = thread;
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    connect(thread, &QThread::finished, this, [this, thread, snapshot, request, modelId,
+                                              result, updatedCatalog, catalogError] {
+            if (saveThread_ == thread) saveThread_.clear();
+            if (snapshot_ != snapshot) {
+                if (onSailConfigurationFinished)
+                    onSailConfigurationFinished(modelId,
+                        result->status == segelphysik::SegelErgebnisStatus::Gespeichert,
+                        text(result->revision), *updatedCatalog, *catalogError);
+                return;
+            }
+            const auto elementId = text(request.element_id);
+            if (result->status != segelphysik::SegelErgebnisStatus::Gespeichert) {
+                setEnabled(true);
+                if (!manualChanges_) previewMeshes_.remove(elementId);
+                showConfigurationDiagnostics(result->diagnosen);
+                if (result->diagnosen.empty())
+                    diagnostic_->setText(QStringLiteral(
+                        "Core hat die Segeländerung nicht dauerhaft bestätigt."));
+                diagnostic_->setStyleSheet(QStringLiteral("color:#ff8a7a;"));
+                updateMesh();
+                updateSailHandles();
+                if (onSailConfigurationFinished)
+                    onSailConfigurationFinished(modelId, false, {}, {}, {});
+                return;
+            }
+            if (!result->meshes.empty()) configuredMeshes_[elementId] = result->meshes;
+            previewMeshes_.remove(elementId);
+            if (request.aktion == segelphysik::SegelAktion::AbsoluteLage) {
+                manualChanges_ = false;
+                manualMeshes_.clear();
+                manualBaseConfiguration_.reset();
+                renderedManualPose_.reset();
+                manualElement_.clear();
+                scene_->setInspectionEditTarget({});
+                if (onManualModeChanged) onManualModeChanged(false);
+            }
+            ++meshContentGeneration_;
+            diagnostic_->setText(QStringLiteral(
+                "Segelkonfiguration gespeichert; Modellfassung wird neu geladen."));
+            diagnostic_->setStyleSheet(QString());
+            updateMesh();
+            updateSailHandles();
+            if (onSailConfigurationFinished)
+                onSailConfigurationFinished(modelId, true, text(result->revision),
+                    *updatedCatalog, *catalogError);
+            else {
+                diagnostic_->setText(QStringLiteral(
+                    "Gespeichert. Bitte die neue Modellfassung erneut laden."));
+                diagnostic_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
+            }
+    });
+    thread->start();
 }
 
 void BoatInspection::updateTree()
@@ -857,26 +1093,6 @@ void BoatInspection::updateTree()
             movements_.insert(id, *movement);
             movementDiagnostics_.insert(id, movementDiagnostics);
             items.value(id)->setData(0, Qt::UserRole + 6, id);
-            auto* item = new QTreeWidgetItem(items.value(text(node.id)),
-                {QStringLiteral("Bewegungsvorschau · Achse / Normal / Extreme")});
-            item->setData(0, Qt::UserRole, text(node.id));
-            QStringList elementIds;
-            for (const auto& element : node.element_ids) elementIds << text(element);
-            item->setData(0, Qt::UserRole + 1, elementIds);
-            item->setData(0, Qt::UserRole + 3, true);
-            item->setData(0, Qt::UserRole + 5, id);
-            item->setData(0, Qt::UserRole + 6, id);
-            item->setCheckState(0, Qt::Unchecked);
-            QStringList description;
-            description << QStringLiteral("Reine Vorschau – verändert weder Quelle noch Simulation.")
-                << QStringLiteral("Normal: Cyan · Minimum: Orange · Maximum: Violett · Achse: Gelb");
-            if (!movement->minimum_value) description << QStringLiteral("Minimum: nicht vorhanden");
-            if (!movement->maximum_value) description << QStringLiteral("Maximum: nicht vorhanden");
-            if (std::any_of(movement->poses.begin(), movement->poses.end(),
-                [](const auto& pose) { return pose.label == "backbord" || pose.label == "steuerbord"; }))
-                description << QStringLiteral("Backbord: Orange · Steuerbord: Violett");
-            description << movementDiagnostics;
-            item->setToolTip(0, description.join(QLatin1Char('\n')));
         }
         tree_->expandToDepth(1);
         updateMesh();
@@ -891,11 +1107,8 @@ void BoatInspection::updateMovementPreview()
 {
     try {
         QHash<QString, QSet<QString>> requested;
-        for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
-            const auto id = (*it)->data(0, Qt::UserRole + 5).toString();
-            if (!id.isEmpty() && ((*it)->isSelected() || (*it)->checkState(0) == Qt::Checked))
-                requested[id].insert(QStringLiteral("all"));
-        }
+        for (const auto& id : activeMovementPreviews_)
+            requested[id].insert(QStringLiteral("all"));
         QHash<QString, QSet<QString>> selectedActions;
         for (auto* row : values_->selectedItems())
             if (!row->isHidden() && !row->data(0, movementIdRole).toString().isEmpty())
@@ -972,8 +1185,11 @@ void BoatInspection::cancelSailDrag()
     dragHandle_.clear();
     dragRequest_.reset();
     dragChanged_ = false;
-    previewMeshes_.clear();
-    if (hadPreview) {
+    if (!manualElement_.isEmpty() && manualChanges_)
+        previewMeshes_[manualElement_] = manualMeshes_;
+    else previewMeshes_.clear();
+    const auto pose = sailPose(manualElement_);
+    if (hadPreview && (!pose || !showFastSailPose(*pose))) {
         ++meshContentGeneration_;
         updateMesh();
     }
@@ -1037,7 +1253,8 @@ void BoatInspection::onSailDrag(const QString& elementId, const QString& handle,
         const double startLength = forcedisplay::norm(startVector);
         const double currentLength = forcedisplay::norm(currentVector);
         if (startLength < 1e-8 || currentLength < 1e-8) {
-            previewMeshes_.remove(elementId);
+            if (manualChanges_) previewMeshes_[elementId] = manualMeshes_;
+            else previewMeshes_.remove(elementId);
             diagnostic_->setText(QStringLiteral(
                 "Der projizierte Drehhebel ist zu kurz. Bitte eine andere Achsansicht wählen."));
             diagnostic_->setStyleSheet(QStringLiteral("color:#ffbf69;"));
@@ -1058,9 +1275,12 @@ void BoatInspection::onSailDrag(const QString& elementId, const QString& handle,
     dragRequest_ = request;
     if (dragChanged_) previewSailAction(request);
     if (phase == VtkSceneWidget::InspectionDragPhase::Finish) {
-        if (dragChanged_ && dragRequest_) confirmSailAction(*dragRequest_);
+        if (dragChanged_ && dragRequest_) {
+            if (!stageSailAction(*dragRequest_)) cancelSailDrag();
+        }
         else {
-            previewMeshes_.remove(elementId);
+            if (manualChanges_) previewMeshes_[elementId] = manualMeshes_;
+            else previewMeshes_.remove(elementId);
             updateMesh();
         }
         dragElement_.clear();
@@ -1163,7 +1383,10 @@ void BoatInspection::updateMesh()
         std::vector<segelphysik::InspectionMesh> displayed;
         QSet<QString> replaced;
         for (const int index : requested)
-            if (meshes_.at(index).provenance != "abgeleitet")
+            if (meshes_.at(index).provenance != "abgeleitet" &&
+                !(meshes_.at(index).type == "darstellung" &&
+                    (configuredMeshes_.contains(text(meshes_.at(index).element_id)) ||
+                     previewMeshes_.contains(text(meshes_.at(index).element_id)))))
                 replaced.insert(text(meshes_.at(index).element_id));
         QSet<QString> currentElements;
         QSet<QString> configuredElements;
@@ -1205,6 +1428,8 @@ void BoatInspection::updateMesh()
         }
         for (const int index : requested) {
             auto mesh = meshes_.at(index);
+            if (mesh.type == "darstellung" && configuredElements.contains(text(mesh.element_id)))
+                continue;
             if (mesh.provenance == "abgeleitet")
                 mesh.color_rgb = std::array<double, 3>{0.91, 0.71, 0.30};
             if (mesh.surface && *mesh.surface == "unsichtbar")
@@ -1216,6 +1441,10 @@ void BoatInspection::updateMesh()
         if (!scene_->setModel(parts, &error)) throw std::runtime_error(error.toStdString());
         scene_->setProperty("hasInspectionMesh", true);
         renderedMeshContentGeneration_ = meshContentGeneration_;
+        if (!manualElement_.isEmpty() && configuredElements.contains(manualElement_)
+            && !replaced.contains(manualElement_))
+            renderedManualPose_ = sailPose(manualElement_);
+        else renderedManualPose_.reset();
         if (preserveCamera) scene_->setCameraView(camera);
     } catch (const std::exception& error) {
         selectionStatus_->setText(QStringLiteral("Geometrie nicht verfügbar"));

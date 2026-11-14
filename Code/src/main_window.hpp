@@ -6,6 +6,8 @@
 #include "model_catalog.hpp"
 #include "graphics_settings.hpp"
 
+#include <segelphysik/segelkonfigurator.hpp>
+
 #include <QHash>
 #include <QList>
 #include <QMainWindow>
@@ -23,7 +25,6 @@ class QCloseEvent;
 class QComboBox;
 class QDockWidget;
 class QDoubleSpinBox;
-class QFileSystemWatcher;
 class QFormLayout;
 class QGroupBox;
 class QLabel;
@@ -48,7 +49,7 @@ public:
     ~MainWindow() override;
 
     void setModelFolder(const QString& folder);
-    // Modell-ID oder Pfad einer modells_information.json; wird nach dem Katalogabruf
+    // Modell-ID oder Pfad einer modells_data.json; wird nach dem Katalogabruf
     // ausgewertet. Leer: zuletzt gewähltes oder erstes verwendbares Modell.
     void selectInitialModel(const QString& preferred);
 
@@ -59,6 +60,7 @@ private:
     struct OpenedModel {
         ModelDisplayData data;
         QVector<DisplayPart> parts;
+        std::optional<segelphysik::SegelKonfigurationSnapshot> sailConfiguration;
     };
 
     QWidget* buildDisplayPanel();
@@ -71,7 +73,7 @@ private:
     void reloadCatalog();
     void updateVisualizationFingerprint(const QString& modelId);
     void applyCatalog(const CatalogSnapshot& snapshot);
-    void scheduleFolderRescan();
+    void refreshModels();
     void applyPendingSelection();
     const ModelEntry* entryFor(const QString& id) const;
     void openModel(const QString& id);
@@ -80,7 +82,10 @@ private:
     void modelOpened(const ModelEntry& entry, const std::shared_ptr<OpenedModel>& opened,
         const ModelValidation& validation);
     void startSimulation();
+    void startValidatedSimulation();
     void startLiveSimulation(double duration, double step, bool paced, const QJsonObject& start);
+    void startPreparedLiveSimulation(
+        const std::shared_ptr<LiveSimulation>& live, bool paced, const QString& error);
     void updateLiveProgress();
     void finishLiveSimulation();
     void simulationFinished();
@@ -147,14 +152,15 @@ private:
     graphics::Settings graphics_ = graphics::defaults();
     graphics::Settings staticGraphics_ = graphics::defaults();
     bool graphicsReady_ = false;
+    bool sailSaveInProgress_ = false;
+    bool closeAfterSailSave_ = false;
     QLabel* graphicsStatus_ = nullptr;
     QPushButton* chooseFolderButton_ = nullptr;
+    QPushButton* refreshModelsButton_ = nullptr;
     QListWidget* modelList_ = nullptr;
     QLabel* folderLabel_ = nullptr;
     QComboBox* inspectionCameraCombo_ = nullptr;
     QCheckBox* realtimeCheck_ = nullptr;
-    QFileSystemWatcher* folderWatcher_ = nullptr;
-    QTimer* rescanTimer_ = nullptr;
     QTimer* liveTimer_ = nullptr;
     QPushButton* runButton_ = nullptr;
     QPushButton* cancelButton_ = nullptr;
@@ -252,7 +258,6 @@ private:
     QString modelFolder_;
     bool useConfiguredModelFolder_ = false;
     bool defaultsReloadPending_ = false;
-    bool fingerprintWatcherSuppressed_ = false;
     QString pendingSelection_;
     bool selectionPending_ = false;
     bool reopenAfterCatalog_ = false;

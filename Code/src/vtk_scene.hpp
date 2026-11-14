@@ -161,6 +161,8 @@ public:
     QString inspectionCameraPresetId() const { return inspectionPresetId_; }
     void setInspectionEditTarget(const QString& elementId);
     void setInspectionHandles(const QVector<InspectionHandle>& handles);
+    bool setInspectionRigidTransform(const QString& elementId,
+        const std::array<double, 16>& matrix);
     QPointF inspectionScreenPointForWorld(const forcedisplay::Vec3& point) const;
     forcedisplay::Vec3 inspectionWorldPointAt(const QPointF& point) const;
     forcedisplay::Vec3 inspectionWorldVectorForScreenDelta(const QPointF& delta) const;

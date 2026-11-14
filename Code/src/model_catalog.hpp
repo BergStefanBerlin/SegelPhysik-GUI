@@ -1,7 +1,7 @@
 #pragma once
 
 // Modellkatalog über den Core (G-0.2, A-G-00019 bis A-G-00022). Die GUI
-// wählt und überwacht den Ordner; Inhalt, Status und Darstellungsgeometrie
+// wählt den Ordner; Inhalt, Status und Darstellungsgeometrie
 // liefert ausschließlich der Core. Die Funktionen rufen den Core auf und
 // gehören in einen Worker-Thread.
 
@@ -55,10 +55,6 @@ struct CatalogSnapshot {
 };
 
 CatalogSnapshot loadCatalog(const QString& folder);
-
-// Verzeichnisse und Dateien, deren Änderung einen neuen Katalogabruf
-// auslösen soll (nur Existenzprüfung, kein Lesen des Modellformats).
-QStringList watchedModelPaths(const QString& folder, QStringList* diagnostics = nullptr);
 
 struct ModelDisplayData {
     std::shared_ptr<const segelphysik::ModelInspection> inspection;

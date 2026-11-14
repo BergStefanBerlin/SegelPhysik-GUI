@@ -70,20 +70,20 @@ Set `SEGELPHYSIK_CORE_SOURCE_DIR` to the local Core checkout if it is stored
 elsewhere. The GUI links the Core target directly; the Core CLI is not required
 at runtime.
 
-Model data directories are named `modells` (formerly `meshes`). The Core
-resolves file references from each `modells_information.json`. Core stores each
-component's `setting` directly beside its existing `id` and `Darstellung`,
-without additional object IDs or a second component list. Shared revision
-metadata remains in `konfiguration`. Source/lookup references occur once
-at the sail element; the Fock offset is derived from its pose. Unrelated
-model fields and other components are preserved. Mounting poses remain separate from operating
-angles. Saving is atomic and uses `modells_information.lock`; revisions and source
-checks still guard against conflicts and changed geometry. The former
-`segelkonfiguration.json` is migrated without resetting sail placement.
-
-The stored boat base pose places sails and boom amidships, with clews aft;
-0 degrees is this physical opening reference, not an identity quaternion.
-Mast/forestay inclination and sail camber are preserved.
+The Core reads model format 0.3 from `modells_data.json` and validates
+`modells_validation.json`; the former 0.2 format is not supported.
+The context menus of `Mainsail` and `Jib` provide automatic and manual sail
+placement, original tack and jib offset. The Core resolves named local
+`mountingPoints` and `mounting` references; unavailable rig references
+produce a diagnostic rather than guessed positions. Manual movement remains
+available. Saved `placement` is separate from the operating sail angle.
+During manual editing, movements, jib offset and tack are shown as an
+unsaved preview. Leaving manual mode, switching workspace, closing the
+window or choosing a non-axis-fixed camera commits the accumulated pose once.
+Model and folder selection are disabled until manual editing ends. Saving
+runs in the background using a process lock and recovery journal. If saving
+fails, the draft remains available for retry or explicit discard.
+After a successful save, the GUI reloads the catalogue and model snapshot.
 
 The GUI has no separate model-directory parser or component configuration
 file. Renaming data directories does not rename API mesh
@@ -254,10 +254,8 @@ significant digits for very small/large values. Lengths and masses can display
 in scaled units (km/mm/µm and t/g/mg); tooltips retain the exact original values
 and units. These are display changes only.
 
-The model-catalog tests accept both legacy and migrated schema-3 reference
-folders. Existing schema-3 sources retain their explicit derivations rather
-than being downgraded to schema 2; legacy fixtures still exercise conversion
-and explicit conflict handling.
+The model-catalog test for the active data uses format 0.3. The former
+schema-2/schema-3 conversion tests are no longer part of the active Core.
 The right object tree contains exactly one reference per existing object.
 Only its current display geometry is rendered; a confirmed or temporary
 mounting pose replaces that object's geometry instead of adding another
@@ -286,68 +284,23 @@ file changes may update the catalogue but never replace or invalidate that
 opened snapshot. No GUI model/mesh reader or second geometry converter is used.
 The simulation retains its own model validation and lifecycle.
 
-Moving elements expose a checkable **Bewegungsvorschau** below the element.
+Movement owners expose a checkable **Bewegungsvorschau** in their right-click
+context menu. Group-defined movement belongs to the group; legacy
+element-defined movement remains on its element.
 It draws the Core-transformed normal pose in cyan, available minimum in orange
 and maximum in violet, plus a yellow rotational axis. Undefined limits are
-explicitly marked in the tooltip and are not invented. Preview geometry is
+explicitly marked in the values table and are not invented. Preview geometry is
 temporary, read-only and does not change the simulation or inspection camera.
 Selecting a pivot property highlights its model-fixed point and axis in yellow.
 Selecting a normal/minimum/maximum table row shows that particular Core pose,
 including lifting motions. A table selection takes precedence over the same
-element's all-poses checkbox until the table selection is cleared. Filtering out
+owner's all-poses menu action until the table selection is cleared. Filtering out
 a selected row removes its table-driven preview. Undefined bounds stay explicit
 and cannot generate a pose.
 
-The unified Core definition supports one OBJ containing named source meshes and
-a JSON describing their physical uses. Stable element IDs and explicit
-hydrodynamic roles are independent; the GUI never infers physics from names.
-Existing model formats remain supported through the same Core pipeline.
-Real source variants needed for different physical uses are retained rather
-than silently replaced. This establishes a read-only foundation for a later
-editor; model editing, repair, automatic mesh generation and saving are not
-implemented in this step.
-
-Schemas `"2"` and `"3"` are defined in the Core
-[model specification](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
-The Core target `segelphysik_konvertieren` converts an existing model into
-`modells_information.json` and `boot.obj` in a **new** destination folder:
-
-```powershell
-& "C:\spdeps\gui-workspace-tabs\segelphysik-core\Release\segelphysik_konvertieren.exe" `
-  "C:\path\to\source\modells_information.json" "C:\path\to\new-model"
-```
-
-The destination's parent must exist. Existing destinations are rejected;
-source models are never overwritten. Choose the converted model folder in
-the GUI to inspect or simulate it. The converter preserves actual geometry
-variants; it does not repair or merge physically different meshes.
-
-For the strict **one source mesh per geometric element** contract, pass
-`--schema3` before the two paths. This merges identical per-element geometry
-and rejects actual conflicts as `CORE-MOD-0009` before creating the destination.
-Eight reference models can be migrated without changing geometry. For the
-boats `420`, `folkeboot` and `optimist`, explicitly use
-`--schema3-ableitungen` instead. Following the user's approval, this selects
-one existing source per element and geometrically verifies reproducible
-surface selections / plane cuts against the old physical uses. These boats
-do not require separate editable mass and displacement meshes.
-`ableitung.art = "ohne_deckflaeche"` excludes existing horizontal lid faces
-for an open shell; `"z_schnitt"` takes the part below the declared plane
-`z = z_m + steigung_x*x + steigung_y*y`, closing only that declared cut.
-The 420 centreboard needs an inclined cut, not an arbitrary horizontal one.
-Unsupported or materially different geometry is still rejected.
-No mesh simplification or change to mass/support/flooding algorithms is
-performed. Open mass rims remain intact. The small 420 hull display
-difference is bounded and documented in the Core specification.
-
-All eleven converted reference models are available in
-`C:\spdeps\gui-workspace-tabs\single-source-models`; select this folder in
-the GUI to use them. Originals remain readable and unchanged. Legacy
-multiple sources remain visibly marked; derived meshes are listed under
-**Abgeleitete Daten**, with the actual Core definition in their tooltip.
-The property table exposes derivation parameters without GUI schema parsing.
-Migration bounds and physical/dynamic regression criteria are specified in
-the [Core model contract](../CORE/Spezifikationen/Spezifikation_Modellbeschreibung.md).
+The Core resolves format 0.3 mesh references and physical roles; the GUI
+does not infer physics from names. Old-format converters and fallback loading
+are not part of the current Core.
 
 Switching workspaces preserves the loaded model and configured stationary
 inputs, but cancels and resets the simulation. The simulation camera returns
@@ -521,7 +474,7 @@ The `gui_boat_inspection_100`, `_150` and `_200` cases exercise the actual
 Core snapshot, all advertised tree/mesh types, selection/property deduplication,
 point topology and exact context opacity. They compare model-list/viewport
 bounds with a maximum one-logical-pixel tolerance, preserve camera state and
-corrupt a temporary model file to verify watcher/snapshot isolation. Evidence
+corrupt a temporary model file to verify snapshot isolation. Evidence
 is written to `graphics-evidence/boat-inspection-<scale>`.
 
 The Core display contract also accepts explicit `stoff`, `holz` and
@@ -542,14 +495,20 @@ fingerprint status come from the Core; the GUI does not parse model JSON or
 schemas. The Core resolves the active model and schema roots from
 `%APPDATA%\SegelPhysik\defaults.json`. An explicit command-line argument or
 folder chosen in the GUI selects a folder; the last explicit folder is
-remembered. Model directories are watched and catalog/status changes are
-reloaded through the Core.
+remembered. The Core checks model data on demand. **Modelle aktualisieren**
+refreshes the catalog in the background and checks fingerprints when reading.
+The Core temporarily skips the aerodynamics fingerprint check until
+aerodynamics is implemented; its folder is not hashed when reading.
+External resource changes are not monitored; refresh explicitly to read them
+again in the checked areas. Saving a sail updates only the `modelData` fingerprint and reuses the
+checked catalog for the new model revision. Simulations reuse the checked
+Core inspection snapshot rather than rereading the model. Checks do not
+rewrite stored fingerprints.
 
-The legacy `modells_information.json` fixtures are kept under the sibling
-folder `Segelphysik\Modelle_alt` for compatibility tests. CMake variable
-`SEGELPHYSIK_MODELLE_DIR` points to those legacy fixtures in test builds;
-Format-0.3 tests use `SEGELPHYSIK_MODELFORMAT03_TEST_ROOT` and temporary
-copies where they write data.
+The historical `modells_information.json` fixtures remain under the sibling
+folder `Segelphysik\Modelle_alt`. Some older test registrations still refer to
+them and are not compatible with the 0.3-only Core. Format-0.3 tests use
+`SEGELPHYSIK_MODELFORMAT03_TEST_ROOT` and temporary copies where they write data.
 
 **Static mode** computes the equilibrium and shows it.
 

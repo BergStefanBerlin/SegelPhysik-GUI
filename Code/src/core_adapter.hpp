@@ -9,6 +9,8 @@
 #include <memory>
 #include <optional>
 
+namespace segelphysik { class ModelInspection; }
+
 struct TestDriveOptions {
     bool active = false;
     double forceN = 200.0;
@@ -41,7 +43,8 @@ ModelValidation validateModel(const QString& modelPath);
 SimulationResult runSimulation(const QString& modelPath,
     const ModelValidation& validation, bool dynamic, double durationSeconds,
     double stepSeconds, std::atomic_bool* cancellation,
-    const QJsonObject& start = {});
+    const QJsonObject& start = {},
+    std::shared_ptr<const segelphysik::ModelInspection> inspection = {});
 
 // Dynamischer Lauf ohne Vorausrechnung: run() rechnet im Worker-Thread
 // Schritt für Schritt und legt nur Rohzustände ab. Die GUI liest jederzeit
@@ -65,7 +68,8 @@ public:
     static std::unique_ptr<LiveSimulation> create(const QString& modelPath,
         const ModelValidation& validation, double durationSeconds,
         double stepSeconds, bool realtimePacing, QString* error,
-        const QJsonObject& start = {}, const std::optional<TestDriveOptions>& testDrive = std::nullopt);
+        const QJsonObject& start = {}, const std::optional<TestDriveOptions>& testDrive = std::nullopt,
+        std::shared_ptr<const segelphysik::ModelInspection> inspection = {});
     ~LiveSimulation();
     LiveSimulation(const LiveSimulation&) = delete;
     LiveSimulation& operator=(const LiveSimulation&) = delete;

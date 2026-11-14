@@ -1,6 +1,7 @@
 #include "core_adapter.hpp"
 
 #include "segelphysik/aufbereitung.hpp"
+#include "segelphysik/inspektion.hpp"
 #include "segelphysik/modell.hpp"
 #include "segelphysik/simulation.hpp"
 #include "segelphysik/wind.hpp"
@@ -234,7 +235,8 @@ ModelValidation validateModel(const QString& modelPath)
 
 SimulationResult runSimulation(const QString& modelPath,
     const ModelValidation& validation, bool dynamic, double durationSeconds,
-    double stepSeconds, std::atomic_bool* cancellation, const QJsonObject& start)
+    double stepSeconds, std::atomic_bool* cancellation, const QJsonObject& start,
+    std::shared_ptr<const segelphysik::ModelInspection> inspection)
 {
     SimulationResult result;
     if (!validation.valid) {
@@ -260,6 +262,11 @@ SimulationResult runSimulation(const QString& modelPath,
         QStringLiteral("segelphysik-gui-%1.jsonl")
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     try {
+        const auto model = inspection ? segelphysik::modellAusInspektion(*inspection)
+                                      : segelphysik::lade_modell(nativePath(modelPath));
+        if (model.id != validation.modelId.toStdString() ||
+            model.fassung != validation.fingerprint.toStdString())
+            throw std::runtime_error("Modellfassung hat sich seit der Prüfung geändert.");
         if (start.contains(QStringLiteral("stationaer"))) {
             const auto value = start.value(QStringLiteral("stationaer"));
             if (dynamic || !value.isObject())
@@ -294,7 +301,7 @@ SimulationResult runSimulation(const QString& modelPath,
         physicalStart.remove(QStringLiteral("wind_eingabe"));
         options.start = startState(physicalStart, dynamic || start.contains(QStringLiteral("stationaer")));
         if (start.contains(QStringLiteral("wind_eingabe")))
-            options.start = startWind(start, segelphysik::lade_modell(nativePath(modelPath)), options.start);
+            options.start = startWind(start, model, options.start);
         if (!dynamic && start.contains(QStringLiteral("dynamische_fremdkraft")))
             throw std::invalid_argument("Dynamische Fremdkraft ist nur im dynamischen Lauf erlaubt.");
         options.dynamische_fremdkraft = dynamicForceConfiguration(start, options.start);
@@ -318,7 +325,7 @@ SimulationResult runSimulation(const QString& modelPath,
         }
 
         const auto report = segelphysik::simulieren(
-            nativePath(modelPath), nativePath(outputPath), options);
+            model, nativePath(modelPath), nativePath(outputPath), options);
         result.status = QString::fromStdString(report.status);
         result.diagnostic = QString::fromStdString(report.diagnose);
         result.runtimeSeconds = report.gesamtlaufzeit_s;
@@ -489,7 +496,8 @@ LiveSimulation::~LiveSimulation() = default;
 std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
     const ModelValidation& validation, double durationSeconds,
     double stepSeconds, bool realtimePacing, QString* error, const QJsonObject& start,
-    const std::optional<TestDriveOptions>& testDrive)
+    const std::optional<TestDriveOptions>& testDrive,
+    std::shared_ptr<const segelphysik::ModelInspection> inspection)
 {
     auto fail = [error](const QString& message) {
         if (error != nullptr) {
@@ -526,8 +534,12 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
         live->impl_->nextMovementEvent =
             live->impl_->start.letzte_bewegungsereigniskennung + 1;
         live->impl_->workerPreparation = std::make_unique<segelphysik::Modellaufbereitung>(
-            segelphysik::lade_modell(nativePath(modelPath)));
+            inspection ? segelphysik::modellAusInspektion(*inspection)
+                       : segelphysik::lade_modell(nativePath(modelPath)));
         const auto& model = live->impl_->workerPreparation->modell();
+        if (model.id != validation.modelId.toStdString() ||
+            model.fassung != validation.fingerprint.toStdString())
+            return fail(QStringLiteral("Modellfassung hat sich seit der Prüfung geändert."));
         live->impl_->start = startWind(start, model, live->impl_->start);
         live->impl_->displayPreparation =
             std::make_unique<segelphysik::Modellaufbereitung>(model);

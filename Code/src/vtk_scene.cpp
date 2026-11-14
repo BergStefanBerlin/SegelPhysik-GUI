@@ -2362,6 +2362,25 @@ void VtkSceneWidget::setInspectionEditTarget(const QString& elementId)
     }
 }
 
+bool VtkSceneWidget::setInspectionRigidTransform(
+    const QString& elementId, const std::array<double, 16>& matrix)
+{
+    BodyActor* selected = nullptr;
+    for (auto& body : bodies_) {
+        if (body.elementId != elementId) continue;
+        if (selected) return false;
+        selected = &body;
+    }
+    if (!selected) return false;
+    auto transform = vtkSmartPointer<vtkMatrix4x4>::New();
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column)
+            transform->SetElement(row, column, matrix[static_cast<std::size_t>(row * 4 + column)]);
+    selected->body->SetUserMatrix(transform);
+    requestRender();
+    return true;
+}
+
 void VtkSceneWidget::setInspectionHandles(const QVector<InspectionHandle>& handles)
 {
     for (const auto& actor : inspectionHandleActors_) renderer_->RemoveActor(actor);
