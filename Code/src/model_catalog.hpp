@@ -70,6 +70,7 @@ struct ModelDisplayData {
     QHash<QString, QString> elementGroups;
     QHash<QString, QString> hydrodynamicRoles;
     QHash<QString, segelphysik::Bewegungsdefinition> elementMovements;
+    QHash<QString, QString> movementGroups;
     QStringList partDiagnostics;
 };
 

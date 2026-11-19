@@ -1,5 +1,11 @@
 # Spezifikation GUI: Darstellung des Lateraldruckpunkts
 
+**Finaler Nachtrag G-0.25, 17.11.2026:** Abschnitt 6 erweitert die
+bestehenden Druckpunkte um aerodynamische Einzel-/Gesamt-SDPs
+A-G-00166. Einziger neuer Plan:
+[G-0.25](../Umsetzungsplaene/Umsetzungsplan_G-0.25.md).
+Die vorherigen Abgrenzungen gelten fuer ihren historischen Umfang.
+
 **Status:** Fachlich finalisiert am 28.10.2026 (Anforderungen A-G-00052 bis A-G-00056). Umsetzung und Abnahme sind offen. Keine Commit-, Push-, Tag- oder Release-Freigabe.  
 **Zielversion:** G-0.7 (laufender Versionsschritt) · **Umsetzungsplan:** [Umsetzungsplan G-0.7](../Umsetzungsplaene/Umsetzungsplan_G-0.7_Ruder_Schwertsteuerung.md), Teil B  
 **Maßgeblicher Core-Vertrag:** [Spezifikation Lateraldruckpunkt](../../CORE/Spezifikationen/Spezifikation_Lateraldruckpunkt.md) (A-C-00093 bis A-C-00097)  
@@ -160,3 +166,56 @@ Echte 420er-Ergebnisse und Bildnachweise bei 100/150/200 Prozent.
 Keine alte senkrechte LDP-Linie mehr; keine Physikaenderung durch
 Marker oder Grafikeinstellungen. Technische Tests und persoenliche
 Sichtabnahme getrennt ausweisen.
+
+## 6. G-0.25: Aerodynamische Segeldruckpunkte
+
+**Status:** FINAL auf Nutzerauftrag vom 17.11.2026. Umsetzung,
+Integration und Sichtabnahme offen. Einziger Plan:
+[G-0.25](../Umsetzungsplaene/Umsetzungsplan_G-0.25.md).
+Die vorherigen Abschnitte bleiben fuer LDP und Fremdkraft-Ersatz
+gueltig. Die bereits vorhandene Punktdarstellung wird erweitert,
+keine alte Strichdarstellung wieder eingefuehrt.
+
+### A-G-00166: Gemeinsamer und getrennte sailforce-SDPs
+
+**Herkunft:** IDEE-G-00105 in der bestehenden
+[Entscheidungsliste](Entwurfspunkte/GUI_Kraft_und_Momentendarstellung.json).
+Einzige physikalische Definition:
+[Core A-C-00178](../../CORE/Spezifikationen/Spezifikation_Lateraldruckpunkt.md#6-c-025-aerodynamischer-seitenkraft-sdp).
+
+Standardmaessig den gemeinsamen SDP aller aktiven Segel anzeigen;
+zusaetzliche Schalter fuer die Einzel-SDPs, insbesondere Fock und
+Grosssegel, ohne Vorwert aus. LDP und gemeinsamer SDP bleiben
+unabhaengig von Kraftpfeilen sichtbar schaltbar. Alle neuen
+Anzeigewahlen gemaess vorhandener Einstellungsinfrastruktur speichern.
+Marker mit Segel-/Gesamtzuordnung eindeutig beschriften und
+voneinander sowie von `SDP (Ersatz)` unterscheiden.
+
+Position X/Y/Z, Status, Quelle und Modellpose aus demselben
+Core-Snapshot uebernehmen; keine Punktmittelung, eigene Berechnung
+oder Verschiebung auf Segeltuch/Wasserlinie. Der Core liefert den
+Seitenkraft-Ersatzpunkt bereits in der Mittschiffsebene. In der
+Seitenansicht ist er unmittelbar mit dem LDP vergleichbar; den
+Punkt fuer 3D nur mit der Bootspose transformieren.
+
+Detailhinweis: projizierter Seitenkraft-Ersatzpunkt, kein garantierter
+Punkt auf dem Segeltuch und nicht der Angriffspunkt der vollstaendigen
+Segellast. Fehlend/nicht bestimmbar/inaktiv: kein erfundener Marker,
+Grund sichtbar. Ein gueltiger Punkt ausserhalb des Segels bleibt
+ungeklemmt. Einzel- und Gesamtgueltigkeit getrennt behandeln.
+Altdaten ohne aerodynamischen SDP bleiben lesbar.
+
+Die Fremdkraft behaelt ihren separat bezeichneten Ersatzpunkt;
+kein automatisches Ersetzen, Vermischen oder Abschalten.
+Der SDP-LDP-Abstand allein wird nicht als Luv-/Leegierigkeitsurteil
+ausgegeben. Fuer die ergaenzenden tatsaechlichen Giermomentanteile
+gilt A-G-00167 in der
+[Kraftdarstellung](Spezifikation_GUI_Kraft_und_Momentendarstellung.md).
+Keine automatische Steuer- oder Trimmkorrektur.
+
+**Abnahme:** Ein-/Zweisegler, gemeinsamer und einzelne Marker in
+allen Schalterkombinationen; getrennt unbestimmbare Einzel-/Gesamtpunkte,
+Nullwind, Aussenpunkt, beide Segelseiten, geneigte/verschobene Pose,
+Liveaenderung und Wiedergabe. LDP und Fremdkraft-Ersatz bleiben
+korrekt. Persistenz und Sichttests bei 100/150/200 % DPI;
+fachliche Sichtabnahme separat.

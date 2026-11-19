@@ -28,8 +28,7 @@ class vtkActor;
 class vtkAxesActor;
 class vtkBillboardTextActor3D;
 class vtkCellPicker;
-class vtkCutter;
-class vtkClipPolyData;
+class vtkPlaneCutter;
 class vtkGenericOpenGLRenderWindow;
 class vtkLight;
 class vtkLightKit;
@@ -45,6 +44,12 @@ class vtkTexture;
 class vtkTransform;
 namespace navigation { class Overlay; }
 class QScrollArea;
+
+struct PreparedWaterlines {
+    forcedisplay::Pose pose;
+    std::vector<vtkSmartPointer<vtkPolyData>> meshes;
+    std::vector<vtkSmartPointer<vtkPolyData>> joined;
+};
 
 class VtkSceneWidget final : public QWidget {
 public:
@@ -72,6 +77,11 @@ public:
         bool leverArm = true;
         bool lateralCenter = true;
         bool sailCenter = true;
+        bool aeroCenter = true;
+        QSet<QString> aeroIndividualCenters;
+        bool aeroBoundaries = false;
+        std::array<bool, 3> sailForce{true, false, true};
+        std::array<bool, 3> sailMoment{false, false, true};
         bool courseArrow = true;
         bool windArrows = true;
         bool staticForces = false;
@@ -86,6 +96,7 @@ public:
     ~VtkSceneWidget() override;
 
     bool setModel(const QVector<DisplayPart>& parts, QString* error);
+    bool setSailGeometry(const QString& elementId, const QVector<DisplayPart>& parts, QString* error);
     void setUpdatesActive(bool active);
     bool updatesActive() const { return updatesActive_; }
     void updateDockedNavigation(const QJsonObject& state,
@@ -96,6 +107,15 @@ public:
         std::size_t meshPreparations = 0;
         std::size_t profiles = 0;
         std::size_t renders = 0;
+        double renderMs = 0.;
+        double waterCutsMs = 0.;
+        double overlaysMs = 0.;
+        double environmentMs = 0.;
+        double opaqueMs = 0.;
+        double translucentMs = 0.;
+        double mainLayerMs = 0.;
+        double forceLayerMs = 0.;
+        double axesLayerMs = 0.;
     };
     const WorkCounters& workCounters() const { return workCounters_; }
     // Gruppenzuordnung aller Elemente; ein Teil gilt als geflutet, sobald ein
@@ -104,10 +124,15 @@ public:
     void setHydrodynamicRoles(const QHash<QString, QString>& roles) { hydrodynamicRoles_ = roles; }
     void clearModel();
     bool setState(const QJsonObject& state, const forcedisplay::ForceState& forces,
-        QString* error);
+        QString* error, const PreparedWaterlines* waterlines = nullptr);
+    const QJsonObject& displayedState() const { return currentState_; }
     void clearState();
     void frameStates(const QVector<QJsonObject>& states);
     bool appendMotionStates(const QVector<QJsonObject>& states, QString* error);
+    std::function<QVector<watermotion::Input>(const QVector<QJsonObject>&)> motionInputPreparer(
+        bool rejectEmptyCuts = true);
+    std::function<std::shared_ptr<const PreparedWaterlines>(const QJsonObject&)> waterlinePreparer();
+    bool appendMotionInputs(const QVector<watermotion::Input>& inputs, QString* error);
     void resetMotionHistory();
     void invalidateMotionHistory(qsizetype processed, const QString& diagnostic);
     qsizetype motionStateCount() const { return motionStateCount_; }
@@ -192,16 +217,20 @@ public:
         InspectionDragPhase)> onInspectionDrag;
     std::function<void()> onInspectionInteractionCancelled;
     std::function<void()> onReferencesChanged;
+    std::function<void()> onFramePresented;
     std::function<void()> onDoubleClicked;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    struct MotionPreparation;
+    std::shared_ptr<MotionPreparation> motionPreparation_;
     struct BodyActor {
         vtkSmartPointer<vtkPolyData> mesh;
         vtkSmartPointer<vtkPolyData> materialMesh;
         std::shared_ptr<DisplayMeshCache> preparation;
+        std::shared_ptr<DisplayMeshCache> originalPreparation;
         std::shared_ptr<const DisplayMeshData> prepared;
         vtkSmartPointer<vtkActor> body;
         vtkSmartPointer<vtkTriangleFilter> triangles;
@@ -213,13 +242,13 @@ private:
         DisplayPart::Surface surface = DisplayPart::Surface::Default;
         vtkSmartPointer<vtkActor> waterline;
         vtkSmartPointer<vtkActor> reflection;
-        vtkSmartPointer<vtkClipPolyData> reflectionClipper;
         vtkSmartPointer<vtkPolyData> waterlineData;
         double waterlineOffset = 0.0;
         QString elementId;
+        bool confirmedSailGeometry = false;
         QString group;
         vtkSmartPointer<vtkPlane> localWaterPlane;
-        vtkSmartPointer<vtkCutter> cutter;
+        vtkSmartPointer<vtkPlaneCutter> cutter;
     };
     struct Visual {
         vtkSmartPointer<vtkPolyData> lines;
@@ -227,6 +256,8 @@ private:
         vtkSmartPointer<vtkActor> lineActor;
         vtkSmartPointer<vtkActor> headActor;
     };
+    QHash<QString, vtkSmartPointer<vtkBillboardTextActor3D>> aeroLabels_;
+    QHash<QString, QString> aeroLineVersions_;
 
     void onRenderStart(vtkObject* caller, unsigned long event, void* data);
     void rebuildForceGeometry();

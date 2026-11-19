@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
@@ -225,7 +226,8 @@ ForceState parseForceState(const QJsonObject& object)
         QStringLiteral("moment_bezug_modell_m"));
     const bool v2 = state.contract == QStringLiteral("2") || state.contract == QStringLiteral("3")
         || state.contract == QStringLiteral("4") || state.contract == QStringLiteral("5")
-        || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7");
+        || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7")
+        || state.contract == QStringLiteral("8");
     if (state.contract != QStringLiteral("1") && !v2) {
         throw std::runtime_error("Nicht unterstuetzte CORE-Ergebnisversion.");
     }
@@ -233,7 +235,8 @@ ForceState parseForceState(const QJsonObject& object)
         && !object.value(QStringLiteral("stationaer")).isObject())
         throw std::runtime_error("CORE-Ergebnisversion 5 ohne stationaeren Ergebnisvertrag.");
     state.stationary = object.value(QStringLiteral("stationaer")).toObject();
-    if (state.contract == QStringLiteral("7")) {
+    if (state.contract == QStringLiteral("7")
+        || (state.contract == QStringLiteral("8") && object.contains(QStringLiteral("dynamische_fremdkraft")))) {
         const auto value = object.value(QStringLiteral("dynamische_fremdkraft"));
         if (!value.isObject())
             throw std::runtime_error("CORE-Ergebnisversion 7 ohne dynamischen Fremdkraftvertrag.");
@@ -253,7 +256,8 @@ ForceState parseForceState(const QJsonObject& object)
         readVector(force.value(QStringLiteral("kraft_modellfest_n")), QStringLiteral("Dynamische Fremdkraft"));
         readVector(force.value(QStringLiteral("angriffspunkt_modell_m")), QStringLiteral("Dynamischer Ansatzpunkt"));
     }
-    if (state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7")) {
+    if (state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7")
+        || state.contract == QStringLiteral("8")) {
         const auto rate = object.value(QStringLiteral("kursdrehrate_rad_s"));
         state.courseRateStatus = object.value(QStringLiteral("kursdrehrate_status")).toString();
         if (state.courseRateStatus == QStringLiteral("gueltig")
@@ -288,7 +292,8 @@ ForceState parseForceState(const QJsonObject& object)
         throw std::runtime_error("CORE-Ergebnisversion 3 ohne verpflichtenden Testantriebskontext.");
     }
     if ((state.contract == QStringLiteral("3") || state.contract == QStringLiteral("4")
-            || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7"))
+            || state.contract == QStringLiteral("6") || state.contract == QStringLiteral("7")
+            || state.contract == QStringLiteral("8"))
         && testValue.isObject()) {
         const auto test = testValue.toObject();
         const auto transition = test.value(QStringLiteral("uebergang"));
@@ -335,11 +340,11 @@ ForceState parseForceState(const QJsonObject& object)
             throw std::runtime_error("CORE-LDP: Ungueltiger Status oder fehlende Position.");
         state.lateral = center;
     }
-    const auto sail = object.value(QStringLiteral("druckpunkte")).toObject()
+    const auto replacementSail = object.value(QStringLiteral("druckpunkte")).toObject()
                           .value(QStringLiteral("ersatz_segel"));
-    if (!sail.isUndefined()) {
-        if (!sail.isObject()) throw std::runtime_error("CORE-SDP: Ungueltiger Ersatz-SDP.");
-        const auto data = sail.toObject();
+    if (!replacementSail.isUndefined()) {
+        if (!replacementSail.isObject()) throw std::runtime_error("CORE-SDP: Ungueltiger Ersatz-SDP.");
+        const auto data = replacementSail.toObject();
         SailCenter center;
         center.status = data.value(QStringLiteral("status")).toString();
         if (data.value(QStringLiteral("quelle")).toString() != QStringLiteral("fremdkraft")
@@ -390,7 +395,160 @@ ForceState parseForceState(const QJsonObject& object)
         c.vector = readOptionalVector(item.value(QStringLiteral("vektor")), c.id);
         c.momentS = readOptionalVector(item.value(QStringLiteral("moment_s_nm")), c.id);
         c.category = categorize(c);
-        state.contributions.push_back(c);
+        if (c.source != QStringLiteral("sailforce"))
+            state.contributions.push_back(c);
+    }
+
+    if (state.contract == QStringLiteral("8")) {
+        const auto raw = object.value(QStringLiteral("sailforce"));
+        if (!raw.isObject()) throw std::runtime_error("CORE V8 ohne sailforce-Block.");
+        const auto aero = raw.toObject();
+        const auto number = [](const QJsonObject& o, const QString& key) {
+            const auto v = o.value(key);
+            if (!v.isDouble() || !std::isfinite(v.toDouble()))
+                throw std::runtime_error(QStringLiteral("Sailforce: ungueltiges Feld %1").arg(key).toStdString());
+            return v.toDouble();
+        };
+        const auto identifier = [&](const QJsonObject& o, const QString& key) {
+            const double n = number(o, key);
+            if (n < 0. || std::floor(n) != n
+                || n >= static_cast<double>(std::numeric_limits<qint64>::max()))
+                throw std::runtime_error(QStringLiteral("Sailforce: ungueltige ID %1").arg(key).toStdString());
+            return static_cast<qint64>(n);
+        };
+        const auto center = [&](const QJsonValue& value) {
+            if (!value.isObject()) throw std::runtime_error("Sailforce: SDP fehlt.");
+            const auto o = value.toObject();
+            SailCenter result;
+            result.status = o.value(QStringLiteral("status")).toString();
+            if (result.status != QStringLiteral("gueltig")
+                && result.status != QStringLiteral("nicht_bestimmbar")
+                && result.status != QStringLiteral("inaktiv"))
+                throw std::runtime_error("Sailforce: unbekannter SDP-Status.");
+            result.position = readOptionalVector(o.value(QStringLiteral("position_modell_m")), QStringLiteral("SDP"));
+            if ((result.status == QStringLiteral("gueltig")) != result.position.has_value()
+                || o.value(QStringLiteral("position_modell_m")).isUndefined())
+                throw std::runtime_error("Sailforce: SDP-Position widerspricht Status.");
+            for (const auto& k : {QStringLiteral("Q_N"), QStringLiteral("B_N"),
+                    QStringLiteral("X_Nm"), QStringLiteral("Z_Nm")})
+                (void)number(o, k);
+            return result;
+        };
+        const auto addLoad = [&](const QJsonObject& load, const QString& id,
+                                 const QString& element, const QString& role, const QString& pointKey) {
+            const auto point = readVector(load.value(pointKey), pointKey);
+            const auto force = readVector(load.value(QStringLiteral("kraft_modell_n")), QStringLiteral("Sailforce-Kraft"));
+            const auto moment = readVector(load.value(QStringLiteral("moment_s_modell_nm")), QStringLiteral("Sailforce-Moment"));
+            for (const auto kind : {Kind::Force, Kind::Moment}) {
+                Contribution c;
+                c.id = id + (kind == Kind::Force ? QStringLiteral(":kraft") : QStringLiteral(":moment"));
+                c.elementId = element;
+                c.kind = kind;
+                c.unit = kind == Kind::Force ? QStringLiteral("N") : QStringLiteral("N·m");
+                c.frame = QStringLiteral("modell");
+                c.source = QStringLiteral("sailforce");
+                c.group = element;
+                c.role = role;
+                c.pointKind = QStringLiteral("darstellungsbezug");
+                c.state = QStringLiteral("gueltig");
+                c.point = kind == Kind::Force ? std::optional<Vec3>(point) : state.reference;
+                c.vector = kind == Kind::Force ? force : moment;
+                c.momentS = moment;
+                c.category = Category::Other;
+                state.contributions.push_back(c);
+            }
+        };
+        AeroResult result;
+        const double revision = number(aero, QStringLiteral("revision"));
+        if (revision < 0. || std::floor(revision) != revision
+            || revision >= static_cast<double>(std::numeric_limits<qint64>::max()))
+            throw std::runtime_error("Sailforce: ungueltige Revision.");
+        result.revision = static_cast<qint64>(revision);
+        if (!aero.value(QStringLiteral("luft")).isObject()) throw std::runtime_error("Sailforce: Luft fehlt.");
+        const auto air = aero.value(QStringLiteral("luft")).toObject();
+        result.density = number(air, QStringLiteral("dichte_kg_m3"));
+        result.viscosity = number(air, QStringLiteral("kinematische_viskositaet_m2_s"));
+        if (result.density <= 0. || result.viscosity <= 0.) throw std::runtime_error("Sailforce: ungueltige Luft.");
+        result.center = center(aero.value(QStringLiteral("sdp_gesamt")));
+        addLoad(aero, QStringLiteral("sailforce:gesamt"), {}, QStringLiteral("sailforce_gesamt"),
+            QStringLiteral("darstellungsbezug_modell_m"));
+        const auto sails = aero.value(QStringLiteral("segel"));
+        if (!sails.isArray()) throw std::runtime_error("Sailforce: Segelliste fehlt.");
+        QSet<QString> ids;
+        for (const auto& value : sails.toArray()) {
+            if (!value.isObject()) throw std::runtime_error("Sailforce: ungueltiger Segeleintrag.");
+            const auto data = value.toObject();
+            AeroSail sail;
+            sail.elementId = data.value(QStringLiteral("element_id")).toString();
+            sail.sourceVersion = data.value(QStringLiteral("quellfassung")).toString();
+            if (sail.elementId.isEmpty() || ids.contains(sail.elementId) || sail.sourceVersion.isEmpty()
+                || !data.value(QStringLiteral("aktiv")).isBool()
+                || !data.value(QStringLiteral("form_gespiegelt")).isBool())
+                throw std::runtime_error("Sailforce: ungueltige Segelidentitaet oder Zustand.");
+            ids.insert(sail.elementId);
+            sail.active = data.value(QStringLiteral("aktiv")).toBool();
+            sail.mirrored = data.value(QStringLiteral("form_gespiegelt")).toBool();
+            sail.angle = number(data, QStringLiteral("stellwinkel_grad"));
+            sail.center = center(data.value(QStringLiteral("sdp")));
+            addLoad(data, QStringLiteral("sailforce:segel:") + sail.elementId, sail.elementId,
+                QStringLiteral("sailforce_segel"), QStringLiteral("darstellungsbezug_modell_m"));
+            const auto strips = data.value(QStringLiteral("streifen"));
+            const auto lines = data.value(QStringLiteral("grenzlinien_modell_m"));
+            const auto assignments = data.value(QStringLiteral("grenzlinien_zuordnung"));
+            if ((sail.active && !strips.isArray())
+                || (!sail.active && !strips.isUndefined() && !strips.isArray())
+                || !lines.isArray() || !assignments.isArray()
+                || lines.toArray().size() != assignments.toArray().size())
+                throw std::runtime_error("Sailforce: Streifen oder passende Grenzlinienzuordnung fehlen.");
+            if (!sail.active && !strips.toArray().isEmpty())
+                throw std::runtime_error("Sailforce: Inaktives Segel mit Streifenlasten.");
+            QSet<qint64> stripIds;
+            for (const auto& strip : strips.toArray()) {
+                if (!strip.isObject()) throw std::runtime_error("Sailforce: ungueltiger Streifen.");
+                const auto s = strip.toObject();
+                const auto stripId = identifier(s, QStringLiteral("id"));
+                const auto key = QString::number(stripId);
+                if (stripIds.contains(stripId)) throw std::runtime_error("Sailforce: doppelte Streifen-ID.");
+                stripIds.insert(stripId);
+                addLoad(s, QStringLiteral("sailforce:streifen:") + sail.elementId + QLatin1Char(':') + key,
+                    sail.elementId, QStringLiteral("sailforce_streifen"), QStringLiteral("punkt_modell_m"));
+            }
+            for (const auto& line : lines.toArray()) {
+                if (!line.isArray() || line.toArray().size() < 2)
+                    throw std::runtime_error("Sailforce: ungueltige Grenzlinie.");
+                QVector<Vec3> points;
+                for (const auto& point : line.toArray()) points.push_back(readVector(point, QStringLiteral("Grenzlinie")));
+                sail.boundaryLines.push_back(points);
+            }
+            QSet<qint64> lineIds;
+            for (const auto& assignment : assignments.toArray()) {
+                if (!assignment.isObject())
+                    throw std::runtime_error("Sailforce: ungueltige Grenzlinienzuordnung.");
+                const auto a = assignment.toObject();
+                AeroBoundaryAssignment mapped;
+                mapped.id = identifier(a, QStringLiteral("id"));
+                mapped.boundaryId = identifier(a, QStringLiteral("grenze_id"));
+                if (lineIds.contains(mapped.id))
+                    throw std::runtime_error("Sailforce: doppelte Grenzlinien-ID.");
+                lineIds.insert(mapped.id);
+                const auto neighbor = [&](const QString& key) -> std::optional<qint64> {
+                    if (a.value(key).isNull()) return std::nullopt;
+                    const auto id = identifier(a, key);
+                    if (sail.active && !stripIds.contains(id))
+                        throw std::runtime_error("Sailforce: Grenzliniennachbar gehoert nicht zum Segel.");
+                    return id;
+                };
+                mapped.lowerStripId = neighbor(QStringLiteral("streifen_unten_id"));
+                mapped.upperStripId = neighbor(QStringLiteral("streifen_oben_id"));
+                if (!mapped.lowerStripId && !mapped.upperStripId)
+                    throw std::runtime_error("Sailforce: Grenzlinie ohne Nachbarstreifen.");
+                sail.boundaryAssignments.push_back(mapped);
+            }
+            result.sails.push_back(sail);
+        }
+        state.aero = result;
+    } else if (object.contains(QStringLiteral("sailforce"))) {
+        throw std::runtime_error("Sailforce-Block ohne CORE-Ergebnisversion 8.");
     }
 
     const auto pointCollection = object.value(QStringLiteral("referenzpunkte"));
@@ -476,6 +634,11 @@ ForceState parseForceState(const QJsonObject& object)
             state.contributions.push_back(sum);
         }
     }
+    if (state.aero && !state.reference)
+        throw std::runtime_error("Sailforce: Momentenbezug S fehlt.");
+    for (auto& contribution : state.contributions)
+        if (contribution.source == QStringLiteral("sailforce") && contribution.kind == Kind::Moment)
+            contribution.point = state.reference;
     return state;
 }
 

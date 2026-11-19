@@ -4,6 +4,7 @@
 #include "segelphysik/inspektion.hpp"
 #include "segelphysik/modell.hpp"
 #include "segelphysik/simulation.hpp"
+#include "segelphysik/sailforce.hpp"
 #include "segelphysik/wind.hpp"
 
 #include <QDir>
@@ -21,12 +22,42 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
+
 namespace {
+
+double currentThreadCpuSeconds()
+{
+#ifdef Q_OS_WIN
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) {
+        ULARGE_INTEGER k{}, u{};
+        k.LowPart = kernel.dwLowDateTime;
+        k.HighPart = kernel.dwHighDateTime;
+        u.LowPart = user.dwLowDateTime;
+        u.HighPart = user.dwHighDateTime;
+        return static_cast<double>(k.QuadPart + u.QuadPart) * 1e-7;
+    }
+#endif
+    return -1.;
+}
+
+quint64 currentThreadCpuCycles()
+{
+#ifdef Q_OS_WIN
+    ULONG64 cycles = 0;
+    if (QueryThreadCycleTime(GetCurrentThread(), &cycles)) return cycles;
+#endif
+    return 0;
+}
 
 std::filesystem::path nativePath(const QString& path)
 {
@@ -185,7 +216,9 @@ segelphysik::Zustand startWind(const QJsonObject& input,
     if (pointValue.isArray())
         point = finiteArray<3>(wind, QStringLiteral("mastspitze_modell_m"));
     const auto element = wind.value(QStringLiteral("mast_element_id")).toString().toStdString();
-    const auto diagnosis = wind.value(QStringLiteral("mast_diagnose")).toString().toStdString();
+    auto diagnosis = wind.value(QStringLiteral("mast_diagnose")).toString().toStdString();
+    if (!point && diagnosis.empty())
+        diagnosis = "Keine Mastreferenz uebergeben; Punktwind bleibt verfuegbar.";
     const auto source = wind.value(QStringLiteral("mast_quelle"));
     if (!source.isUndefined() && !source.isString())
         throw std::invalid_argument("Mastquelle muss eine Zeichenkette sein.");
@@ -198,7 +231,57 @@ segelphysik::Zustand startWind(const QJsonObject& input,
     return segelphysik::wind_start(model, withMast, config, point, element, diagnosis);
 }
 
+std::optional<segelphysik::SailforceKonfiguration> sailforceInput(const QJsonObject& input)
+{
+    const auto value = input.value(QStringLiteral("sailforce_eingabe"));
+    if (value.isUndefined()) return std::nullopt;
+    if (!value.isObject()) throw std::invalid_argument("Sailforce-Eingabe muss ein Objekt sein.");
+    const auto object = value.toObject();
+    const auto air = object.value(QStringLiteral("luft"));
+    const auto sails = object.value(QStringLiteral("segel"));
+    if (!air.isObject() || !sails.isArray())
+        throw std::invalid_argument("Sailforce-Eingabe benoetigt Luft und Segel.");
+    const auto luft = air.toObject();
+    if (!hasFiniteNumber(luft, QStringLiteral("dichte_kg_m3"))
+        || !hasFiniteNumber(luft, QStringLiteral("kinematische_viskositaet_m2_s")))
+        throw std::invalid_argument("Lufteigenschaften muessen endlich sein.");
+    segelphysik::SailforceKonfiguration config;
+    config.luft.dichte_kg_m3 = luft.value(QStringLiteral("dichte_kg_m3")).toDouble();
+    config.luft.kinematische_viskositaet_m2_s =
+        luft.value(QStringLiteral("kinematische_viskositaet_m2_s")).toDouble();
+    if (config.luft.dichte_kg_m3 <= 0. || config.luft.kinematische_viskositaet_m2_s <= 0.)
+        throw std::invalid_argument("Lufteigenschaften muessen positiv sein.");
+    QSet<QString> ids;
+    for (const auto& entry : sails.toArray()) {
+        const auto sail = entry.toObject();
+        const auto id = sail.value(QStringLiteral("element_id")).toString();
+        if (!entry.isObject() || id.isEmpty() || ids.contains(id)
+            || !sail.value(QStringLiteral("aktiv")).isBool()
+            || !hasFiniteNumber(sail, QStringLiteral("stellwinkel_grad")))
+            throw std::invalid_argument("Sailforce-Segelwahl ist ungueltig oder doppelt.");
+        ids.insert(id);
+        config.segel.push_back({id.toStdString(), sail.value(QStringLiteral("aktiv")).toBool(),
+            sail.value(QStringLiteral("stellwinkel_grad")).toDouble()});
+    }
+    return config;
+}
+
 } // namespace
+
+QString validateSailforceInput(const QString& modelPath, const QJsonObject& input,
+    std::shared_ptr<const segelphysik::ModelInspection> inspection)
+{
+    try {
+        const auto config = sailforceInput(input);
+        if (!config) return QStringLiteral("Sailforce-Eingabe fehlt.");
+        const auto model = inspection ? segelphysik::modellAusInspektion(*inspection)
+                                      : segelphysik::lade_modell(nativePath(modelPath));
+        (void)segelphysik::sailforce_start(model, {}, nativePath(modelPath), *config);
+        return {};
+    } catch (const std::exception& exception) {
+        return QString::fromUtf8(exception.what());
+    }
+}
 
 ModelValidation validateModel(const QString& modelPath)
 {
@@ -299,9 +382,12 @@ SimulationResult runSimulation(const QString& modelPath,
         physicalStart.remove(QStringLiteral("stationaer"));
         physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
         physicalStart.remove(QStringLiteral("wind_eingabe"));
+        physicalStart.remove(QStringLiteral("sailforce_eingabe"));
         options.start = startState(physicalStart, dynamic || start.contains(QStringLiteral("stationaer")));
         if (start.contains(QStringLiteral("wind_eingabe")))
             options.start = startWind(start, model, options.start);
+        if (dynamic || start.contains(QStringLiteral("stationaer")))
+            options.sailforce = sailforceInput(start);
         if (!dynamic && start.contains(QStringLiteral("dynamische_fremdkraft")))
             throw std::invalid_argument("Dynamische Fremdkraft ist nur im dynamischen Lauf erlaubt.");
         options.dynamische_fremdkraft = dynamicForceConfiguration(start, options.start);
@@ -349,7 +435,7 @@ SimulationResult runSimulation(const QString& modelPath,
             if ((contract != QStringLiteral("1") && contract != QStringLiteral("2")
                     && contract != QStringLiteral("3") && contract != QStringLiteral("4")
                     && contract != QStringLiteral("5") && contract != QStringLiteral("6")
-                    && contract != QStringLiteral("7"))
+                    && contract != QStringLiteral("7") && contract != QStringLiteral("8"))
                 || state.value(QStringLiteral("modell_id")).toString()
                     != validation.modelId
                 || state.value(QStringLiteral("modell_fassung")).toString()
@@ -431,6 +517,8 @@ struct LiveSimulation::Impl {
     double stepSeconds = 0.01;
     bool realtimePacing = true;
     segelphysik::Zustand start;
+    QJsonObject initialJson;
+    std::shared_ptr<const segelphysik::ErgebnisSnapshot> initialSnapshot;
     bool hasTestDrive = false;
     std::vector<segelphysik::TestantriebEreignis> pendingTestEvents;
     std::size_t nextTestEvent = 1;
@@ -438,28 +526,75 @@ struct LiveSimulation::Impl {
     std::size_t nextMovementEvent = 1;
     std::optional<segelphysik::DynamischeFremdkraftKonfiguration> pendingForce;
     std::optional<WindChange> pendingWind;
+    std::map<std::string, double> pendingSailAngles;
     QString testDriveStatus;
 
     mutable std::mutex mutex;
     std::vector<segelphysik::Zustand> states;
+    struct SnapshotEntry {
+        qsizetype index = -1;
+        double captureMs = 0.;
+        std::shared_ptr<const segelphysik::ErgebnisSnapshot> snapshot;
+    };
+    std::array<SnapshotEntry, 64> snapshots;
     bool finished = false;
     std::string status = "laufend";
     std::string diagnostic;
     double wallSeconds = 0.0;
     double coreSeconds = 0.0;
+    double physicsStepSeconds = 0.0;
+    double pacingSeconds = 0.0;
+    double historyMutexWaitSeconds = 0.0;
+    double workerCpuStart = -1.;
+    double workerCpuSeconds = -1.;
+    quint64 workerCpuCyclesStart = 0;
+    quint64 workerCpuCycles = 0;
+    double snapshotCaptureSeconds = 0.0;
+    double snapshotCaptureMaximumMs = 0.0;
+    quint64 snapshotCaptures = 0;
+    mutable quint64 snapshotReaderHits = 0;
+    mutable quint64 snapshotReaderMisses = 0;
     std::chrono::steady_clock::time_point started;
     bool startedValid = false;
 
-    void publish(const segelphysik::Zustand& state, double stepCoreSeconds)
+    void publish(const segelphysik::Zustand& state, double stepCoreSeconds,
+        std::shared_ptr<const segelphysik::ErgebnisSnapshot> snapshot = {},
+        double physicsSeconds = 0., double waitSeconds = 0., double commandMutexWaitSeconds = 0.)
     {
-        const std::lock_guard<std::mutex> lock(mutex);
-        states.push_back(state);
-        coreSeconds += stepCoreSeconds;
+        const auto captureStart = std::chrono::steady_clock::now();
+        const bool capture = !snapshot;
+        if (capture) snapshot = workerPreparation->snapshot(state);
+        const auto captureSeconds = capture ? std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - captureStart).count() : 0.;
+        std::shared_ptr<const segelphysik::ErgebnisSnapshot> retired;
+        const auto lockStart = std::chrono::steady_clock::now();
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+            historyMutexWaitSeconds += commandMutexWaitSeconds + std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - lockStart).count();
+            physicsStepSeconds += physicsSeconds;
+            pacingSeconds += waitSeconds;
+            const auto index = states.size();
+            states.push_back(state);
+            auto& entry = snapshots[index % snapshots.size()];
+            retired = std::move(entry.snapshot);
+            entry.index = static_cast<qsizetype>(index);
+            entry.captureMs = captureSeconds * 1000.;
+            entry.snapshot = std::move(snapshot);
+            coreSeconds += stepCoreSeconds + captureSeconds;
+            snapshotCaptureSeconds += captureSeconds;
+            snapshotCaptureMaximumMs = std::max(snapshotCaptureMaximumMs, entry.captureMs);
+            if (capture) ++snapshotCaptures;
+        }
     }
 
     void finish(const std::string& finalStatus, const std::string& detail)
     {
+        const auto cpuEnd = currentThreadCpuSeconds();
+        const auto cyclesEnd = currentThreadCpuCycles();
         const std::lock_guard<std::mutex> lock(mutex);
+        workerCpuSeconds = cpuEnd >= 0. && workerCpuStart >= 0. ? cpuEnd - workerCpuStart : -1.;
+        workerCpuCycles = cyclesEnd >= workerCpuCyclesStart ? cyclesEnd - workerCpuCyclesStart : 0;
         if (!pendingTestEvents.empty()) {
             testDriveStatus = QStringLiteral("Lauf beendet: %1 angeforderte Flagwechsel wurden nicht mehr angewandt.")
                 .arg(static_cast<qulonglong>(pendingTestEvents.size()));
@@ -477,6 +612,10 @@ struct LiveSimulation::Impl {
         if (pendingWind) {
             testDriveStatus += QStringLiteral("\nLauf beendet: Windaenderung wurde nicht mehr angewandt.");
             pendingWind.reset();
+        }
+        if (!pendingSailAngles.empty()) {
+            testDriveStatus += QStringLiteral("\nLauf beendet: Segelstellungen wurden nicht mehr angewandt.");
+            pendingSailAngles.clear();
         }
         status = finalStatus;
         diagnostic = detail;
@@ -526,6 +665,7 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
         auto physicalStart = start;
         physicalStart.remove(QStringLiteral("dynamische_fremdkraft"));
         physicalStart.remove(QStringLiteral("wind_eingabe"));
+        physicalStart.remove(QStringLiteral("sailforce_eingabe"));
         live->impl_->start = startState(physicalStart, true);
         const auto force = dynamicForceConfiguration(start, live->impl_->start);
         if (live->impl_->start.letzte_bewegungsereigniskennung
@@ -541,6 +681,13 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
             model.fassung != validation.fingerprint.toStdString())
             return fail(QStringLiteral("Modellfassung hat sich seit der Prüfung geändert."));
         live->impl_->start = startWind(start, model, live->impl_->start);
+        if (const auto config = sailforceInput(start))
+            live->impl_->start = segelphysik::sailforce_start(
+                model, live->impl_->start, nativePath(modelPath), *config);
+        if (live->impl_->start.sailforce && !live->impl_->start.wind)
+            live->impl_->start = segelphysik::wind_start(model, live->impl_->start,
+                segelphysik::WindKonfiguration{}, std::nullopt, {},
+                "Keine Mastreferenz; Punktwind fuer sailforce verfuegbar.");
         live->impl_->displayPreparation =
             std::make_unique<segelphysik::Modellaufbereitung>(model);
         if (testDrive) {
@@ -567,6 +714,12 @@ std::unique_ptr<LiveSimulation> LiveSimulation::create(const QString& modelPath,
                 model, live->impl_->start,
                 segelphysik::HydrodynamikKonfiguration{});
         }
+        live->impl_->initialSnapshot =
+            live->impl_->workerPreparation->snapshot(live->impl_->start);
+        live->impl_->initialJson = parseObject(QByteArray::fromStdString(
+            segelphysik::snapshot_json(*live->impl_->initialSnapshot, "laufend", {},
+                segelphysik::ErgebnisJsonFormat::V6)),
+            QStringLiteral("Vorbereiteter Core-Startzustand"));
     } catch (const std::exception& exception) {
         return fail(QString::fromUtf8(exception.what()));
     }
@@ -592,11 +745,13 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
         const std::lock_guard<std::mutex> lock(d.mutex);
         d.started = clock::now();
         d.startedValid = true;
+        d.workerCpuStart = currentThreadCpuSeconds();
+        d.workerCpuCyclesStart = currentThreadCpuCycles();
     }
     const bool endless = d.durationSeconds == 0.0;
     try {
         segelphysik::Zustand state = d.start;
-        d.publish(state, 0.0);
+        d.publish(state, 0.0, std::move(d.initialSnapshot));
         const double begin = state.zeit_s;
         const double end = begin + d.durationSeconds;
         std::size_t tick = 0;
@@ -609,6 +764,7 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
             const double target = endless
                 ? begin + static_cast<double>(tick) * d.stepSeconds
                 : std::min(end, begin + static_cast<double>(tick) * d.stepSeconds);
+            const auto pacingStart = clock::now();
             if (d.realtimePacing) {
                 // Erst rechnen, wenn die Wanduhr den Zielzeitpunkt erreicht:
                 // keine Vorausrechnung; Abbruch bleibt reaktionsschnell.
@@ -624,16 +780,22 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
                 }
             }
             const auto computeStart = clock::now();
+            const double stepPacingSeconds = std::chrono::duration<double>(computeStart - pacingStart).count();
             std::vector<segelphysik::TestantriebEreignis> events;
             std::vector<segelphysik::Bewegungsereignis> movementEvents;
             std::optional<segelphysik::DynamischeFremdkraftKonfiguration> forceChange;
             std::optional<Impl::WindChange> windChange;
+            std::map<std::string, double> sailAngles;
+            double commandMutexWaitSeconds = 0.;
+            const auto commandLockStart = clock::now();
             {
                 const std::lock_guard<std::mutex> lock(d.mutex);
+                commandMutexWaitSeconds = std::chrono::duration<double>(clock::now() - commandLockStart).count();
                 events.swap(d.pendingTestEvents);
                 movementEvents.swap(d.pendingMovementEvents);
                 forceChange.swap(d.pendingForce);
                 windChange.swap(d.pendingWind);
+                sailAngles.swap(d.pendingSailAngles);
             }
             auto stepStart = forceChange
                 ? segelphysik::dynamische_fremdkraft_aendern(
@@ -646,8 +808,12 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
                 stepStart = segelphysik::wind_aendern(stepStart, windChange->direction,
                     windChange->speed, mode);
             }
+            for (const auto& angle : sailAngles)
+                stepStart = segelphysik::sailforce_stellwinkel(stepStart, angle.first, angle.second);
+            const auto physicsStart = clock::now();
             auto next = d.workerPreparation->schritt(stepStart,
                 target - state.zeit_s, events, movementEvents);
+            const double physicsSeconds = std::chrono::duration<double>(clock::now() - physicsStart).count();
             if (forceChange) {
                 const std::lock_guard<std::mutex> lock(d.mutex);
                 d.testDriveStatus = QStringLiteral("Fremdkraft am Uebergang %1 → %2 uebernommen.")
@@ -668,7 +834,8 @@ void LiveSimulation::run(const std::atomic_bool& cancellation)
             next.zeit_s = target;
             state = next;
             d.publish(state, std::chrono::duration<double>(
-                clock::now() - computeStart).count());
+                clock::now() - computeStart).count(), {}, physicsSeconds,
+                stepPacingSeconds, commandMutexWaitSeconds);
             if (static_cast<qsizetype>(tick) + 1 >= maximumStates) {
                 d.finish("abgebrochen",
                     "Speichergrenze für aufgezeichnete Zustände erreicht.");
@@ -691,8 +858,20 @@ LiveSimulation::Progress LiveSimulation::progress() const
     result.status = QString::fromStdString(d.status);
     result.diagnostic = QString::fromStdString(d.diagnostic);
     result.testDriveStatus = d.testDriveStatus;
+    const auto& latest = d.states.empty() ? d.start : d.states.back();
+    if (latest.sailforce) result.sailforceRevision = static_cast<quint64>(latest.sailforce->revision);
     result.simulationSeconds = d.states.empty() ? 0.0 : d.states.back().zeit_s;
     result.coreSeconds = d.coreSeconds;
+    result.physicsStepSeconds = d.physicsStepSeconds;
+    result.pacingSeconds = d.pacingSeconds;
+    result.historyMutexWaitSeconds = d.historyMutexWaitSeconds;
+    result.workerCpuSeconds = d.workerCpuSeconds;
+    result.workerCpuCycles = d.workerCpuCycles;
+    result.snapshotCaptureSeconds = d.snapshotCaptureSeconds;
+    result.snapshotCaptureMaximumMs = d.snapshotCaptureMaximumMs;
+    result.snapshotCaptures = d.snapshotCaptures;
+    result.snapshotReaderHits = d.snapshotReaderHits;
+    result.snapshotReaderMisses = d.snapshotReaderMisses;
     result.wallSeconds = d.finished
         ? d.wallSeconds
         : (d.startedValid
@@ -700,6 +879,11 @@ LiveSimulation::Progress LiveSimulation::progress() const
                 std::chrono::steady_clock::now() - d.started).count()
             : 0.0);
     return result;
+}
+
+QJsonObject LiveSimulation::initialStateJson() const
+{
+    return impl_->initialJson;
 }
 
 bool LiveSimulation::setTestDriveActive(bool active, QString* error)
@@ -768,6 +952,25 @@ bool LiveSimulation::setWind(std::optional<double> direction, std::optional<doub
     return true;
 }
 
+bool LiveSimulation::setSailAngle(const QString& elementId, double angle, QString* error)
+{
+    auto& d = *impl_;
+    const std::lock_guard<std::mutex> lock(d.mutex);
+    if (d.finished || !d.start.sailforce || !std::isfinite(angle)) {
+        if (error) *error = QStringLiteral("Keine laufende Simulation mit gueltiger Segelstellung.");
+        return false;
+    }
+    try {
+        const auto& current = d.states.empty() ? d.start : d.states.back();
+        (void)segelphysik::sailforce_stellwinkel(current, elementId.toStdString(), angle);
+    } catch (const std::exception& exception) {
+        if (error) *error = QString::fromUtf8(exception.what());
+        return false;
+    }
+    d.pendingSailAngles[elementId.toStdString()] = angle;
+    return true;
+}
+
 bool LiveSimulation::setMovementValue(const QString& elementId, double value, QString* error)
 {
     auto& d = *impl_;
@@ -799,10 +1002,12 @@ bool LiveSimulation::setMovementValue(const QString& elementId, double value, QS
     return true;
 }
 
-QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
+QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error, JsonTimings* timings) const
 {
+    if (timings) *timings = {};
     const auto& d = *impl_;
     segelphysik::Zustand state;
+    std::shared_ptr<const segelphysik::ErgebnisSnapshot> snapshot;
     std::string status = "laufend";
     std::string diagnostic;
     {
@@ -814,7 +1019,12 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
 
             return {};
         }
-        state = d.states[static_cast<std::size_t>(index)];
+        const auto& entry = d.snapshots[static_cast<std::size_t>(index) % d.snapshots.size()];
+        if (entry.index == index) snapshot = entry.snapshot;
+        if (snapshot) ++d.snapshotReaderHits;
+        else ++d.snapshotReaderMisses;
+        if (snapshot && timings) timings->snapshotCaptureMs = entry.captureMs;
+        if (!snapshot) state = d.states[static_cast<std::size_t>(index)];
         if (d.finished && index + 1 == static_cast<qsizetype>(d.states.size())) {
             status = d.status;
             diagnostic = d.diagnostic;
@@ -822,10 +1032,22 @@ QJsonObject LiveSimulation::stateJson(qsizetype index, QString* error) const
     }
 
     try {
-        return parseObject(QByteArray::fromStdString(d.displayPreparation->json(
-                               state, status, diagnostic, nullptr, nullptr,
-                               segelphysik::ErgebnisJsonFormat::V6)),
-            QStringLiteral("Core-Zustand"));
+        const auto start = std::chrono::steady_clock::now();
+        const auto json = snapshot
+            ? segelphysik::snapshot_json(*snapshot, status, diagnostic,
+                segelphysik::ErgebnisJsonFormat::V6)
+            : d.displayPreparation->json(state, status, diagnostic, nullptr, nullptr,
+                segelphysik::ErgebnisJsonFormat::V6);
+        const auto serialized = std::chrono::steady_clock::now();
+        auto result = parseObject(QByteArray::fromStdString(json), QStringLiteral("Core-Zustand"));
+        if (timings) {
+            timings->snapshotHit = static_cast<bool>(snapshot);
+            timings->coreMs = std::chrono::duration<double, std::milli>(serialized - start).count();
+            timings->decodeMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - serialized).count();
+            timings->bytes = static_cast<qsizetype>(json.size());
+        }
+        return result;
     } catch (const std::exception& exception) {
         if (error != nullptr) {
             *error = QString::fromUtf8(exception.what());

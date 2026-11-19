@@ -35,6 +35,8 @@ struct SimulationResult {
 };
 
 ModelValidation validateModel(const QString& modelPath);
+QString validateSailforceInput(const QString& modelPath, const QJsonObject& input,
+    std::shared_ptr<const segelphysik::ModelInspection> inspection);
 // start: Core-Ergebniszustand, von dem der Lauf ausgeht (Pose,
 // Geschwindigkeiten, geflutete Elemente; Zeit beginnt neu bei 0).
 // Leer bedeutet Initialwerte des Core. Die Hydrostatik verwirft Geschwindigkeiten.
@@ -47,8 +49,8 @@ SimulationResult runSimulation(const QString& modelPath,
     std::shared_ptr<const segelphysik::ModelInspection> inspection = {});
 
 // Dynamischer Lauf ohne Vorausrechnung: run() rechnet im Worker-Thread
-// Schritt für Schritt und legt nur Rohzustände ab. Die GUI liest jederzeit
-// den Fortschritt und erzeugt Ergebnis-JSON nur für angezeigte Zustände.
+// Schritt für Schritt und legt Rohzustände sowie maximal 64 Ergebnis-Snapshots ab.
+// Die GUI liest den Fortschritt und erzeugt JSON nur für angezeigte Zustände.
 // Worker und Anzeige besitzen getrennte langlebige Core-Aufbereitungen;
 // historische JSON-Anfragen blockieren keinen Integrationsschritt.
 class LiveSimulation {
@@ -61,7 +63,18 @@ public:
         double simulationSeconds = 0.0;
         double wallSeconds = 0.0;
         double coreSeconds = 0.0;
+        double physicsStepSeconds = 0.0;
+        double pacingSeconds = 0.0;
+        double historyMutexWaitSeconds = 0.0;
+        double workerCpuSeconds = -1.;
+        quint64 workerCpuCycles = 0;
+        double snapshotCaptureSeconds = 0.0;
+        double snapshotCaptureMaximumMs = 0.0;
+        quint64 snapshotCaptures = 0;
+        quint64 snapshotReaderHits = 0;
+        quint64 snapshotReaderMisses = 0;
         QString testDriveStatus;
+        quint64 sailforceRevision = 0;
     };
 
     // durationSeconds == 0 bedeutet: laufen bis zum Abbruch.
@@ -76,7 +89,22 @@ public:
 
     void run(const std::atomic_bool& cancellation);
     Progress progress() const;
-    QJsonObject stateJson(qsizetype index, QString* error) const;
+    QJsonObject initialStateJson() const;
+    struct JsonTimings {
+        bool snapshotHit = false;
+        double snapshotCaptureMs = 0.;
+        double coreMs = 0.;
+        double decodeMs = 0.;
+        double motionMs = 0.;
+        double motionReadMs = 0.;
+        double motionPrepareMs = 0.;
+        qsizetype motionStates = 0;
+        double forceParseMs = 0.;
+        double fetchMs = 0.;
+        double guiWaitMs = 0.;
+        qsizetype bytes = 0;
+    };
+    QJsonObject stateJson(qsizetype index, QString* error, JsonTimings* timings = nullptr) const;
     QVector<QJsonObject> motionStates(qsizetype begin, qsizetype end, QString* error) const;
     bool setTestDriveActive(bool active, QString* error);
     bool setMovementValue(const QString& elementId, double value, QString* error);
@@ -84,6 +112,7 @@ public:
         const std::array<double, 3>& point, QString* error);
     bool setWind(std::optional<double> direction, std::optional<double> speed,
         std::optional<bool> boatFixed, QString* error);
+    bool setSailAngle(const QString& elementId, double angle, QString* error);
 
     static constexpr qsizetype maximumStates = 2'000'000;
 

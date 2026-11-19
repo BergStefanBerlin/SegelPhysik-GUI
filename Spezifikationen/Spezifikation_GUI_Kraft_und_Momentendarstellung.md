@@ -5,6 +5,13 @@
 **Umsetzungsplan:** [Umsetzungsplan G-0.2](../Umsetzungsplaene/Umsetzungsplan_G-0.2.md)
 **Entwurfspunkte:** [Kraft- und Momentendarstellung](Entwurfspunkte/GUI_Kraft_und_Momentendarstellung.json) (IDEE-G-00008 bis IDEE-G-00014)
 
+**Finaler Nachtrag 17.11.2026:** sailforce fuer G-0.25, Abschnitt 3,
+A-G-00167 bis A-G-00172. Der historische Bestand bleibt erhalten.
+Einziger neuer Versionsplan:
+[G-0.25](../Umsetzungsplaene/Umsetzungsplan_G-0.25.md).
+SDP-Darstellung A-G-00166 steht ausschliesslich in der
+[Druckpunkt-Spezifikation](Spezifikation_GUI_Lateraldruckpunkt.md#6-g-025-aerodynamische-segeldruckpunkte).
+
 ## 1. Zweck und Abgrenzung
 
 Die GUI zeigt, welche Kräfte und Momente auf einen Körper wirken, wo sie
@@ -268,3 +275,168 @@ Die Auswahl der angezeigten Vektoren ist in zwei Rubriken gegliedert, oben
 **Abnahme:** Test der Summen, Angriffspunkte und Teilmomente; Sichtprüfung:
 Gesamtgewicht und Gesamtauftrieb liegen im statischen Gleichgewicht auf
 einer Wirkungslinie; Ausblenden ändert keine Werte.
+
+## 3. sailforce-Darstellung und Bedienung G-0.25
+
+**Stand: 17.11.2026. FINAL auf ausdruecklichen Nutzerauftrag.**
+Umsetzung, Tests, Integration und Nutzerabnahme offen. Keine
+Implementierungs- oder Git-/Release-Aktion durch diesen Dokumentauftrag.
+Herkunft und IDEE-zu-A-Zuordnung bleiben in der bestehenden
+[Liste](Entwurfspunkte/GUI_Kraft_und_Momentendarstellung.json) erhalten.
+
+Physik, Lasten, Summen, Punkte, Geometrie und Status liefert ausschliesslich
+der [Core](../../CORE/Spezifikationen/Spezifikation_sailforce.md).
+Die GUI liest keine aerodynamischen Modelldateien als Parallelpfad.
+Keine eigene Wind-/Segelphysik, Druckpunktberechnung, Segelinterferenz,
+automatische Schotfuehrung oder vollstaendige Wirkungsliniendarstellung.
+Bestehende Windbedienung und Fremdkraft bleiben erhalten.
+Der neue Plan umfasst auch A-G-00166 aus der Druckpunkt-Spezifikation.
+
+| ID | Finale Anforderung | Herkunft |
+|---|---|---|
+| A-G-00167 | Einzel- und Summenkraefte/-momente | IDEE-G-00106 |
+| A-G-00168 | Dezentes Streifengrenzlinienoverlay | IDEE-G-00107 |
+| A-G-00169 | Aktivierung und quasistatische Segelverstellung | Finalisierungsentscheidung 17.11.2026 |
+| A-G-00170 | Settings: Lufteigenschaften | Finalisierungsentscheidung 17.11.2026 |
+| A-G-00171 | Asynchroner Abruf, Historie und Fehler | Bestaetigte Architektur und Finalisierung 17.11.2026 |
+| A-G-00172 | Echtzeit und fluessige Darstellung | Bestaetigter Messrahmen 17.11.2026 |
+
+### A-G-00167: Einzel- und Summenlasten
+
+Streifenbeitraege, Summen je Segel und sailforce-Gesamtsumme sind getrennt
+auswaehlbar; Einzelbeitraege und Summen koennen gleichzeitig sichtbar
+sein. Kraft- und Momentensichtbarkeit bleiben getrennt. Bestehende
+Farben, Skalen, Bildschirmgroessen und Wertefenster werden verwendet.
+Vorhandene Voreinstellungen bleiben nach ihrer Bedeutung erhalten:
+Kraefte Teile und Summe, Momente zunaechst Summe. Keine neue GUI-
+Summationsregel fuer sailforce: ausschliesslich Core-Summen verwenden.
+Die bestehende betragsgewichtete Angriffspunktbildung aus A-G-00026
+gilt nicht als Ersatz fuer diese Core-Ergebnisse.
+
+Alle angezeigten Momente beziehen sich auf den aktuellen Schwerpunkt S;
+Boegen werden dort dargestellt. Streifenkraftpfeile liegen am gelieferten
+Abfragepunkt als gekennzeichnetem Darstellungsbezug, nicht als behauptetem
+realem Druckpunkt. Dies praezisiert fuer sailforce A-G-00009. Ein
+Seitenkraft-SDP ist nicht der Ansatzpunkt der vollstaendigen Summenlast.
+Fuer Summenkraftpfeile nur einen explizit gelieferten Core-Darstellungsbezug
+nutzen; keinen Punkt aus den Einzelbeitraegen erfinden.
+Reine Momente bleiben ohne Kraftpfeil darstellbar. Quellen und Rollen
+unterscheiden, Summen nicht als zusaetzliche Lasten zaehlen. Tatsaechliche
+Giermomentanteile um S nach Quellen sind im Wertefenster auswaehlbar,
+ohne automatische Luv-/Leegierigkeitsdiagnose.
+**Abnahme:** Auswahlmatrix einzeln/je Segel/gesamt, Kraefte/Momente,
+Nullkraft und reines Moment, Pose und S-Bezug; Werte stimmen mit
+dem Core-Snapshot ueberein. Sichtbarkeit aendert keine Physik.
+
+### A-G-00168: Linienoverlay
+
+Die vom Core gelieferten tatsaechlichen Streifen-Schnittgrenzen werden
+als dezente Linien direkt auf dem vorhandenen Segelmesh dargestellt.
+Kein Dreiecksdrahtgitter, keine zusaetzlichen gefuellten/eingefaerbten
+Streifenflaechen und keine eigene Einteilung. Ein eigener
+Anzeigeschalter ermoeglicht das Overlay unabhaengig von Kraftpfeilen;
+bestehende Einstellungen bleiben erhalten, ohne Vorwert zunaechst aus.
+Geometrie, aktuelle Segellage und Bootspose verwenden dieselbe Fassung
+und Transformation, kein flackerndes koplanares Ueberlagern.
+Unveraenderte Linien wiederverwenden; Aenderung von Modell oder
+Geometriefassung invalidiert die Anzeige.
+**Abnahme:** Dreieckiges/viereckiges Segel, beide Stellseiten und
+Nullstellung, Modellwechsel, 100/150/200 % DPI, Overlay ein/aus;
+keine Neuvernetzung je Bild und keine Rueckwirkung auf Lasten.
+
+### A-G-00169: Aktivierung und Verstellung
+
+Pro Segel eine fachlich von Anzeigeoptionen getrennte Aktivierung
+anbieten. Ohne bestaetigte Auswahl sind Segel mit expliziter
+Core-Modellzuordnung zunaechst aktiv; gespeicherte Auswahl hat Vorrang.
+Ohne Modellzuordnung ist die Aktivierung mit erklaertem Grund nicht
+verfuegbar. Defekte aktive Modelle blockieren den Lauf sichtbar.
+Aktivierungsaenderungen gelten fuer den naechsten Lauf.
+Fremdkraft nicht automatisch deaktivieren.
+
+Grosssegel- und Fock-Stellwinkel sind in der Dynamik live quasistatisch
+aenderbar. Bestehende Achsen-/Vorzeichenkonventionen des
+[Segelkonfigurators](Spezifikation_GUI_Segelkonfigurator.md) verwenden.
+Eingaben an den Core bestaetigen lassen; bis zur Uebernahme als
+ausstehend kennzeichnen. Lasten und laufende Segeldarstellung erst
+mit der bestaetigten Ergebnisfassung zusammen anzeigen, keine neue
+Geometrie ueber alte Lasten legen. Keine Stellgeschwindigkeit aus
+Mausbewegung ableiten. Im stationaeren Rechenfall gelten neue
+Stellungen erst fuer eine neue Suche.
+**Abnahme:** Ein-/Zweisegler, Voreinstellung, gespeicherte Wahl,
+fehlendes/defektes Modell, beide Winkelvorzeichen, Pause,
+ausstehende/abgelehnte Eingabe und Laufende vor Uebernahme.
+
+### A-G-00170: Settings: Lufteigenschaften
+
+Unter **Settings -> Lufteigenschaften** vor Laufstart einstellbar:
+Luftdichte mit Vorgabe `1,225 kg/m^3` und kinematische Viskositaet mit
+Vorgabe `1,5e-5 m^2/s`. Einheiten und genuegend Ziffern beziehungsweise
+wissenschaftliche Schreibweise anzeigen; bestehende Lokalisierung
+verwenden. Keine Umdeutung als dynamische Viskositaet.
+
+Vorhandene Settings-Persistenz verwenden. Core validiert Endlichkeit,
+Positivitaet und Bereiche aller aktiven Segelmodelle; die GUI zeigt
+Ablehnungsgrund und gueltige Grenzen. Nicht still begrenzen oder
+ungueltige Eingaben als neue Vorgaben speichern. Bestaetigte Luftwerte
+sind im Lauf konstant; Bearbeitung waehrend eines Laufs sperren.
+Wiedergabe zeigt die damaligen Laufwerte, nicht aktuelle Settings.
+Unveraendertes Uebernehmen einer gerundeten Anzeige verliert keine
+gespeicherte Praezision.
+**Abnahme:** Defaults, Persistenz/Neustart, Wertebereiche, NaN/Inf,
+Dezimalkomma/-punkt gemaess vorhandener Eingabe, unveraenderte
+Uebernahme und getrennte historische Werte.
+
+### A-G-00171: Asynchroner Abruf und Status
+
+Der Core bleibt unabhaengiger Rechner; GUI-Anzeige/Abruf takten keine
+Physikschritte. Vorhandenen Worker-/Snapshotpfad erweitern, nicht
+Simulation auf dem UI-Thread ausfuehren. Je angezeigtem Stand stammen
+Pose, Segellage, Lasten, S, SDP/LDP, Zeit und Konfiguration aus
+demselben unveraenderlichen Ergebnis. Geometrie nur bei passender
+Quellfassung wiederverwenden.
+
+Langsameres Zeichnen darf Zwischenbilder auslassen, aber weder
+Core-Schritte noch vorgeschriebene Aufzeichnung. Pause, Rueckblick,
+Abbruch und Modellwechsel erhalten ihre bisherige Semantik; spaete
+Antworten fremder/abgebrochener Laeufe werden nicht angezeigt.
+Altdaten ohne sailforce bleiben lesbar und als nicht verfuegbar
+erkennbar. Bereichs-/Datenfehler klar anzeigen; letzten gueltigen
+Zustand nicht als neu erfolgreiches Ergebnis ausgeben.
+**Abnahme:** Verzoegerter Abruf und UI-Stall bei weiterrechnendem
+Core, konkurrierende Modell-/Laufwechsel, Liveaenderung, Fehler,
+Pause/Wiedergabe und fehlende neue Felder.
+
+### A-G-00172: Echtzeit und fluessige Darstellung
+
+Auf vorhandener **Ryzen 5 8600G / Radeon 760M unter Windows**,
+Release-Build, Technikprofil und reproduzierbarem Messfenster
+**1280 x 720** pruefen. 420, Folkeboot und Optimist jeweils einzeln;
+alle zugeordneten Segel aktiv, gemeinsamer SDP und Streifenoverlay an.
+Vorhandene Technikprofil-Defaults fuer Kraefte/Momente verwenden und
+den tatsaechlichen Featurestand mit dem Messlauf dokumentieren.
+
+Je Modell nach Laden/Vorbereitung 60 s ungestoerte Dynamik mit
+0,01 s Simulationsschritt bei Echtzeitfaktor 1 darstellen; Bildabstaende
+ueber den gesamten 60-s-Live-Messzeitraum erfassen, nicht nur ueber
+eine kurze, beschleunigt fertig gerechnete Sequenz. Kein vorab
+offline erzeugter Verlauf als integrierter Live-Nachweis.
+Die Core-Kette muss 60 s Physik in
+hoechstens 60 s Wandzeit berechnen; gleichzeitig sind mindestens
+95 % der Bildabstaende hoechstens 33,3 ms und kein Bildabstand
+groesser als 100 ms. Tatsaechliche Praesentations-/Bildabstaende
+messen, nicht nur Rechenzeit eines Renderfunktionsaufrufs.
+Core-Zeit, Bildzeitmedian/p95/Maximum, Speicher, Start-/Ladezeit,
+Modell-/Bibliotheksfassungen und vollstaendige Rechenkonfiguration
+berichten. Laden/Vorbereitung separat; Abbrueche oder ungueltige
+Physikzustaende bestehen den Lauf nicht. Externe Stoerungen
+dokumentieren und Messung unter reproduzierbaren Bedingungen
+wiederholen, keine langsamen Bilder still aus dem Datensatz entfernen.
+
+Kein Leistungsgewinn durch ausgeschaltete Pflichtdarstellungen,
+ausgelassene Physik oder unbemerkte Grafikreduktion. Ein Kontrolllauf
+ohne Anzeige dient der Entkopplungspruefung. Dieses Ziel ist keine
+Garantie fuer Optikprofil oder beliebige Modelle.
+**Abnahme:** Alle drei integrierten Messlaeufe erfuellen die Grenzen.
+Sichtabnahme und technische Leistung getrennt ausweisen; aktuell
+noch kein sailforce-Laufzeitnachweis vorhanden.

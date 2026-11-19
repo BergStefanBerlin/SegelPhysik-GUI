@@ -147,6 +147,13 @@ void testModelFormat03(const QString& folder, qsizetype expectedModels)
     require(display.modelFormat03 && display.inspection == nullptr
             && !display.structure.gruppen.empty() && !display.geometry.teile.empty(),
         "0.3 model selection did not immediately provide tree and display data.");
+    require(display.elementMovements.contains(QStringLiteral("Rudder"))
+            && display.movementGroups.value(QStringLiteral("Rudder")) == QStringLiteral("rudder")
+            && display.elementMovements.contains(QStringLiteral("Centerboard"))
+            && display.movementGroups.value(QStringLiteral("Centerboard")) == QStringLiteral("keel"),
+        "GUI lost rudder or centerboard settings stored on model-format 0.3 groups.");
+    require(!display.movementGroups.values().contains(QStringLiteral("mainsail")),
+        "Dedicated sail-angle control was duplicated as an independent group movement.");
     const auto inspection = segelphysik::readModelInspection(
         *snapshot.catalog, boat->id.toStdString(), boat->version.toStdString());
     const auto configuration = segelphysik::leseSegelKonfiguration(*snapshot.catalog, *inspection);

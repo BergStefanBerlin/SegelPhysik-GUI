@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <exception>
 #include <filesystem>
 
@@ -24,6 +25,32 @@ std::filesystem::path nativePath(const QString& path)
 QString text(const std::string& value)
 {
     return QString::fromStdString(value);
+}
+
+void collectMovements(ModelDisplayData& data)
+{
+    data.elementMovements.clear();
+    data.movementGroups.clear();
+    for (const auto& group : data.structure.gruppen) {
+        for (const auto& element : group.elemente) {
+            if (element.bewegung)
+                data.elementMovements.insert(QString::fromStdString(element.id),
+                    *element.bewegung);
+        }
+        if (!group.bewegung || group.elemente.empty()) continue;
+        const auto controller = std::find_if(group.elemente.begin(), group.elemente.end(),
+            [](const auto& element) { return element.hydrostatik_volumen; });
+        const auto& selected = controller == group.elemente.end()
+            ? group.elemente.front() : *controller;
+        const auto controllerId = QString::fromStdString(selected.id);
+        const bool hasDedicatedAeroControl = std::any_of(group.elemente.begin(),
+            group.elemente.end(), [](const auto& element) {
+                return element.referenz_aerodynamik;
+            });
+        if (hasDedicatedAeroControl) continue;
+        data.elementMovements.insert(controllerId, *group.bewegung);
+        data.movementGroups.insert(controllerId, QString::fromStdString(group.id));
+    }
 }
 
 QString diagnosticText(const segelphysik::KatalogDiagnose& diagnostic)
@@ -170,10 +197,9 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
             for (const auto& element : group.elemente) {
                 const auto elementId = text(element.id);
                 data.elementGroups.insert(elementId, text(group.id));
-                if (element.bewegung)
-                    data.elementMovements.insert(elementId, *element.bewegung);
             }
         }
+        collectMovements(data);
         for (const auto& part : data.geometry.teile)
             for (const auto& point : part.punkte_m) {
                 if (!data.bounds)
@@ -211,11 +237,9 @@ ModelDisplayData loadDisplayData(const segelphysik::Modellkatalog& catalog,
             for (const auto& element : group.elemente) {
                 data.elementGroups.insert(QString::fromStdString(element.id),
                     QString::fromStdString(group.id));
-                if (element.bewegung)
-                    data.elementMovements.insert(QString::fromStdString(element.id),
-                        *element.bewegung);
             }
         }
+        collectMovements(data);
     } catch (const std::exception& error) {
         // Fehlerhafte Modelle bleiben ansehbar; dann fehlt nur die Kraftreferenz.
         data.partDiagnostics << QString::fromUtf8(error.what());
@@ -236,10 +260,9 @@ void loadSelectedModelPhysics(ModelDisplayData& data,
         for (const auto& element : group.elemente) {
             const auto elementId = text(element.id);
             data.elementGroups.insert(elementId, text(group.id));
-            if (element.bewegung)
-                data.elementMovements.insert(elementId, *element.bewegung);
         }
     }
+    collectMovements(data);
     for (const auto& node : segelphysik::getObjectTree(*data.inspection, "objekte")) {
         if (node.kind != "element" || node.element_ids.size() != 1) continue;
         for (const auto& property : segelphysik::getObjectProperties(

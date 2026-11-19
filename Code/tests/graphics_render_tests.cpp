@@ -9,6 +9,7 @@
 #include <segelphysik/katalog.hpp>
 #include <segelphysik/defaults.hpp>
 #include <segelphysik/modell.hpp>
+#include <segelphysik/hydrostatik.hpp>
 #include <segelphysik/modell_fingerprints.hpp>
 #include <segelphysik/segelkonfigurator.hpp>
 #include <segelphysik/wind.hpp>
@@ -42,10 +43,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSurfaceFormat>
+#include <QSysInfo>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QOpenGLWidget>
+#include <QOpenGLContext>
+#include <QScreen>
 #include <QContextMenuEvent>
 #include <QWheelEvent>
 #include <QPushButton>
@@ -99,6 +104,7 @@
 #include <tuple>
 #ifdef _WIN32
 #include <Windows.h>
+#include <Psapi.h>
 #undef small
 #endif
 
@@ -111,9 +117,11 @@ public:
     void DisplayErrorText(const char* text) override
     {
         ++count;
+        messages.append(QString::fromUtf8(text));
         std::cerr << text;
     }
     int count = 0;
+    QStringList messages;
 };
 
 void require(bool condition, const char* message)
@@ -3589,6 +3597,21 @@ void captureWaterReflection(const QString& models, const QString& evidencePath)
                         scene.renderNow();
                         require(sameStableImage(image, scene.captureImage()),
                             "stopped simulation reflection must remain stable");
+                        if (view.first == QStringLiteral("steep") && reflection) {
+                            const auto prepare = scene.waterlinePreparer();
+                            auto preparedWorker = std::async(std::launch::async, [prepare, state] {
+                                return prepare(state);
+                            });
+                            const auto prepared = preparedWorker.get();
+                            require(scene.setState(state, forcedisplay::parseForceState(state), &error, prepared.get())
+                                    && sameStableImage(image, scene.captureImage()),
+                                "off-thread waterlines must preserve the rendered exact cuts");
+                            auto stale = *prepared;
+                            stale.pose.position[2] += 1.;
+                            require(scene.setState(state, forcedisplay::parseForceState(state), &error, &stale)
+                                    && sameStableImage(image, scene.captureImage()),
+                                "waterlines from another boat pose must be rejected");
+                        }
                     }
                     if (!reflection) {
                         withoutReflection = image;
@@ -3944,6 +3967,36 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
     (void)segelphysik::lade_modell(dataPath);
     const auto snapshot = segelphysik::readModelInspection(*catalog, "420", entry->modell_fassung);
     const auto before = segelphysik::groupMovementPreviewJson(*snapshot, "mainsail");
+    {
+        const auto movement = segelphysik::getGroupMovementPreview(*snapshot, "mainsail");
+        require(movement.has_value(), "420 mainsail JSON group movement");
+        const auto posed = segelphysik::getGroupMovementPreview(
+            *snapshot, "mainsail", movement->reference_value + 20.0);
+        require(posed.has_value(), "420 mainsail group accepts a 20-degree static setting");
+        const auto pose = std::find_if(posed->poses.begin(), posed->poses.end(),
+            [](const auto& candidate) { return candidate.label == "requested"; });
+        require(pose != posed->poses.end(), "420 requested pose is available");
+        const auto parts = toDisplayParts(pose->meshes);
+        VtkSceneWidget staticScene;
+        QString error;
+        const auto modelParts = toDisplayParts(segelphysik::darstellungsgeometrie(
+            *catalog, entry->modell_id, entry->modell_fassung));
+        require(staticScene.setModel(modelParts, &error),
+            qPrintable(error));
+        for (const auto& id : {QStringLiteral("Mainsail"), QStringLiteral("Boom")})
+            require(staticScene.setSailGeometry(id, parts, &error), qPrintable(error));
+        const QJsonObject state{
+            {QStringLiteral("zeit_s"), 0.0},
+            {QStringLiteral("position_m"), QJsonArray{0., 0., 0.}},
+            {QStringLiteral("orientierung_xyzw"), QJsonArray{0., 0., 0., 1.}},
+            {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}},
+            {QStringLiteral("moment_bezug_modell_m"), QJsonArray{0., 0., 0.}}};
+        // The static result builds the motion history before installing the state.
+        require(staticScene.appendMotionStates({state}, &error), qPrintable(error));
+        require(staticScene.setState(state, {}, &error), qPrintable(error));
+        require(staticScene.motionStateCount() == 1 && staticScene.displayedState() == state,
+            "static result with a moved sail group is displayed");
+    }
     BoatInspection widget;
     widget.resize(1000, 700);
     widget.show();
@@ -4945,7 +4998,14 @@ void runModelFormat03InteractionTests(const QString& sourceRoot)
 int main(int argc, char** argv)
 {
     vtkLogger::SetStderrVerbosity(vtkLogger::VERBOSITY_WARNING);
-    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    auto surfaceFormat = QVTKOpenGLNativeWidget::defaultFormat();
+    surfaceFormat.setSwapInterval(0);
+    if (argc > 1 && QByteArray(argv[1]) == "--sailforce-frozen-presenter-only") {
+        bool supplied = false;
+        const int interval = qEnvironmentVariableIntValue("SEGELPHYSIK_DIAG_SWAP_INTERVAL", &supplied);
+        if (supplied && interval >= -1 && interval <= 1) surfaceFormat.setSwapInterval(interval);
+    }
+    QSurfaceFormat::setDefaultFormat(surfaceFormat);
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     QElapsedTimer startup;
@@ -5256,6 +5316,568 @@ int main(int argc, char** argv)
                 {"interactorSuspended", true}, {"forceArrowActorAndPixelSelection", true},
                 {"realFreeSchematicSwaps", 18}, {"sameSnapshotHistoryReplayInputs", 0}}).toJson());
             require(renderErrors->count == 0, "Performance VTK errors");
+            return 0;
+        }
+        if (app.arguments().size() == 4 && (app.arguments()[1] == QStringLiteral("--sailforce-performance-only")
+                || app.arguments()[1] == QStringLiteral("--sailforce-profile-only")
+                || app.arguments()[1] == QStringLiteral("--sailforce-profile-420-only")
+                || app.arguments()[1] == QStringLiteral("--sailforce-frozen-presenter-only")
+                || app.arguments()[1] == QStringLiteral("--sailforce-420-comparison-only"))) {
+            const bool frozenOnly = app.arguments()[1] == QStringLiteral("--sailforce-frozen-presenter-only");
+            const bool comparisonOnly = app.arguments()[1] == QStringLiteral("--sailforce-420-comparison-only");
+            const bool only420 = frozenOnly || comparisonOnly || app.arguments()[1] == QStringLiteral("--sailforce-profile-420-only");
+            const bool diagnosticOnly = frozenOnly || app.arguments()[1] == QStringLiteral("--sailforce-profile-only")
+                || app.arguments()[1] == QStringLiteral("--sailforce-profile-420-only");
+            const double runSeconds = diagnosticOnly ? 5. : 60.;
+            QDir evidence(app.arguments()[3]);
+            require(evidence.mkpath(QStringLiteral(".")), "Sailforce evidence directory required.");
+            require(evidence.mkpath(QStringLiteral("settings")), "Sailforce settings directory required.");
+            QCoreApplication::setOrganizationName(QStringLiteral("SegelPhysikSailforcePerformance"));
+            QCoreApplication::setApplicationName(QStringLiteral("G025"));
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                evidence.absoluteFilePath(QStringLiteral("settings")));
+            QSettings().clear();
+            QSettings technicalSettings;
+            QString technicalError;
+            require(graphics::save(technicalSettings, graphics::defaults(), &technicalError),
+                qPrintable(technicalError));
+            QJsonArray cases;
+            bool allPassed = true;
+            QJsonObject pending;
+            QJsonObject control;
+            QJsonArray rawFrames, errors, frameStates;
+            const auto persist = [&] {
+                auto savedCases = cases;
+                if (!pending.isEmpty()) {
+                    auto current = pending;
+                    current.insert(QStringLiteral("praesentationszeiten_ms"), rawFrames);
+                    current.insert(QStringLiteral("fehler"), errors);
+                    current.insert(QStringLiteral("frame_zustaende"), frameStates);
+                    savedCases.append(current);
+                }
+                QJsonArray vtkErrors;
+                for (const auto& text : renderErrors->messages) vtkErrors.append(text);
+                const QJsonObject report{
+                    {QStringLiteral("verfahren"), frozenOnly
+                        ? QStringLiteral("Eingefrorener echter Core-Snapshot; Presenterdiagnose ohne Corelast, keine G25-08-Abnahme")
+                        : QStringLiteral("QOpenGLWidget frameSwapped; nativer Qt-Eventloop; echter paced Live-Lauf")},
+                    {QStringLiteral("profil"), QStringLiteral("Technik")},
+                    {QStringLiteral("profil_quelle"), QStringLiteral("graphics::defaults(0); isolierte Settings")},
+                    {QStringLiteral("fenster"), QStringLiteral("1280x720")},
+                    {QStringLiteral("dauer_s"), runSeconds}, {QStringLiteral("dt_s"), .01},
+                    {QStringLiteral("diagnose_ohne_abnahme"), diagnosticOnly},
+                    {QStringLiteral("nur_420_vergleich"), comparisonOnly},
+                    {QStringLiteral("kontrolllauf_ohne_anzeige"), control},
+                    {QStringLiteral("wind_m_s"), 3.}, {QStringLiteral("wind_herkunft_grad"), 65.},
+                    {QStringLiteral("wind_referenzhoehe_m"), 10.},
+                    {QStringLiteral("wind_modus"), QStringLiteral("weltfest")},
+                    {QStringLiteral("start"), QStringLiteral("Core-Hydrostatikgleichgewicht")},
+                    {QStringLiteral("betriebssystem"), QSysInfo::prettyProductName()},
+                    {QStringLiteral("echtzeitfaktor"), 1.},
+                    {QStringLiteral("vtk_fehler"), vtkErrors}, {QStringLiteral("faelle"), savedCases},
+                    {QStringLiteral("bestanden"), !diagnosticOnly && pending.isEmpty() && cases.size() == 3 && allPassed
+                        && renderErrors->count == 0}};
+                QFile file(evidence.filePath(QStringLiteral("sailforce-performance.json")));
+                const auto bytes = QJsonDocument(report).toJson();
+                require(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(),
+                    "Sailforce performance report write failed.");
+            };
+            const auto catalog = segelphysik::modellkatalog(
+                std::filesystem::path(app.arguments()[2].toStdWString()));
+            for (const QString& id : {QStringLiteral("420"), QStringLiteral("folkeboot"), QStringLiteral("optimist")}) {
+                if (only420 && id != QStringLiteral("420")) continue;
+                pending = QJsonObject{{QStringLiteral("modell"), id},
+                    {QStringLiteral("zustand"), QStringLiteral("Vorbereitung")},
+                    {QStringLiteral("bestanden"), false}};
+                rawFrames = {};
+                frameStates = {};
+                errors = {};
+                persist();
+                try {
+                const auto* entry = catalog.eintrag(id.toStdString());
+                require(entry, "Sailforce performance model missing.");
+                const auto path = segelphysik::katalog_datei(catalog, entry->modell_id, entry->modell_fassung);
+                const auto model = segelphysik::lade_modell(path);
+                const auto equilibrium = segelphysik::gleichgewicht(model, {});
+                require(equilibrium.status == "konvergiert", "Sailforce hydrostatic initial equilibrium failed.");
+                const auto& initial = equilibrium.zustand;
+                const auto& position = initial.pose.position_m();
+                const auto& rotation = initial.pose.orientierung_xyzw();
+                QJsonArray flooded;
+                for (const auto& element : initial.geflutet) flooded.append(QString::fromStdString(element));
+                QJsonObject initialState{
+                    {QStringLiteral("position_m"), QJsonArray{position[0], position[1], position[2]}},
+                    {QStringLiteral("orientierung_xyzw"), QJsonArray{rotation[0], rotation[1], rotation[2], rotation[3]}},
+                    {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}},
+                    {QStringLiteral("omega_modell_rad_s"), QJsonArray{0., 0., 0.}},
+                    {QStringLiteral("geflutete_elemente"), flooded}};
+                MainWindow window;
+                window.setPerformanceDiagnostics(true);
+                window.resize(1280, 720);
+                window.setModelFolder(app.arguments()[2]);
+                window.selectInitialModel(id);
+                window.show();
+                auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+                QPushButton* run = nullptr;
+                for (auto* button : window.findChildren<QPushButton*>())
+                    if (button->property("sailforceRunButton").toBool()) run = button;
+                require(tabs && run, "Sailforce performance controls missing.");
+                QElapsedTimer load;
+                load.start();
+                waitUntil([&] { return run->isEnabled(); }, "Sailforce model load timeout.");
+                const double loadMs = load.nsecsElapsed() / 1e6;
+                tabs->setCurrentIndex(2);
+                waitUntil([&] { return run->isEnabled(); },
+                    "Sailforce dynamic workspace preparation timeout.");
+                auto* direction = window.findChild<QLineEdit*>(QStringLiteral("windDirection"));
+                auto* speed = window.findChild<QLineEdit*>(QStringLiteral("windSpeed"));
+                auto* windMode = window.findChild<QComboBox*>(QStringLiteral("windMode"));
+                require(direction && speed && windMode, "Sailforce wind controls missing.");
+                direction->setText(QStringLiteral("65"));
+                speed->setText(QStringLiteral("3"));
+                direction->setModified(true);
+                speed->setModified(true);
+                QMetaObject::invokeMethod(direction, "editingFinished");
+                QMetaObject::invokeMethod(speed, "editingFinished");
+                windMode->setCurrentIndex(0);
+                window.setNextRunInitialState(initialState);
+                auto* center = window.findChild<QCheckBox*>(QStringLiteral("displayAeroCenter"));
+                auto* boundaries = window.findChild<QCheckBox*>(QStringLiteral("displayAeroBoundaries"));
+                auto* scene = dynamic_cast<VtkSceneWidget*>(
+                    window.findChild<QWidget*>(QStringLiteral("simulationScene")));
+                require(center && boundaries && scene, "Sailforce display controls missing.");
+                center->setChecked(true);
+                boundaries->setChecked(true);
+                auto* surface = scene->findChild<QVTKOpenGLNativeWidget*>();
+                require(surface, "Sailforce presentation surface missing.");
+                const auto capabilities = QString::fromUtf8(surface->renderWindow()->ReportCapabilities());
+                pending.insert(QStringLiteral("opengl"), capabilities);
+                QVector<double> presentedMs;
+                auto lastPresentedState = scene->workCounters().states;
+                bool measuring = false;
+                QObject::connect(surface, &QOpenGLWidget::frameSwapped, &window, [&] {
+                    if (measuring) {
+                        const auto p = window.liveProgress();
+                        if (p && !p->finished && p->states > 0 && p->wallSeconds <= runSeconds) {
+                            const auto renderedStates = scene->workCounters().states;
+                            const bool changed = renderedStates != lastPresentedState
+                                && scene->displayedState().contains(QStringLiteral("sailforce"));
+                            frameStates.append(QJsonObject{
+                                {QStringLiteral("wand_ms"), p->wallSeconds * 1000.},
+                                {QStringLiteral("neuer_snapshot"), changed},
+                                {QStringLiteral("schritt"), scene->displayedState().value(QStringLiteral("schritt"))},
+                                {QStringLiteral("zeit_s"), scene->displayedState().value(QStringLiteral("zeit_s"))}});
+                            if (changed) {
+                                presentedMs.push_back(p->wallSeconds * 1000.);
+                                rawFrames.append(p->wallSeconds * 1000.);
+                                lastPresentedState = renderedStates;
+                            }
+                        }
+                    }
+                });
+                bool dialogError = false;
+                QTimer dialogs;
+                QObject::connect(&dialogs, &QTimer::timeout, &window, [&] {
+                    for (auto* widget : QApplication::topLevelWidgets()) {
+                        if (auto* message = qobject_cast<QMessageBox*>(widget)) {
+                            std::cerr << message->text().toStdString() << '\n';
+                            errors.append(message->text() + QLatin1Char('\n') + message->detailedText());
+                            persist();
+                            dialogError = true;
+                            message->reject();
+                        }
+                    }
+                });
+                dialogs.start(20);
+                QTimer checkpoint;
+                QObject::connect(&checkpoint, &QTimer::timeout, &window, [&] {
+                    if (measuring) return;
+                    if (const auto p = window.liveProgress()) {
+                        pending.insert(QStringLiteral("zustand"), p->status);
+                        pending.insert(QStringLiteral("diagnose"), p->diagnostic);
+                        pending.insert(QStringLiteral("anzahl_zustaende"), static_cast<int>(p->states));
+                        pending.insert(QStringLiteral("core_s"), p->coreSeconds);
+                        pending.insert(QStringLiteral("wand_s"), p->wallSeconds);
+                    }
+                    persist();
+                });
+                checkpoint.start(1000);
+                // A real short run prepares the visible Core snapshot before the timed run.
+                confirmDynamicRun(window, .01, true);
+                require(run->isEnabled(), "Sailforce warm-up button disabled.");
+                run->click();
+                waitUntil([&] {
+                    const auto p = window.liveProgress();
+                    return dialogError || (p && p->finished && run->isEnabled()
+                        && scene->displayedState().contains(QStringLiteral("sailforce")));
+                }, "Sailforce warm-up failed before screenshot.");
+                require(!dialogError, "Sailforce warm-up raised a Core error.");
+                const auto preparedWind = scene->displayedState().value(QStringLiteral("wind")).toObject();
+                require(preparedWind.value(QStringLiteral("modus")).toString() == QStringLiteral("weltfest")
+                        && std::abs(preparedWind.value(QStringLiteral("referenzgeschwindigkeit_m_s")).toDouble() - 3.) < 1e-12
+                        && std::abs(preparedWind.value(QStringLiteral("referenzhoehe_m")).toDouble() - 10.) < 1e-12
+                        && std::abs(preparedWind.value(QStringLiteral("wahr")).toObject()
+                            .value(QStringLiteral("herkunft_welt_grad")).toDouble() - 65.) < 1e-8,
+                    "Sailforce Core wind differs from the declared performance configuration.");
+                pending.insert(QStringLiteral("vorbereiteter_wind"), preparedWind);
+                const auto preparedAero = scene->displayedState().value(QStringLiteral("sailforce")).toObject();
+                const auto preparedAir = preparedAero.value(QStringLiteral("luft")).toObject();
+                require(std::abs(preparedAir.value(QStringLiteral("dichte_kg_m3")).toDouble() - 1.225) < 1e-12
+                        && std::abs(preparedAir.value(QStringLiteral("kinematische_viskositaet_m2_s")).toDouble() - 1.5e-5) < 1e-16,
+                    "Sailforce Core air differs from the declared performance configuration.");
+                for (const auto& sail : preparedAero.value(QStringLiteral("segel")).toArray())
+                    require(sail.toObject().value(QStringLiteral("aktiv")).toBool()
+                            && std::abs(sail.toObject().value(QStringLiteral("stellwinkel_grad")).toDouble()) < 1e-12,
+                        "Sailforce performance requires all sails active at zero degrees.");
+                const auto screenshot = id + QStringLiteral("-sailforce-prepared.bmp");
+                require(window.grab().toImage().save(evidence.filePath(screenshot), "BMP"),
+                    "Sailforce prepared screenshot write failed.");
+                pending.insert(QStringLiteral("screenshot"), screenshot);
+                persist();
+                if (frozenOnly) {
+                    checkpoint.stop();
+                    dialogs.stop();
+                    QEventLoop settle;
+                    QTimer::singleShot(250, &settle, &QEventLoop::quit);
+                    settle.exec();
+                    const auto frozenState = scene->displayedState();
+                    require(window.liveProgress() && window.liveProgress()->finished,
+                        "Frozen presentation requires a completed real Core run.");
+                    QJsonObject presentation;
+                    presentation.insert(QStringLiteral("widget_swap_interval"), surface->format().swapInterval());
+                    presentation.insert(QStringLiteral("context_swap_interval"),
+                        surface->context()->format().swapInterval());
+                    presentation.insert(QStringLiteral("default_swap_interval"),
+                        QSurfaceFormat::defaultFormat().swapInterval());
+                    presentation.insert(QStringLiteral("swap_interval_diagnostic_override"),
+                        qEnvironmentVariable("SEGELPHYSIK_DIAG_SWAP_INTERVAL"));
+                    presentation.insert(QStringLiteral("viewport_logisch"),
+                        QJsonArray{surface->width(), surface->height()});
+                    presentation.insert(QStringLiteral("device_pixel_ratio"), surface->devicePixelRatioF());
+                    if (const auto* screen = surface->screen()) {
+                        presentation.insert(QStringLiteral("monitor"), screen->name());
+                        presentation.insert(QStringLiteral("qt_refresh_hz"), screen->refreshRate());
+#ifdef _WIN32
+                        DEVMODEW mode{};
+                        mode.dmSize = static_cast<WORD>(sizeof(mode));
+                        if (EnumDisplaySettingsW(
+                                screen->name().toStdWString().c_str(), ENUM_CURRENT_SETTINGS, &mode))
+                            presentation.insert(QStringLiteral("windows_refresh_hz"),
+                                static_cast<double>(mode.dmDisplayFrequency));
+#endif
+                    }
+                    const auto cpuMs = [] {
+#ifdef _WIN32
+                        FILETIME created{}, exited{}, kernel{}, user{};
+                        require(GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user) != 0,
+                            "Frozen presenter GUI-thread CPU measurement failed.");
+                        ULARGE_INTEGER k{}, u{};
+                        k.LowPart = kernel.dwLowDateTime;
+                        k.HighPart = kernel.dwHighDateTime;
+                        u.LowPart = user.dwLowDateTime;
+                        u.HighPart = user.dwHighDateTime;
+                        return static_cast<double>(k.QuadPart + u.QuadPart) / 10000.;
+#else
+                        return -1.;
+#endif
+                    };
+                    QElapsedTimer presenterClock;
+                    QJsonArray renderSamples, swaps;
+                    QVector<double> renderWall, renderCpu, swapGaps;
+                    double previousSwap = -1.;
+                    const auto rendersBefore = scene->workCounters().renders;
+                    const auto statesBefore = scene->workCounters().states;
+                    const auto meshesBefore = scene->workCounters().meshPreparations;
+                    const double cpuBegin = cpuMs();
+                    QEventLoop loop;
+                    QTimer draw;
+                    draw.setSingleShot(true);
+                    QObject::connect(&draw, &QTimer::timeout, &window, [&] {
+                        QElapsedTimer render;
+                        const double cpuBefore = cpuMs();
+                        render.start();
+                        surface->renderWindow()->Render();
+                        const double wall = render.nsecsElapsed() / 1e6;
+                        const double cpu = cpuMs() - cpuBefore;
+                        renderWall.push_back(wall);
+                        renderCpu.push_back(cpu);
+                        renderSamples.append(QJsonObject{
+                            {QStringLiteral("at_ms"), presenterClock.nsecsElapsed() / 1e6},
+                            {QStringLiteral("render_wall_ms"), wall},
+                            {QStringLiteral("render_gui_thread_cpu_ms"), cpu}});
+                        surface->update();
+                    });
+                    const auto swapped = QObject::connect(surface, &QOpenGLWidget::frameSwapped, &window, [&] {
+                        const double at = presenterClock.nsecsElapsed() / 1e6;
+                        if (previousSwap >= 0.) swapGaps.push_back(at - previousSwap);
+                        previousSwap = at;
+                        swaps.append(at);
+                        if (!draw.isActive()) draw.start(0);
+                    });
+                    presenterClock.start();
+                    draw.start(0);
+                    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+                    loop.exec();
+                    draw.stop();
+                    QObject::disconnect(swapped);
+                    const auto summarize = [](QVector<double> values) {
+                        require(!values.isEmpty(), "Frozen presenter produced no timing samples.");
+                        std::sort(values.begin(), values.end());
+                        double sum = 0.;
+                        for (const double value : values) sum += value;
+                        const auto p95 = std::max<qsizetype>(0,
+                            static_cast<qsizetype>(std::ceil(static_cast<double>(values.size()) * .95)) - 1);
+                        return QJsonObject{
+                            {QStringLiteral("count"), static_cast<double>(values.size())},
+                            {QStringLiteral("sum"), sum},
+                            {QStringLiteral("median"), values[values.size() / 2]},
+                            {QStringLiteral("p95"), values[p95]},
+                            {QStringLiteral("maximum"), values.back()}};
+                    };
+                    presentation.insert(QStringLiteral("elapsed_ms"), presenterClock.nsecsElapsed() / 1e6);
+                    presentation.insert(QStringLiteral("gui_thread_cpu_ms"), cpuMs() - cpuBegin);
+                    presentation.insert(QStringLiteral("render_wall_ms"), summarize(renderWall));
+                    presentation.insert(QStringLiteral("render_gui_thread_cpu_ms"), summarize(renderCpu));
+                    presentation.insert(QStringLiteral("frame_swapped_gap_ms"), summarize(swapGaps));
+                    presentation.insert(QStringLiteral("render_calls_observed"),
+                        static_cast<double>(scene->workCounters().renders - rendersBefore));
+                    presentation.insert(QStringLiteral("state_updates"),
+                        static_cast<double>(scene->workCounters().states - statesBefore));
+                    presentation.insert(QStringLiteral("mesh_preparations"),
+                        static_cast<double>(scene->workCounters().meshPreparations - meshesBefore));
+                    presentation.insert(QStringLiteral("render_samples"), renderSamples);
+                    presentation.insert(QStringLiteral("frame_swapped_at_ms"), swaps);
+                    presentation.insert(QStringLiteral("cpu_verfahren"),
+                        QStringLiteral("GetThreadTimes GUI thread; quantisierte CPU-Zeit, keine GPU-Zeit"));
+                    presentation.insert(QStringLiteral("swap_hinweis"),
+                        QStringLiteral("Qt-/Kontextangabe ist kein Beweis fuer vom Treiber erzwungenes Swapverhalten"));
+                    presentation.insert(QStringLiteral("core_snapshot_unveraendert"),
+                        frozenState == scene->displayedState());
+                    pending.insert(QStringLiteral("presenter_diagnose"), presentation);
+                    pending.insert(QStringLiteral("zustand"), QStringLiteral("Eingefrorene Presenterdiagnose abgeschlossen"));
+                    persist();
+                    require(frozenState == scene->displayedState(),
+                        "Frozen presenter changed the real Core snapshot.");
+                    require(renderErrors->count == 0, "Frozen presenter reported a VTK error.");
+                    window.close();
+                    return 0;
+                }
+                if (diagnosticOnly) {
+                    const auto optimized = scene->motionInputPreparer();
+                    const auto referenceCuts = scene->motionInputPreparer(false);
+                    for (const double dz : {0., -100., 100.}) {
+                        auto geometryState = scene->displayedState();
+                        auto shifted = geometryState.value(QStringLiteral("position_m")).toArray();
+                        shifted[2] = shifted[2].toDouble() + dz;
+                        geometryState.insert(QStringLiteral("position_m"), shifted);
+                        const auto a = optimized({geometryState});
+                        const auto b = referenceCuts({geometryState});
+                        require(a.size() == 1 && b.size() == 1
+                                && a[0].contact.has_value() == b[0].contact.has_value(),
+                            "water-cut bounds rejection changed contact availability");
+                        if (a[0].contact)
+                            require(a[0].contact->leading == b[0].contact->leading
+                                    && a[0].contact->trailing == b[0].contact->trailing
+                                    && a[0].contact->width == b[0].contact->width,
+                                "water-cut bounds rejection changed exact contact geometry");
+                    }
+                }
+                if (comparisonOnly) {
+                    window.hide();
+                    const auto input = window.lastRunInput();
+                    QString controlError;
+                    auto controlLive = LiveSimulation::create(QString::fromStdWString(path.wstring()),
+                        validateModel(QString::fromStdWString(path.wstring())), runSeconds, .01, true,
+                        &controlError, input);
+                    require(controlLive != nullptr, qPrintable(controlError));
+                    std::atomic_bool cancelControl{false};
+                    auto* controlThread = QThread::create([&] { controlLive->run(cancelControl); });
+                    controlThread->start(QThread::HighPriority);
+                    controlThread->wait();
+                    delete controlThread;
+                    const auto p = controlLive->progress();
+                    control = QJsonObject{
+                        {QStringLiteral("eingabe"), input},
+                        {QStringLiteral("zustand"), p.status}, {QStringLiteral("diagnose"), p.diagnostic},
+                        {QStringLiteral("core_s"), p.coreSeconds}, {QStringLiteral("wand_s"), p.wallSeconds},
+                        {QStringLiteral("worker_physics_step_s"), p.physicsStepSeconds},
+                        {QStringLiteral("worker_pacing_s"), p.pacingSeconds},
+                        {QStringLiteral("worker_historienmutex_warten_s"), p.historyMutexWaitSeconds},
+                        {QStringLiteral("worker_cpu_s"), p.workerCpuSeconds},
+                        {QStringLiteral("worker_cpu_cycles"), static_cast<double>(p.workerCpuCycles)},
+                        {QStringLiteral("simulationszeit_s"), p.simulationSeconds},
+                        {QStringLiteral("zustaende"), static_cast<double>(p.states)},
+                        {QStringLiteral("snapshot_capture_s"), p.snapshotCaptureSeconds},
+                        {QStringLiteral("snapshot_capture_maximum_ms"), p.snapshotCaptureMaximumMs},
+                        {QStringLiteral("snapshot_captures"), static_cast<double>(p.snapshotCaptures)},
+                        {QStringLiteral("snapshot_reader_treffer"), static_cast<double>(p.snapshotReaderHits)},
+                        {QStringLiteral("snapshot_reader_fallbacks"), static_cast<double>(p.snapshotReaderMisses)}};
+                    control.insert(QStringLiteral("endzustand"), controlLive->stateJson(p.states - 1, &controlError));
+                    persist();
+                    require(p.status == QStringLiteral("abgeschlossen") && p.states == 6001,
+                        "Sailforce headless adapter control failed.");
+                    window.show();
+                    QApplication::processEvents();
+                }
+                window.setNextRunInitialState(initialState);
+                confirmDynamicRun(window, runSeconds, true);
+                require(run->isEnabled(), "Sailforce run button disabled before start.");
+                lastPresentedState = scene->workCounters().states;
+                measuring = true;
+                run->click();
+                const auto runEventLoopUntil = [](const std::function<bool()>& ready, int timeoutMs) {
+                    if (ready()) return;
+                    QEventLoop loop;
+                    QTimer poll;
+                    poll.setTimerType(Qt::PreciseTimer);
+                    poll.setInterval(10);
+                    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+                        if (ready()) loop.quit();
+                    });
+                    QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+                    poll.start();
+                    loop.exec();
+                };
+                runEventLoopUntil([&] {
+                    const auto p = window.liveProgress();
+                    return dialogError || (p && (p->states > 0 || p->finished));
+                }, 120000);
+                if (const auto p = window.liveProgress(); dialogError || !p || p->states == 0) {
+                    QStringList details;
+                    for (const auto& e : errors) details.append(e.toString());
+                    if (p) details.append(p->status + QStringLiteral(": ") + p->diagnostic);
+                    for (auto* label : window.findChildren<QLabel*>())
+                        if (!label->text().isEmpty()) details.append(label->text());
+                    throw std::runtime_error(QStringLiteral("Sailforce live start failed: %1")
+                        .arg(details.join(QStringLiteral(" | "))).toStdString());
+                }
+                runEventLoopUntil([&] {
+                    const auto p = window.liveProgress();
+                    return dialogError || (p && p->finished);
+                }, 150000);
+                measuring = false;
+                const auto progress = window.liveProgress();
+                const double elapsedMs = progress ? progress->wallSeconds * 1000. : 0.;
+                if (!dialogError && progress && progress->status == QStringLiteral("abgeschlossen")) {
+                    runEventLoopUntil([&] {
+                        return dialogError || scene->displayedState().value(QStringLiteral("schritt")).toInteger(-1)
+                            == progress->states - 1;
+                    }, 10000);
+                    require(!dialogError && scene->displayedState().value(QStringLiteral("schritt")).toInteger(-1)
+                            == progress->states - 1,
+                        "Sailforce final displayed snapshot was not delivered.");
+                }
+                const auto snapshot = scene->displayedState().value(QStringLiteral("sailforce")).toObject();
+                const auto snapshotStats = window.liveProgress();
+                if (comparisonOnly)
+                    require(window.lastRunInput() == control.value(QStringLiteral("eingabe")).toObject(),
+                        "Sailforce with/without-display input differs.");
+                if (comparisonOnly) {
+                    const auto withoutDisplay = control.value(QStringLiteral("endzustand")).toObject();
+                    const auto& withDisplay = scene->displayedState();
+                    for (const auto* key : {"position_m", "orientierung_xyzw", "geschwindigkeit_welt_m_s",
+                             "omega_modell_rad_s", "bewegungen", "elementtransformationen_modell",
+                             "sailforce", "wind", "vektoren"})
+                        require(withoutDisplay.value(QLatin1String(key)) == withDisplay.value(QLatin1String(key)),
+                            qPrintable(QStringLiteral("Sailforce headless/display end-state differs: %1")
+                                .arg(QLatin1String(key))));
+                    control.insert(QStringLiteral("physikalischer_endzustand_identisch"), true);
+                }
+                const auto sails = snapshot.value(QStringLiteral("segel")).toArray();
+                bool allActive = sails.size() == (id == QStringLiteral("optimist") ? 1 : 2);
+                bool hasLines = !sails.isEmpty();
+                for (const auto& value : sails) {
+                    allActive = allActive && value.toObject().value(QStringLiteral("aktiv")).toBool();
+                    hasLines = hasLines && !value.toObject().value(QStringLiteral("grenzlinien_modell_m")).toArray().isEmpty();
+                }
+                double peakMemoryBytes = 0.;
+#ifdef _WIN32
+                PROCESS_MEMORY_COUNTERS memory{};
+                memory.cb = static_cast<DWORD>(sizeof(memory));
+                if (K32GetProcessMemoryInfo(GetCurrentProcess(), &memory, static_cast<DWORD>(sizeof(memory))))
+                    peakMemoryBytes = static_cast<double>(memory.PeakWorkingSetSize);
+#endif
+                QVector<double> intervals;
+                double last = 0.;
+                for (const auto t : presentedMs) { intervals.push_back(t - last); last = t; }
+                intervals.push_back(runSeconds * 1000. - last);
+                auto sorted = intervals;
+                std::sort(sorted.begin(), sorted.end());
+                const double p95 = sorted[std::max(0, static_cast<int>(std::ceil(static_cast<double>(sorted.size()) * .95)) - 1)];
+                const double maximum = sorted.back();
+                const double median = sorted[sorted.size() / 2];
+                QJsonArray enabledFeatures;
+                const auto& profile = scene->graphicsProfile();
+                for (std::size_t feature = 0; feature < graphics::featureCount; ++feature)
+                    if (profile.enabled[feature])
+                        enabledFeatures.append(QString::fromLatin1(graphics::features()[feature].key));
+                const bool passed = !dialogError && progress && progress->finished
+                    && progress->status == QStringLiteral("abgeschlossen")
+                    && progress->states == static_cast<qsizetype>(runSeconds * 100.) + 1
+                    && progress->coreSeconds <= runSeconds
+                    && elapsedMs >= runSeconds * 1000. && allActive && hasLines
+                    && center->isChecked() && boundaries->isChecked()
+                    && scene->options().aeroCenter && scene->options().aeroBoundaries
+                    && !profile.liveReduction
+                    && peakMemoryBytes > 0.
+                    && p95 <= 33.3 && maximum <= 100.;
+                allPassed = allPassed && passed;
+                QJsonArray raw;
+                for (const auto value : presentedMs) raw.append(value);
+                cases.append(QJsonObject{{QStringLiteral("modell"), id},
+                    {QStringLiteral("modell_fassung"), scene->displayedState().value(QStringLiteral("modell_fassung"))},
+                    {QStringLiteral("anfangszustand"), initialState},
+                    {QStringLiteral("vorbereiteter_wind"), preparedWind},
+                    {QStringLiteral("vorbereitete_luft"), preparedAir},
+                    {QStringLiteral("core_modell_fassung"), QString::fromStdString(model.fassung)},
+                    {QStringLiteral("zustand"), progress ? progress->status : QStringLiteral("kein Lauf")},
+                    {QStringLiteral("anzahl_zustaende"), progress ? static_cast<int>(progress->states) : 0},
+                    {QStringLiteral("core_s"), progress ? progress->coreSeconds : 0.},
+                    {QStringLiteral("worker_physics_step_s"), progress ? progress->physicsStepSeconds : 0.},
+                    {QStringLiteral("worker_pacing_s"), progress ? progress->pacingSeconds : 0.},
+                    {QStringLiteral("worker_historienmutex_warten_s"), progress ? progress->historyMutexWaitSeconds : 0.},
+                    {QStringLiteral("worker_cpu_s"), progress ? progress->workerCpuSeconds : -1.},
+                    {QStringLiteral("worker_cpu_cycles"), progress ? static_cast<double>(progress->workerCpuCycles) : 0.},
+                    {QStringLiteral("snapshot_capture_s"), snapshotStats ? snapshotStats->snapshotCaptureSeconds : 0.},
+                    {QStringLiteral("snapshot_capture_maximum_ms"), snapshotStats ? snapshotStats->snapshotCaptureMaximumMs : 0.},
+                    {QStringLiteral("snapshot_captures"), snapshotStats ? static_cast<double>(snapshotStats->snapshotCaptures) : 0.},
+                    {QStringLiteral("snapshot_reader_treffer"), snapshotStats ? static_cast<double>(snapshotStats->snapshotReaderHits) : 0.},
+                    {QStringLiteral("snapshot_reader_fallbacks"), snapshotStats ? static_cast<double>(snapshotStats->snapshotReaderMisses) : 0.},
+                    {QStringLiteral("wand_s"), progress ? progress->wallSeconds : 0.},
+                    {QStringLiteral("lade_ms"), loadMs}, {QStringLiteral("messdauer_ms"), elapsedMs},
+                    {QStringLiteral("peak_working_set_bytes_process_lifetime"), peakMemoryBytes},
+                    {QStringLiteral("median_ms"), median}, {QStringLiteral("p95_ms"), p95},
+                    {QStringLiteral("maximum_ms"), maximum},
+                    {QStringLiteral("grafikfeatures"), enabledFeatures},
+                    {QStringLiteral("live_reduktion"), profile.liveReduction},
+                    {QStringLiteral("bildschirmfaktor"), surface->devicePixelRatioF()},
+                    {QStringLiteral("viewport_logisch"), QJsonArray{surface->width(), surface->height()}},
+                    {QStringLiteral("alle_segel_aktiv"), allActive}, {QStringLiteral("grenzen_vorhanden"), hasLines},
+                    {QStringLiteral("sdp_status"), snapshot.value(QStringLiteral("sdp_gesamt")).toObject().value(QStringLiteral("status"))},
+                    {QStringLiteral("sailforce_endzustand"), snapshot},
+                    {QStringLiteral("profil_rohzeiten"), window.performanceSamples()},
+                    {QStringLiteral("screenshot"), screenshot},
+                    {QStringLiteral("opengl"), capabilities},
+                    {QStringLiteral("diagnose"), progress ? progress->diagnostic : QString()},
+                    {QStringLiteral("fehler"), errors},
+                    {QStringLiteral("wind_endzustand"), scene->displayedState().value(QStringLiteral("wind"))},
+                    {QStringLiteral("praesentationszeiten_ms"), raw}, {QStringLiteral("bestanden"), passed}});
+                auto completed = cases.last().toObject();
+                completed.insert(QStringLiteral("frame_zustaende"), frameStates);
+                cases.replace(cases.size() - 1, completed);
+                window.close();
+                pending = {};
+                persist();
+                } catch (const std::exception& exception) {
+                    errors.append(QString::fromUtf8(exception.what()));
+                    pending.insert(QStringLiteral("zustand"), QStringLiteral("abgebrochen"));
+                    persist();
+                    throw;
+                }
+            }
+            persist();
+            require((diagnosticOnly || allPassed) && renderErrors->count == 0, "Sailforce performance acceptance failed.");
             return 0;
         }
         if (app.arguments().size() == 4 && app.arguments()[1] == QStringLiteral("--performance-audit-only")) {

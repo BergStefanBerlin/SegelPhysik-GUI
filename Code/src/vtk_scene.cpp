@@ -30,10 +30,9 @@
 #include <vtkBillboardTextActor3D.h>
 #include <vtkCellArray.h>
 #include <vtkCellPicker.h>
-#include <vtkClipPolyData.h>
 #include <vtkCommand.h>
 #include <vtkContourTriangulator.h>
-#include <vtkCutter.h>
+#include <vtkPlaneCutter.h>
 #include <vtkDataArray.h>
 #include <vtkFloatArray.h>
 #include <vtkGenericOpenGLRenderWindow.h>
@@ -74,6 +73,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <mutex>
 #include <map>
 #include <cmath>
 #include <vector>
@@ -92,11 +92,24 @@ public:
     vtkTypeMacro(SceneRenderer, vtkOpenGLRenderer);
     bool sunShadows = false;
     unsigned int shadowResolution = 1024;
+    double opaqueMs = 0.;
+    double translucentMs = 0.;
+
+    void DeviceRenderTranslucentPolygonalGeometry(vtkFrameBufferObjectBase* fbo = nullptr) override
+    {
+        const auto start = std::chrono::steady_clock::now();
+        this->Superclass::DeviceRenderTranslucentPolygonalGeometry(fbo);
+        translucentMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+    }
 
     void DeviceRenderOpaqueGeometry(vtkFrameBufferObjectBase* fbo = nullptr) override
     {
+        const auto start = std::chrono::steady_clock::now();
         if (!sunShadows) {
             this->Superclass::DeviceRenderOpaqueGeometry(fbo);
+            opaqueMs += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
             return;
         }
         if (!shadows_) shadows_ = vtkSmartPointer<vtkShadowMapPass>::New();
@@ -134,6 +147,8 @@ public:
         for (auto* prop : unlitProps) {
             this->NumberOfPropsRendered += prop->RenderOpaqueGeometry(this);
         }
+        opaqueMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     }
 
     void ReleaseGraphicsResources(vtkWindow* window) override
@@ -466,6 +481,24 @@ struct PolyBuilder {
     vtkNew<vtkCellArray> cells;
 
     vtkIdType add(const Vec3& p) { return points->InsertNextPoint(p[0], p[1], p[2]); }
+    void append(const PolyBuilder& other)
+    {
+        const auto offset = points->GetNumberOfPoints();
+        for (vtkIdType i = 0; i < other.points->GetNumberOfPoints(); ++i) {
+            double p[3];
+            other.points->GetPoint(i, p);
+            points->InsertNextPoint(p);
+        }
+        std::vector<vtkIdType> shifted;
+        other.cells->InitTraversal();
+        vtkIdType count = 0;
+        const vtkIdType* ids = nullptr;
+        while (other.cells->GetNextCell(count, ids)) {
+            shifted.resize(static_cast<std::size_t>(count));
+            for (vtkIdType i = 0; i < count; ++i) shifted[static_cast<std::size_t>(i)] = ids[i] + offset;
+            cells->InsertNextCell(count, shifted.data());
+        }
+    }
     void segment(const Vec3& a, const Vec3& b)
     {
         const vtkIdType ids[2] = {add(a), add(b)};
@@ -515,14 +548,14 @@ struct PolyBuilder {
             cells->InsertNextCell(3, triangle);
         }
     }
-    void storeLines(vtkPolyData* data)
+    void storeLines(vtkPolyData* data) const
     {
         data->Initialize();
         data->SetPoints(points);
         data->SetLines(cells);
         data->Modified();
     }
-    void storePolys(vtkPolyData* data)
+    void storePolys(vtkPolyData* data) const
     {
         data->Initialize();
         data->SetPoints(points);
@@ -1011,6 +1044,33 @@ void setActorEnvironmentLighting(vtkActor* actor, bool enabled)
 
 } // namespace
 
+struct VtkSceneWidget::MotionPreparation {
+    std::mutex mutex;
+    std::vector<vtkSmartPointer<vtkPolyData>> meshes;
+    std::vector<vtkSmartPointer<vtkPlaneCutter>> cutters;
+    std::vector<vtkSmartPointer<vtkStripper>> strippers;
+    std::vector<std::array<double, 6>> bounds;
+    QVector<Vec3> contour;
+
+    bool intersects(std::size_t index, const Vec3& origin, const Vec3& normal) const
+    {
+        const auto& box = bounds[index];
+        if (box[0] > box[1] || box[2] > box[3] || box[4] > box[5]) return false;
+        double low = -forcedisplay::dot(normal, origin);
+        double high = low;
+        double scale = 1. + std::abs(low);
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const double a = normal[axis] * box[2 * axis];
+            const double b = normal[axis] * box[2 * axis + 1];
+            low += std::min(a, b);
+            high += std::max(a, b);
+            scale += std::max(std::abs(a), std::abs(b));
+        }
+        const double tolerance = 1e-10 * scale;
+        return low <= tolerance && high >= -tolerance;
+    }
+};
+
 VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     : QWidget(parent)
     , vtkWidget_(new QVTKOpenGLNativeWidget(this))
@@ -1026,6 +1086,9 @@ VtkSceneWidget::VtkSceneWidget(QWidget* parent)
     renderWindow_->AddRenderer(overlay_);
     renderWindow_->SetMultiSamples(0);
     vtkWidget_->setRenderWindow(renderWindow_);
+    connect(vtkWidget_, &QOpenGLWidget::frameSwapped, this, [this] {
+        if (onFramePresented) onFramePresented();
+    });
     inspectionPicker_ = vtkSmartPointer<vtkCellPicker>::New();
     inspectionPicker_->SetTolerance(0.0005);
     navigation_ = new navigation::Overlay(vtkWidget_);
@@ -1289,7 +1352,18 @@ void VtkSceneWidget::updateDockedNavigation(const QJsonObject& state,
 
 void VtkSceneWidget::renderScene()
 {
-    if (updatesActive_) renderWindow_->Render();
+    if (updatesActive_) {
+        const auto start = std::chrono::steady_clock::now();
+        renderWindow_->Render();
+        workCounters_.mainLayerMs += renderer_->GetLastRenderTimeInSeconds() * 1000.;
+        workCounters_.forceLayerMs += overlay_->GetLastRenderTimeInSeconds() * 1000.;
+        workCounters_.axesLayerMs += axesRenderer_->GetLastRenderTimeInSeconds() * 1000.;
+        const auto* sceneRenderer = static_cast<SceneRenderer*>(renderer_.Get());
+        workCounters_.opaqueMs = sceneRenderer->opaqueMs;
+        workCounters_.translucentMs = sceneRenderer->translucentMs;
+        workCounters_.renderMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+    }
 }
 
 std::shared_ptr<const DisplayMeshData> VtkSceneWidget::prepareMesh(
@@ -1335,6 +1409,8 @@ void VtkSceneWidget::clearModel()
     bodies_.clear();
     dryLoops_.clear();
     visuals_.clear();
+    aeroLabels_.clear();
+    aeroLineVersions_.clear();
     arcBasis_.clear();
     scaled_.clear();
     screenShapes_.clear();
@@ -1405,9 +1481,11 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             renderer_->AddActor(bodyActor);
 
             auto plane = vtkSmartPointer<vtkPlane>::New();
-            auto cutter = vtkSmartPointer<vtkCutter>::New();
+            auto cutter = vtkSmartPointer<vtkPlaneCutter>::New();
             cutter->SetInputData(cache->base->cutMesh);
-            cutter->SetCutFunction(plane);
+            cutter->SetPlane(plane);
+            cutter->InterpolateAttributesOff();
+            cutter->MergePointsOn();
             auto waterlineData = vtkSmartPointer<vtkPolyData>::New();
             auto waterlineMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
             waterlineMapper->SetInputData(waterlineData);
@@ -1417,12 +1495,12 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             waterlineActor->GetProperty()->SetLineWidth(3.0);
             waterlineActor->GetProperty()->SetLighting(false);
             renderer_->AddActor(waterlineActor);
-            auto reflectionClipper = vtkSmartPointer<vtkClipPolyData>::New();
-            reflectionClipper->SetInputConnection(tangents->GetOutputPort());
-            reflectionClipper->SetClipFunction(plane);
-            reflectionClipper->InsideOutOff();
             auto reflectionMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-            reflectionMapper->SetInputConnection(reflectionClipper->GetOutputPort());
+            reflectionMapper->SetInputConnection(tangents->GetOutputPort());
+            // Reflected geometry below world water level: GPU clipping preserves the immutable mesh.
+            auto reflectionPlane = vtkSmartPointer<vtkPlane>::New();
+            reflectionPlane->SetNormal(0., 0., -1.);
+            reflectionMapper->AddClippingPlane(reflectionPlane);
             auto reflectionActor = vtkSmartPointer<vtkActor>::New();
             reflectionActor->SetMapper(reflectionMapper);
             copyMaterial(reflectionActor->GetProperty(), bodyActor->GetProperty());
@@ -1471,7 +1549,6 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
             body.surface = part.surface;
             body.waterline = waterlineActor;
             body.reflection = reflectionActor;
-            body.reflectionClipper = reflectionClipper;
             body.waterlineData = waterlineData;
             body.elementId = part.elementId;
             body.group = part.group;
@@ -1508,8 +1585,45 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
     }
 }
 
+bool VtkSceneWidget::setSailGeometry(const QString& elementId,
+    const QVector<DisplayPart>& parts, QString* error)
+{
+    std::vector<BodyActor*> matching;
+    for (auto& body : bodies_)
+        if (body.elementId == elementId) matching.push_back(&body);
+    QVector<DisplayPart> sailParts;
+    for (const auto& part : parts)
+        if (part.elementId == elementId) sailParts.push_back(part);
+    if (matching.empty() || matching.size() != static_cast<std::size_t>(sailParts.size())) {
+        if (error) *error = QStringLiteral("Bestätigte Segelgeometrie passt nicht zur Modellansicht: %1").arg(elementId);
+        return false;
+    }
+    for (std::size_t i = 0; i < matching.size(); ++i) {
+        const auto& part = sailParts[static_cast<qsizetype>(i)];
+        auto cache = part.preparation;
+        if (cache->source != part.mesh || cache->sourceTime != part.mesh->GetMTime()) {
+            auto base = std::make_shared<DisplayMeshData>();
+            base->mesh = part.mesh;
+            base->material = vtkSmartPointer<vtkPolyData>::New();
+            base->material->DeepCopy(part.mesh);
+            addPlanarTextureCoordinates(base->material);
+            base->cutMesh = part.mesh->GetNumberOfPolys() == 0 ? part.mesh : outwardNormals(part.mesh);
+            cache->source = part.mesh;
+            cache->sourceTime = part.mesh->GetMTime();
+            cache->base = base;
+            ++workCounters_.meshPreparations;
+        }
+        if (!matching[i]->confirmedSailGeometry)
+            matching[i]->originalPreparation = matching[i]->preparation;
+        matching[i]->preparation = cache;
+        // Keep the mesh bound to the actors until setState installs the new one.
+        matching[i]->confirmedSailGeometry = true;
+    }
+    return true;
+}
+
 bool VtkSceneWidget::setState(const QJsonObject& state,
-    const forcedisplay::ForceState& forces, QString* error)
+    const forcedisplay::ForceState& forces, QString* error, const PreparedWaterlines* waterlines)
 {
     if (!updatesActive_) return true;
     ++workCounters_.states;
@@ -1519,6 +1633,10 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         }
         validateWindSnapshot(state);
         const auto pose = forcedisplay::readPose(state);
+        const bool preparedCuts = waterlines && waterlines->meshes.size() == bodies_.size()
+            && waterlines->joined.size() == bodies_.size()
+            && waterlines->pose.position == pose.position
+            && waterlines->pose.quaternionXyzw == pose.quaternionXyzw;
         const auto velocityWorld = readStateVector(
             state, QStringLiteral("geschwindigkeit_welt_m_s"));
         const auto transform = poseTransform(pose);
@@ -1540,6 +1658,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         // Schnittlinien je Teil zu Schleifen verketten. Trocken ist das Innere der
         // äußersten geschlossenen Schleifen nicht gefluteter Teile; dort gibt es
         // weder Wasserfläche noch Wasserlinie (z. B. Cockpit, Schwert im Rumpf).
+        const auto cutStart = std::chrono::steady_clock::now();
         struct CutLoop {
             std::size_t body = 0;
             Loop2 world;
@@ -1566,7 +1685,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             if (!matrixValues.isEmpty() && matrix == elementMatrices.cend())
                 throw std::runtime_error("Core-Zustand ohne Transformation fuer sichtbares Element.");
             const auto prepared = prepareMesh(body.preparation,
-                matrixValues.isEmpty() ? QJsonArray{} : matrix.value());
+                matrixValues.isEmpty() || body.confirmedSailGeometry ? QJsonArray{} : matrix.value());
             if (body.prepared != prepared) {
                 body.prepared = prepared;
                 body.mesh = prepared->mesh;
@@ -1585,13 +1704,16 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
                 "reflectionWaterOrigin", waterOrigin.data());
             body.reflection->GetShaderProperty()->GetVertexCustomUniforms()->SetUniform3f(
                 "reflectionWaterNormal", waterNormal.data());
-            body.reflectionClipper->Modified();
-            body.cutter->Update();
-            auto stripper = vtkSmartPointer<vtkStripper>::New();
-            stripper->SetInputData(body.cutter->GetOutput());
-            stripper->JoinContiguousSegmentsOn();
-            stripper->Update();
-            joined[b] = stripper->GetOutput();
+            if (preparedCuts && waterlines->meshes[b] == body.prepared->cutMesh) {
+                joined[b] = waterlines->joined[b];
+            } else {
+                body.cutter->Update();
+                auto stripper = vtkSmartPointer<vtkStripper>::New();
+                stripper->SetInputData(body.cutter->GetOutputDataObject(0));
+                stripper->JoinContiguousSegmentsOn();
+                stripper->Update();
+                joined[b] = stripper->GetOutput();
+            }
             vtkPoints* points = joined[b]->GetPoints();
             vtkCellArray* lines = joined[b]->GetLines();
             if (points == nullptr || lines == nullptr) continue;
@@ -1662,6 +1784,8 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             body.waterlineData->SetLines(kept);
             body.waterlineData->Modified();
         }
+        workCounters_.waterCutsMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - cutStart).count();
         const auto previousView = cameraView();
         const auto localPosition = inverseRotate(cameraPose_,
             forcedisplay::sub(previousView.position, cameraPose_.position));
@@ -1751,6 +1875,11 @@ void VtkSceneWidget::clearState()
     const auto localUp = inverseRotate(cameraPose_, previousView.viewUp);
     resetMotionHistory();
     for (auto& body : bodies_) {
+        if (body.confirmedSailGeometry && body.originalPreparation) {
+            body.preparation = body.originalPreparation;
+            body.originalPreparation.reset();
+            body.confirmedSailGeometry = false;
+        }
         body.prepared = body.preparation->base;
         body.mesh = body.prepared->mesh;
         body.materialMesh = body.prepared->material;
@@ -1816,6 +1945,46 @@ void VtkSceneWidget::invalidateMotionHistory(qsizetype processed, const QString&
 bool VtkSceneWidget::appendMotionStates(const QVector<QJsonObject>& states, QString* error)
 {
     try {
+        return appendMotionInputs(motionInputPreparer()(states), error);
+    } catch (const std::exception& exception) {
+        if (error) *error = QString::fromUtf8(exception.what());
+        return false;
+    }
+}
+
+std::function<QVector<watermotion::Input>(const QVector<QJsonObject>&)>
+VtkSceneWidget::motionInputPreparer(bool rejectEmptyCuts)
+{
+    std::vector<vtkSmartPointer<vtkPolyData>> meshes;
+    for (const auto& body : bodies_) {
+        const auto& mesh = body.confirmedSailGeometry ? body.preparation->base : body.prepared;
+        meshes.push_back(mesh->cutMesh);
+    }
+    if (!motionPreparation_ || motionPreparation_->meshes != meshes) {
+        auto prepared = std::make_shared<MotionPreparation>();
+        prepared->meshes = std::move(meshes);
+        for (const auto& mesh : prepared->meshes) {
+            auto cutter = vtkSmartPointer<vtkPlaneCutter>::New();
+            vtkNew<vtkPlane> plane;
+            cutter->SetInputData(mesh);
+            cutter->SetPlane(plane);
+            cutter->InterpolateAttributesOff();
+            cutter->MergePointsOn();
+            prepared->cutters.push_back(cutter);
+            auto stripper = vtkSmartPointer<vtkStripper>::New();
+            stripper->SetInputConnection(cutter->GetOutputPort());
+            stripper->JoinContiguousSegmentsOn();
+            prepared->strippers.push_back(stripper);
+            std::array<double, 6> bounds{};
+            mesh->GetBounds(bounds.data());
+            prepared->bounds.push_back(bounds);
+        }
+        motionPreparation_ = std::move(prepared);
+    }
+    return [prepared = motionPreparation_, rejectEmptyCuts](const QVector<QJsonObject>& states) {
+        const std::lock_guard<std::mutex> lock(prepared->mutex);
+        QVector<watermotion::Input> inputs;
+        inputs.reserve(states.size());
         for (const auto& state : states) {
             const auto pose = forcedisplay::readPose(state);
             auto vector = [&state](const char* key) {
@@ -1835,14 +2004,18 @@ bool VtkSceneWidget::appendMotionStates(const QVector<QJsonObject>& states, QStr
             input.reference = reference;
             input.center = forcedisplay::toWorldPoint(pose, reference);
             input.velocity = vector("geschwindigkeit_welt_m_s");
-            QVector<Vec3> contour;
+            auto& contour = prepared->contour;
+            contour.clear();
             const auto origin = inverseRotate(pose, {-pose.position[0], -pose.position[1], -pose.position[2]});
             const auto normal = inverseRotate(pose, {0.0, 0.0, 1.0});
-            for (auto& body : bodies_) {
-                body.localWaterPlane->SetOrigin(origin.data());
-                body.localWaterPlane->SetNormal(normal.data());
-                body.cutter->Update();
-                auto* cut = body.cutter->GetOutput();
+            for (std::size_t meshIndex = 0; meshIndex < prepared->cutters.size(); ++meshIndex) {
+                if (rejectEmptyCuts && !prepared->intersects(meshIndex, origin, normal)) continue;
+                const auto& cutter = prepared->cutters[meshIndex];
+                cutter->GetPlane()->SetOrigin(origin.data());
+                cutter->GetPlane()->SetNormal(normal.data());
+                cutter->Update();
+                auto* cut = vtkPolyData::SafeDownCast(cutter->GetOutputDataObject(0));
+                if (!cut) throw std::runtime_error("Fahrtdarstellung: Wasserlinienschnitt fehlt.");
                 auto* points = cut->GetPoints();
                 if (!points || cut->GetNumberOfLines() == 0) continue;
                 for (vtkIdType i = 0; i < points->GetNumberOfPoints(); ++i) {
@@ -1852,6 +2025,43 @@ bool VtkSceneWidget::appendMotionStates(const QVector<QJsonObject>& states, QStr
                 }
             }
             input.contact = watermotion::contactFromContour(contour, input.velocity);
+            inputs.push_back(input);
+        }
+        return inputs;
+    };
+}
+
+std::function<std::shared_ptr<const PreparedWaterlines>(const QJsonObject&)>
+VtkSceneWidget::waterlinePreparer()
+{
+    motionInputPreparer();
+    return [prepared = motionPreparation_](const QJsonObject& state) {
+        const std::lock_guard<std::mutex> lock(prepared->mutex);
+        auto result = std::make_shared<PreparedWaterlines>();
+        result->pose = forcedisplay::readPose(state);
+        result->meshes = prepared->meshes;
+        const auto& pose = result->pose;
+        const auto origin = inverseRotate(pose, {-pose.position[0], -pose.position[1], -pose.position[2]});
+        const auto normal = inverseRotate(pose, {0.0, 0.0, 1.0});
+        for (std::size_t i = 0; i < prepared->cutters.size(); ++i) {
+            const auto& cutter = prepared->cutters[i];
+            cutter->GetPlane()->SetOrigin(origin.data());
+            cutter->GetPlane()->SetNormal(normal.data());
+            cutter->Update();
+            const auto& stripper = prepared->strippers[i];
+            stripper->Update();
+            auto lines = vtkSmartPointer<vtkPolyData>::New();
+            lines->DeepCopy(stripper->GetOutput());
+            result->joined.push_back(lines);
+        }
+        return std::shared_ptr<const PreparedWaterlines>(std::move(result));
+    };
+}
+
+bool VtkSceneWidget::appendMotionInputs(const QVector<watermotion::Input>& inputs, QString* error)
+{
+    try {
+        for (const auto& input : inputs) {
             motionDiagnostic_ = !input.contact && std::hypot(input.velocity[0], input.velocity[1]) > 1e-10
                 ? QStringLiteral("Keine verwertbare Wasserlinienkontur: kein neues Kielwasser, keine erfundenen Kontaktanker.")
                 : QString();
@@ -2853,6 +3063,13 @@ void VtkSceneWidget::updateScaling()
 
 bool VtkSceneWidget::contributionVisible(const forcedisplay::Contribution& c) const
 {
+    if (c.source == QStringLiteral("sailforce")) {
+        const auto& choice = c.kind == Kind::Force ? options_.sailForce : options_.sailMoment;
+        if (c.role == QStringLiteral("sailforce_streifen")) return choice[0];
+        if (c.role == QStringLiteral("sailforce_segel")) return choice[1];
+        if (c.role == QStringLiteral("sailforce_gesamt")) return choice[2];
+        return false;
+    }
     const auto& selection = c.kind == Kind::Force ? options_.force : options_.moment;
     switch (c.category) {
     case Category::Weight:
@@ -3160,7 +3377,6 @@ void VtkSceneWidget::applyGraphicsProfile()
     for (auto& body : bodies_) {
         body.normals->SplittingOn();
         body.normals->SetFeatureAngle(graphicsProfile_.on(graphics::Feature::Smooth) ? 35.0 : 0.0);
-        body.reflectionClipper->SetClipFunction(body.localWaterPlane);
     }
     applyBodyStyle();
     updateWaterAnimation();
@@ -3246,6 +3462,7 @@ void VtkSceneWidget::hideForceVisuals()
     lateralLabel_->VisibilityOff();
     sailActor_->VisibilityOff();
     sailLabel_->VisibilityOff();
+    for (auto& label : aeroLabels_) label->VisibilityOff();
     pressurePoints_ = {};
 }
 
@@ -3307,10 +3524,16 @@ void VtkSceneWidget::onRenderStart(vtkObject*, unsigned long, void*)
     if (key != cameraKey_ || geometryDirty_) {
         cameraKey_ = key;
         geometryDirty_ = false;
+        const auto overlayStart = std::chrono::steady_clock::now();
         rebuildForceGeometry();
         rebuildCourseArrow();
         rebuildWindArrows();
+        const auto environmentStart = std::chrono::steady_clock::now();
+        workCounters_.overlaysMs += std::chrono::duration<double, std::milli>(
+            environmentStart - overlayStart).count();
         rebuildEnvironment();
+        workCounters_.environmentMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - environmentStart).count();
         double bounds[6];
         double overlayBounds[6];
         renderer_->ComputeVisiblePropBounds(bounds);
@@ -3556,6 +3779,60 @@ void VtkSceneWidget::rebuildForceGeometry()
 {
     hideForceVisuals();
     screenShapes_.clear();
+    if (hasState_ && forces_.aero && !inspectionMode_) {
+        const auto& aero = *forces_.aero;
+        const auto marker = [this](const QString& id, const QString& text, const forcedisplay::SailCenter& center) {
+            if (!center.position || center.status != QStringLiteral("gueltig")) return;
+            auto& visual = visualFor(id);
+            vtkNew<vtkPoints> points;
+            points->SetDataTypeToDouble();
+            const auto world = forcedisplay::toWorldPoint(pose_, *center.position);
+            const auto point = points->InsertNextPoint(world.data());
+            vtkNew<vtkCellArray> vertices;
+            vertices->InsertNextCell(1, &point);
+            visual.lines->Initialize();
+            visual.lines->SetPoints(points);
+            visual.lines->SetVerts(vertices);
+            visual.lineActor->SetUserTransform(nullptr);
+            setActorColor(visual.lineActor, QStringLiteral("#75e1b5"));
+            visual.lineActor->GetProperty()->SetPointSize(static_cast<float>(10. * vtkWidget_->devicePixelRatioF()));
+            visual.lineActor->GetProperty()->RenderPointsAsSpheresOn();
+            visual.lineActor->VisibilityOn();
+            auto& label = aeroLabels_[id];
+            if (!label) {
+                label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+                label->PickableOff();
+                forceRenderer()->AddActor(label);
+            }
+            const auto utf8 = text.toUtf8();
+            label->SetInput(utf8.constData());
+            label->SetPosition(world[0], world[1], world[2]);
+            label->GetTextProperty()->SetColor(.46, .88, .71);
+            label->GetTextProperty()->SetFontSize(static_cast<int>(14. * vtkWidget_->devicePixelRatioF()));
+            label->VisibilityOn();
+        };
+        if (options_.aeroCenter)
+            marker(QStringLiteral("aero:sdp:gesamt"), QStringLiteral("SDP gesamt"), aero.center);
+        for (const auto& sail : aero.sails) {
+            if (options_.aeroIndividualCenters.contains(sail.elementId))
+                marker(QStringLiteral("aero:sdp:") + sail.elementId,
+                    QStringLiteral("SDP %1").arg(sail.elementId), sail.center);
+            if (!options_.aeroBoundaries) continue;
+            const auto id = QStringLiteral("aero:linien:") + sail.elementId;
+            auto& visual = visualFor(id);
+            const auto version = QString::number(aero.revision) + QLatin1Char(':') + sail.sourceVersion;
+            if (aeroLineVersions_.value(id) != version) {
+                PolyBuilder lines;
+                for (const auto& line : sail.boundaryLines) lines.polyline(line);
+                lines.storeLines(visual.lines);
+                aeroLineVersions_.insert(id, version);
+            }
+            visual.lineActor->SetUserTransform(poseTransform(pose_));
+            setActorColor(visual.lineActor, QStringLiteral("#9ac5b9"));
+            visual.lineActor->GetProperty()->SetLineWidth(static_cast<float>(1.2 * vtkWidget_->devicePixelRatioF()));
+            visual.lineActor->VisibilityOn();
+        }
+    }
     if (hasState_ && !bodies_.empty() && !inspectionMode_) {
         const auto marker = [this](const Vec3& local, bool sail) {
             const auto point = forcedisplay::toWorldPoint(pose_, local);
@@ -3597,7 +3874,7 @@ void VtkSceneWidget::rebuildForceGeometry()
             marker(*forces_.sailCenter->position, true);
     }
     rebuildSchematicForces();
-    if (!options_.forces || !hasState_ || bodies_.empty()) {
+    if ((!options_.forces && !forces_.aero) || !hasState_ || bodies_.empty()) {
         return;
     }
     const double ratio = vtkWidget_->devicePixelRatioF();
@@ -3612,7 +3889,14 @@ void VtkSceneWidget::rebuildForceGeometry()
         return c.frame == QStringLiteral("welt") ? v : forcedisplay::toWorldVector(pose_, v);
     };
 
+    struct ForceBatch {
+        PolyBuilder lines, head;
+        QString color;
+        float width = 0.;
+    };
+    std::map<QString, std::unique_ptr<ForceBatch>> batches;
     for (const auto& c : forces_.contributions) {
+        if (!options_.forces && c.source != QStringLiteral("sailforce")) continue;
         if (!contributionVisible(c) || !forcedisplay::isDrawable(c)) {
             continue;
         }
@@ -3694,18 +3978,32 @@ void VtkSceneWidget::rebuildForceGeometry()
                 shape.polyline.push_back(toLogicalScreen(p));
             }
         }
-        auto& visual = visualFor(c.id);
-        lines.storeLines(visual.lines);
-        head.storePolys(visual.head);
         const bool selected = c.id == selected_;
         const QString color = selected ? selectionColor : forcedisplay::colorForContribution(c);
+        const float width = static_cast<float>(
+            (forcedisplay::strokePx + (selected ? 2.0 : 0.0) + (c.total ? 1.0 : 0.0)) * ratio);
+        const auto batchId = QStringLiteral("batch:") + color + QLatin1Char(':') + QString::number(width);
+        auto& batch = batches[batchId];
+        if (!batch) {
+            batch = std::make_unique<ForceBatch>();
+            batch->color = color;
+            batch->width = width;
+        }
+        batch->lines.append(lines);
+        batch->head.append(head);
+        screenShapes_.push_back(shape);
+    }
+    for (const auto& entry : batches) {
+        const auto& batch = *entry.second;
+        auto& visual = visualFor(entry.first);
+        batch.lines.storeLines(visual.lines);
+        batch.head.storePolys(visual.head);
+        const auto& color = batch.color;
         setActorColor(visual.lineActor, color);
         setActorColor(visual.headActor, color);
-        visual.lineActor->GetProperty()->SetLineWidth(static_cast<float>(
-            (forcedisplay::strokePx + (selected ? 2.0 : 0.0) + (c.total ? 1.0 : 0.0)) * ratio));
+        visual.lineActor->GetProperty()->SetLineWidth(batch.width);
         visual.lineActor->VisibilityOn();
         visual.headActor->VisibilityOn();
-        screenShapes_.push_back(shape);
     }
 
     // Hebelarm-Hilfsgeometrie für den gewählten Kraftbeitrag (A-G-00015).
@@ -4160,10 +4458,12 @@ void VtkSceneWidget::rebuildEnvironment()
         const double haze = graphicsProfile_.on(graphics::Feature::Haze)
             ? 0.75 * smoothstep(0.08 * radius, 0.85 * radius, r) : 0.0;
         // Fresnel: flacher Blickwinkel deckender, Blick von oben durchsichtiger.
-        const Vec3 toCamera = normalized({position[0] - x, position[1] - y, position[2]});
-        const double grazing = std::pow(1.0 - std::abs(toCamera[2]), 2.5);
-        const double opacity = graphicsProfile_.on(graphics::Feature::Fresnel)
-            ? mix(graphicsProfile_.waterOpacity, 0.95, grazing) : graphicsProfile_.waterOpacity;
+        double opacity = graphicsProfile_.waterOpacity;
+        if (graphicsProfile_.on(graphics::Feature::Fresnel)) {
+            const Vec3 toCamera = normalized({position[0] - x, position[1] - y, position[2]});
+            const double grazing = std::pow(1.0 - std::abs(toCamera[2]), 2.5);
+            opacity = mix(opacity, 0.95, grazing);
+        }
         const double underwaterVisibility = mix(0.35, 1.0, smoothstep(-0.25, 0.0, position[2]));
         const double alpha = fade * std::clamp(opacity, 0.0, 0.95) * underwaterVisibility;
         const double inspectionWater[3] = {101.0 / 255.0, 40.0 / 255.0, 63.0 / 255.0};
@@ -4202,26 +4502,28 @@ void VtkSceneWidget::rebuildEnvironment()
     colors->Modified();
     waterMesh_->Modified();
     rebuildWaterDisplay(waterRgba);
-    auto deepSurfacePoints = vtkSmartPointer<vtkPoints>::New();
-    deepSurfacePoints->DeepCopy(waterDisplay_->GetPoints());
-    auto deepSurfaceColors = vtkSmartPointer<vtkUnsignedCharArray>::New();
-    deepSurfaceColors->SetNumberOfComponents(4);
-    deepSurfaceColors->SetNumberOfTuples(deepSurfacePoints->GetNumberOfPoints());
-    for (vtkIdType i = 0; i < deepSurfacePoints->GetNumberOfPoints(); ++i) {
-        double p[3];
-        deepSurfacePoints->GetPoint(i, p);
-        p[2] -= depth;
-        deepSurfacePoints->SetPoint(i, p);
-        const double fade = 1.0 - smoothstep(0.2 * radius, radius, std::hypot(p[0] - cx, p[1] - cy));
-        const unsigned char rgba[4] = {toByte(deepColor[0]), toByte(deepColor[1]),
-            toByte(deepColor[2]), toByte(0.8 * fade)};
-        deepSurfaceColors->SetTypedTuple(i, rgba);
+    if (graphicsProfile_.on(graphics::Feature::Depth)) {
+        auto deepSurfacePoints = vtkSmartPointer<vtkPoints>::New();
+        deepSurfacePoints->DeepCopy(waterDisplay_->GetPoints());
+        auto deepSurfaceColors = vtkSmartPointer<vtkUnsignedCharArray>::New();
+        deepSurfaceColors->SetNumberOfComponents(4);
+        deepSurfaceColors->SetNumberOfTuples(deepSurfacePoints->GetNumberOfPoints());
+        for (vtkIdType i = 0; i < deepSurfacePoints->GetNumberOfPoints(); ++i) {
+            double p[3];
+            deepSurfacePoints->GetPoint(i, p);
+            p[2] -= depth;
+            deepSurfacePoints->SetPoint(i, p);
+            const double fade = 1.0 - smoothstep(0.2 * radius, radius, std::hypot(p[0] - cx, p[1] - cy));
+            const unsigned char rgba[4] = {toByte(deepColor[0]), toByte(deepColor[1]),
+                toByte(deepColor[2]), toByte(0.8 * fade)};
+            deepSurfaceColors->SetTypedTuple(i, rgba);
+        }
+        deepMesh_->Initialize();
+        deepMesh_->SetPoints(deepSurfacePoints);
+        deepMesh_->SetPolys(waterDisplay_->GetPolys());
+        deepMesh_->GetPointData()->SetScalars(deepSurfaceColors);
+        deepMesh_->Modified();
     }
-    deepMesh_->Initialize();
-    deepMesh_->SetPoints(deepSurfacePoints);
-    deepMesh_->SetPolys(waterDisplay_->GetPolys());
-    deepMesh_->GetPointData()->SetScalars(deepSurfaceColors);
-    deepMesh_->Modified();
 
     if (!graphicsProfile_.on(graphics::Feature::Grid)) {
         gridMesh_->Initialize();

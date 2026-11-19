@@ -67,6 +67,7 @@ add_executable(segelphysik_gui WIN32
     Code/src/force_display.hpp
     Code/src/vtk_scene.cpp
     Code/src/vtk_scene.hpp)
+segelmacher_deploy_runtime(segelphysik_gui)
 target_include_directories(segelphysik_gui PRIVATE Code/src)
 target_link_libraries(segelphysik_gui PRIVATE
     Qt6::Widgets
@@ -155,6 +156,7 @@ if(BUILD_TESTING)
         Code/src/force_display.cpp
         Code/src/vtk_scene.cpp
         Code/tests/graphics_render_tests.cpp)
+    segelmacher_deploy_runtime(segelphysik_gui_graphics_render_tests)
     target_include_directories(segelphysik_gui_graphics_render_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_graphics_render_tests PRIVATE
         Qt6::Widgets Qt6::Svg Qt6::Xml segelphysik_core ${VTK_LIBRARIES})
@@ -312,6 +314,7 @@ if(BUILD_TESTING)
         Code/src/force_display.cpp
         Code/src/force_display.hpp
         Code/tests/core_adapter_tests.cpp)
+    segelmacher_deploy_runtime(segelphysik_gui_core_tests)
     target_include_directories(segelphysik_gui_core_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_core_tests PRIVATE
         Qt6::Core
@@ -325,6 +328,7 @@ if(BUILD_TESTING)
         Code/src/model_catalog.cpp
         Code/src/model_catalog.hpp
         Code/tests/model_catalog_tests.cpp)
+    segelmacher_deploy_runtime(segelphysik_gui_catalog_tests)
     target_include_directories(segelphysik_gui_catalog_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_catalog_tests PRIVATE
         Qt6::Core
@@ -353,6 +357,7 @@ if(BUILD_TESTING)
         Code/src/model_catalog.cpp
         Code/src/model_catalog.hpp
         Code/tests/display_geometry_tests.cpp)
+    segelmacher_deploy_runtime(segelphysik_gui_mesh_tests)
     target_include_directories(segelphysik_gui_mesh_tests PRIVATE Code/src)
     target_link_libraries(segelphysik_gui_mesh_tests PRIVATE
         Qt6::Core

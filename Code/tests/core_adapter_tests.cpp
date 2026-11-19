@@ -969,6 +969,72 @@ int main(int argc, char* argv[])
     }
     try {
         const auto modelPath = QString::fromLocal8Bit(argv[1]);
+        if (QString::fromLocal8Bit(argv[2]) == QStringLiteral("--sailforce-history-only")) {
+            const auto validation = validateModel(modelPath);
+            require(validation.valid, qPrintable(QStringLiteral("sailforce history model invalid: %1")
+                .arg(validation.diagnostic)));
+            const QJsonObject wind{{QStringLiteral("richtung_grad"), 0.},
+                {QStringLiteral("v0_m_s"), 5.}, {QStringLiteral("h0_m"), 10.},
+                {QStringLiteral("bootmitgefuehrt"), false}};
+            const QJsonObject air{{QStringLiteral("dichte_kg_m3"), 1.225},
+                {QStringLiteral("kinematische_viskositaet_m2_s"), 1.5e-5}};
+            const QJsonObject start{{QStringLiteral("wind_eingabe"), wind},
+                {QStringLiteral("sailforce_eingabe"), QJsonObject{
+                    {QStringLiteral("luft"), air}, {QStringLiteral("segel"), QJsonArray{}}}}};
+            QString error;
+            auto live = LiveSimulation::create(modelPath, validation, 0., .01, true, &error, start);
+            require(live != nullptr, qPrintable(QStringLiteral("sailforce live creation failed: %1")
+                .arg(error)));
+            std::atomic_bool stop{false};
+            std::thread worker([&] { live->run(stop); });
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (live->progress().states < 2 && !live->progress().finished
+                && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            LiveSimulation::JsonTimings initialTimings;
+            const auto old = live->stateJson(0, &error, &initialTimings);
+            const auto sails = old.value(QStringLiteral("sailforce")).toObject()
+                .value(QStringLiteral("segel")).toArray();
+            const QString id = sails.isEmpty() ? QString() : sails[0].toObject()
+                .value(QStringLiteral("element_id")).toString();
+            const bool rejectedUnknown = !live->setSailAngle(QStringLiteral("unbekannt"), 12., &error);
+            error.clear();
+            const bool queued = !id.isEmpty() && live->setSailAngle(id, 12., &error);
+            const auto count = live->progress().states;
+            while (live->progress().states < std::max<qsizetype>(70, count + 3) && !live->progress().finished
+                && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            stop.store(true);
+            worker.join();
+            const auto states = live->progress().states;
+            LiveSimulation::JsonTimings latestTimings, historicalTimings;
+            const auto latest = live->stateJson(states - 1, &error, &latestTimings);
+            const auto historical = live->stateJson(0, &error, &historicalTimings);
+            require(initialTimings.snapshotHit && states >= 70 && latestTimings.snapshotHit
+                    && !historicalTimings.snapshotHit,
+                "recent snapshots must be cached and evicted history must use the reader fallback");
+            LiveSimulation::JsonTimings boundaryTimings;
+            require(!live->stateJson(states - 64, &error, &boundaryTimings).isEmpty()
+                    && boundaryTimings.snapshotHit,
+                "the 64th newest snapshot must remain cached");
+            require(!live->stateJson(states - 65, &error, &boundaryTimings).isEmpty()
+                    && !boundaryTimings.snapshotHit,
+                "the 65th newest snapshot must be evicted");
+            require(rejectedUnknown && queued && !latest.isEmpty() && historical == old,
+                "sailforce update altered history or was not queued");
+            const auto result = latest.value(QStringLiteral("sailforce")).toObject();
+            const auto updated = result.value(QStringLiteral("segel")).toArray();
+            bool confirmed = false;
+            for (const auto& value : updated)
+                if (value.toObject().value(QStringLiteral("element_id")).toString() == id
+                    && value.toObject().value(QStringLiteral("stellwinkel_grad")).toDouble() == 12.)
+                    confirmed = true;
+            require(confirmed && result.value(QStringLiteral("revision")).toDouble() > 0.,
+                "sailforce angle was not confirmed at a step boundary");
+            (void)forcedisplay::parseForceState(latest);
+            std::cout << "Sailforce immutable history and live angle passed.\n";
+            return 0;
+        }
         if (QString::fromLocal8Bit(argv[2]) == QStringLiteral("--preparation-only")) {
             testPreparedLiveParity(modelPath);
             std::cout << "Complete prepared Live JSON and historical parity passed.\n";

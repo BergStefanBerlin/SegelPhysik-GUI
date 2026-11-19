@@ -108,9 +108,36 @@ struct SailCenter {
     std::optional<Vec3> position;
 };
 
+struct AeroBoundaryAssignment {
+    qint64 id = 0;
+    qint64 boundaryId = 0;
+    std::optional<qint64> lowerStripId;
+    std::optional<qint64> upperStripId;
+};
+
+struct AeroSail {
+    QString elementId;
+    QString sourceVersion;
+    bool active = false;
+    bool mirrored = false;
+    double angle = 0.;
+    SailCenter center;
+    QVector<QVector<Vec3>> boundaryLines;
+    QVector<AeroBoundaryAssignment> boundaryAssignments;
+};
+
+struct AeroResult {
+    qint64 revision = 0;
+    double density = 0.;
+    double viscosity = 0.;
+    SailCenter center;
+    QVector<AeroSail> sails;
+};
+
 struct ForceState {
     std::optional<LateralCenter> lateral;
     std::optional<SailCenter> sailCenter;
+    std::optional<AeroResult> aero;
     QString contract;
     QString modelId;
     double time = 0.0;

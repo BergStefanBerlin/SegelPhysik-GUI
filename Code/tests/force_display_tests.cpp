@@ -649,12 +649,118 @@ void testStaticResultants()
         "Incomplete Core inventory must not become a complete-looking sum.");
 }
 
+void testSailforceV8()
+{
+    auto object = parse(R"({
+      "vertragsversion":"8","modell_id":"m","zeit_s":1,"schritt":1,
+      "moment_bezug_modell_m":[1,2,3],
+      "kursdrehrate_status":"nicht_bestimmbar","kursdrehrate_rad_s":null,
+      "vektoren":[{"id":"producer","art":"kraft","quelle":"sailforce","vektor":[0,5,0]}],
+      "sailforce":{"revision":3,"luft":{"dichte_kg_m3":1.225,"kinematische_viskositaet_m2_s":0.000015},
+       "kraft_modell_n":[0,5,0],"moment_s_modell_nm":[0,0,9],"darstellungsbezug_modell_m":[0,0,0],
+       "sdp_gesamt":{"status":"gueltig","position_modell_m":[7,0,2],"Q_N":5,"B_N":5,"X_Nm":35,"Z_Nm":10},
+       "segel":[{"element_id":"gross","quellfassung":"abc","aktiv":true,"stellwinkel_grad":-12,
+        "form_gespiegelt":true,"kraft_modell_n":[0,5,0],"moment_s_modell_nm":[0,0,9],
+        "darstellungsbezug_modell_m":[0,0,0],
+        "sdp":{"status":"nicht_bestimmbar","position_modell_m":null,"Q_N":0,"B_N":5,"X_Nm":0,"Z_Nm":0},
+        "streifen":[{"id":0,"punkt_modell_m":[2,0,3],"kraft_modell_n":[0,5,0],"moment_s_modell_nm":[0,0,9]}],
+        "grenzlinien_modell_m":[[[0,0,0],[1,0,1]]],
+        "grenzlinien_zuordnung":[{"id":7,"grenze_id":2,"streifen_unten_id":null,"streifen_oben_id":0}]}]}})");
+    const auto parsed = parseForceState(object);
+    require(parsed.aero && parsed.aero->revision == 3 && parsed.aero->sails.size() == 1,
+        "V8 sailforce snapshot missing.");
+    require(parsed.aero->center.position && !parsed.aero->sails[0].center.position
+            && near(parsed.aero->sails[0].angle, -12.),
+        "Independent SDP status and confirmed angle lost.");
+    require(parsed.contributions.size() == 6, "Producer strips must not be double-counted.");
+    require(parsed.contributions[1].point && nearVec(*parsed.contributions[1].point, {1,2,3}),
+        "Sailforce moment must be drawn at S.");
+    const auto& assignment = parsed.aero->sails[0].boundaryAssignments[0];
+    require(assignment.id == 7 && assignment.boundaryId == 2
+            && !assignment.lowerStripId && assignment.upperStripId == 0,
+        "Boundary identity and strip adjacency lost.");
+    const auto withSail = [&](const QJsonObject& sail) {
+        auto changed = object;
+        auto aero = changed.value(QStringLiteral("sailforce")).toObject();
+        aero.insert(QStringLiteral("segel"), QJsonArray{sail});
+        changed.insert(QStringLiteral("sailforce"), aero);
+        return changed;
+    };
+    const auto baseSail = object.value(QStringLiteral("sailforce")).toObject()
+        .value(QStringLiteral("segel")).toArray()[0].toObject();
+    const auto rejectedSail = [&](const QJsonObject& sail) {
+        bool failed = false;
+        try { (void)parseForceState(withSail(sail)); }
+        catch (const std::runtime_error&) { failed = true; }
+        require(failed, "Malformed boundary metadata accepted.");
+    };
+    auto missing = baseSail;
+    missing.remove(QStringLiteral("grenzlinien_zuordnung"));
+    rejectedSail(missing);
+    missing = baseSail;
+    missing.insert(QStringLiteral("grenzlinien_zuordnung"), QJsonArray{});
+    rejectedSail(missing);
+    const auto baseAssignment = baseSail.value(QStringLiteral("grenzlinien_zuordnung"))
+        .toArray()[0].toObject();
+    for (const auto& key : {QStringLiteral("id"), QStringLiteral("grenze_id"),
+            QStringLiteral("streifen_unten_id"), QStringLiteral("streifen_oben_id")}) {
+        for (const auto& invalid : {QJsonValue(), QJsonValue(-1), QJsonValue(.5), QJsonValue(QStringLiteral("0"))}) {
+            auto a = baseAssignment;
+            if (invalid.isNull()) a.remove(key);
+            else a.insert(key, invalid);
+            auto sail = baseSail;
+            sail.insert(QStringLiteral("grenzlinien_zuordnung"), QJsonArray{a});
+            rejectedSail(sail);
+        }
+    }
+    for (const auto& neighbor : {QJsonValue(QJsonValue::Null), QJsonValue(99)}) {
+        auto a = baseAssignment;
+        a.insert(QStringLiteral("streifen_oben_id"), neighbor);
+        auto sail = baseSail;
+        sail.insert(QStringLiteral("grenzlinien_zuordnung"), QJsonArray{a});
+        rejectedSail(sail);
+    }
+    auto splitSail = baseSail;
+    const auto line = baseSail.value(QStringLiteral("grenzlinien_modell_m")).toArray()[0];
+    splitSail.insert(QStringLiteral("grenzlinien_modell_m"), QJsonArray{line, line});
+    splitSail.insert(QStringLiteral("grenzlinien_zuordnung"), QJsonArray{baseAssignment, baseAssignment});
+    rejectedSail(splitSail);
+    auto second = baseAssignment;
+    second.insert(QStringLiteral("id"), 8);
+    splitSail.insert(QStringLiteral("grenzlinien_zuordnung"), QJsonArray{baseAssignment, second});
+    require(parseForceState(withSail(splitSail)).aero->sails[0].boundaryAssignments.size() == 2,
+        "Separate polylines sharing a boundary must be accepted.");
+    auto inactive = baseSail;
+    inactive.insert(QStringLiteral("aktiv"), false);
+    inactive.remove(QStringLiteral("streifen"));
+    require(parseForceState(withSail(inactive)).aero->sails[0].boundaryAssignments[0].upperStripId == 0,
+        "Inactive sail must retain geometry metadata without strip loads.");
+    inactive.insert(QStringLiteral("streifen"), baseSail.value(QStringLiteral("streifen")));
+    rejectedSail(inactive);
+    auto invalidCenter = object;
+    auto invalidAero = invalidCenter.value(QStringLiteral("sailforce")).toObject();
+    auto sdp = invalidAero.value(QStringLiteral("sdp_gesamt")).toObject();
+    sdp.insert(QStringLiteral("status"), QStringLiteral("unbekannt"));
+    invalidAero.insert(QStringLiteral("sdp_gesamt"), sdp);
+    invalidCenter.insert(QStringLiteral("sailforce"), invalidAero);
+    bool invalidRejected = false;
+    try { (void)parseForceState(invalidCenter); } catch (const std::runtime_error&) { invalidRejected = true; }
+    require(invalidRejected, "Unknown SDP status accepted.");
+    auto bad = object.value(QStringLiteral("sailforce")).toObject();
+    bad.remove(QStringLiteral("segel"));
+    object.insert(QStringLiteral("sailforce"), bad);
+    bool rejected = false;
+    try { (void)parseForceState(object); } catch (const std::runtime_error&) { rejected = true; }
+    require(rejected, "Missing V8 mandatory field accepted.");
+}
+
 } // namespace
 
 int main()
 {
     try {
         testLateralCenter();
+        testSailforceV8();
         testStaticResultants();
         testScale();
         testPoseAndArrow();

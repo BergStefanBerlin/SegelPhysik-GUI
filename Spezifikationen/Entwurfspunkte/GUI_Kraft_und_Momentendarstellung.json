@@ -1,5 +1,6 @@
 {
   "status": "finalisiert",
+  "erweiterung_sailforce": {"stand": "2026-11-17", "status": "finalisiert", "zielversion": "G-0.25", "umsetzungsplan": "../../Umsetzungsplaene/Umsetzungsplan_G-0.25.md", "hinweis": "Auf ausdruecklichen Nutzerauftrag finalisiert. IDEE-G-00105 bis IDEE-G-00107 sind A-G-00166 bis A-G-00168 zugeordnet. SDP-Anforderung steht ausschliesslich in der bestehenden Druckpunkt-Spezifikation; Kraftanzeige, Linien und Bedienung in der bestehenden Kraftdarstellungs-Spezifikation. Umsetzung und Abnahme offen; keine Git-Aktion.", "zusaetzliche_entscheidungen": [{"anforderung": "A-G-00169", "entscheidung": "Aktivierung je Segel, zunaechst an bei expliziter Modellzuordnung; bestaetigte live-quasistatische Stellwinkel, Aktivierung erst fuer naechsten Lauf."}, {"anforderung": "A-G-00170", "entscheidung": "Settings -> Lufteigenschaften mit rho=1.225 kg/m^3 und nu=1.5e-5 m^2/s als einstellbaren Vorgaben; im Lauf konstant."}, {"anforderung": "A-G-00171", "entscheidung": "Bestehenden asynchronen Worker-/Snapshotpfad erhalten; keine GUI-Taktung der Physik, konsistente Historie und Fehlerzustaende."}, {"anforderung": "A-G-00172", "entscheidung": "Bekannte Ryzen 5 8600G/Radeon760M unter Windows, Technik 1280x720; je 420/Folkeboot/Optimist 60 s Dynamik dt=0.01 s in <=60 s Core-Wandzeit; p95 Bildabstand<=33.3 ms und Maximum<=100 ms, Segel/SDP/Overlay aktiv."}]},
   "thema": "Offene Entscheidungen zur Kraft- und Momentendarstellung in der GUI",
   "spezifikation": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md",
   "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu allen Punkten übernommen. Übernommene Punkte verweisen auf ihre A-Kennung; zurückgestellte Punkte sind keine Anforderungen.",
@@ -73,6 +74,31 @@
       "entscheidung": "Nutzerentscheidung 26.10.2026: Vorschlag übernommen.",
       "uebernommen_als": "A-G-00012, A-G-00018",
       "restpunkt": "Grenzwerte für Laufzeit legt die Nutzerin nach der ersten Messung fest."
+    },
+    {
+      "id": "IDEE-G-00105",
+      "status": "übernommen",
+      "uebernommen_als": "A-G-00166",
+      "thema": "SDP-Darstellung fuer sailforce",
+      "bezug": "../Spezifikation_GUI_Lateraldruckpunkt.md#6-g-025-aerodynamische-segeldruckpunkte",
+      "entscheidung": "Den vom Core gelieferten sailforce-Seitenkraft-SDP mit der bisherigen SDP-Darstellung anzeigen. Standard ist der gemeinsame SDP aller aktiven Segel; optional die SDPs je Segel, insbesondere Fock und Grosssegel, zusaetzlich einblenden. Gesamt- und Einzelpunkte eindeutig zuordnen. Position, Bezug und Gueltigkeitsstatus aus demselben Ergebniszustand uebernehmen; keine eigenen SDPs berechnen, Punktpositionen nicht mitteln und unbestimmbare Punkte nicht durch erfundene Punkte ersetzen. SDP und LDP fuer den Vergleich in der Seitenansicht auf der Bootsmittschiffsebene darstellen. Den SDP als Seitenkraft-Ersatzpunkt kennzeichnen, nicht als garantierten Punkt auf dem Segeltuch oder Angriffspunkt der vollstaendigen Segellast. Aerodynamischen sailforce-SDP und bisherigen Fremdkraft-Ersatz-SDP eindeutig unterscheiden. Der Abstand allein belegt keine Luv-/Leegiertendenz; ergaenzend die vom Core gelieferten tatsaechlichen Giermomentanteile sichtbar machen. Nutzerentscheidung 17.11.2026; numerische SDP-Bestimmbarkeit bleibt Core-Vertrag."
+    },
+    {
+      "id": "IDEE-G-00106",
+      "status": "übernommen",
+      "uebernommen_als": "A-G-00167",
+      "thema": "Auswahl der Segel-Einzelkraefte und Summen",
+      "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md#3-sailforce-darstellung-und-bedienung-g-025",
+      "entscheidung": "Eine Anzeigeoption fuer Einzelkraefte und Einzelmomente der Segelflaechen beziehungsweise Segelstreifen sowie fuer die summierten Segelkraefte und Segelmomente anbieten. Einzelbeitraege und Summen koennen getrennt oder gleichzeitig dargestellt werden (und/oder). Die vom Core gelieferten 3D-Kraft- und Momentenvektoren, Zuordnungen und Bezugspunkte verwenden; Auswahl und Sichtbarkeit aendern weder Physik noch Gesamtbilanz. Summen sind keine zusaetzlichen physikalischen Lasten.",
+      "praezisierung": "Konsistenzpruefung 17.11.2026: Alle angezeigten sailforce-Teil- und Summenmomente beziehen sich auf denselben aktuellen Bootsschwerpunkt S; Momentenboegen werden um S dargestellt. Keine zusaetzliche lokale Momentenanzeige um einzelne Streifenpunkte. Streifenkraftpfeile liegen am gelieferten Abfragepunkt als gekennzeichnetem Darstellungsbezug, nicht als behauptetem physikalischem Druckpunkt. Fuer diese sailforce-Beitraege wird A-G-00009 entsprechend praezisiert; kein lokales Moment am Abfragepunkt mit einem Moment um S verwechseln."
+    },
+    {
+      "id": "IDEE-G-00107",
+      "status": "übernommen",
+      "uebernommen_als": "A-G-00168",
+      "thema": "Dezentes Linienoverlay der Segelstreifen",
+      "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md#3-sailforce-darstellung-und-bedienung-g-025",
+      "entscheidung": "Die aerodynamische Streifeneinteilung als dezentes Linienoverlay direkt auf der bestehenden 3D-Segelflaeche darstellen. Nur die tatsaechlichen Streifen-Schnittgrenzen sichtbar machen, kein Dreiecksdrahtgitter und keine zusaetzlichen gefuellten oder eingefaerbten Streifenflaechen. Linien folgen der Segelform und aktuellen Lage; keine flackernden koplanaren Ueberlagerungen. Die vom Core gelieferten 3D-Grenzlinien und ihre Segel-/Streifenzuordnung verwenden; keine abweichende Einteilung in der GUI erzeugen. Bei der Konsistenzpruefung am 17.11.2026 wurde bestaetigt: keine zusaetzlichen Teilflaechenmeshes, unveraenderte Linien wiederverwenden und ueber dieselbe Segeltransformation darstellen."
     }
   ]
 }

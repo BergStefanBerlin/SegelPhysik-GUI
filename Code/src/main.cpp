@@ -11,7 +11,9 @@
 int main(int argc, char* argv[])
 {
     vtkOutputWindow::GetInstance()->SetDisplayModeToAlwaysStdErr();
-    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    auto surfaceFormat = QVTKOpenGLNativeWidget::defaultFormat();
+    surfaceFormat.setSwapInterval(0);
+    QSurfaceFormat::setDefaultFormat(surfaceFormat);
     QApplication application(argc, argv);
     application.setApplicationName(QStringLiteral("SegelPhysik"));
     application.setOrganizationName(QStringLiteral("SegelPhysik"));

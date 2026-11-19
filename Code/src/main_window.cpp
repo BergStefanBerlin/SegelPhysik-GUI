@@ -7,7 +7,11 @@
 #include "filter_header.hpp"
 
 #include <segelphysik/defaults.hpp>
+#include <segelphysik/hydrostatik.hpp>
 #include <segelphysik/modell_fingerprints.hpp>
+#include <segelphysik/sailforce.hpp>
+#include <segelphysik/modell.hpp>
+#include <segelphysik/pose.hpp>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -30,6 +34,8 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QElapsedTimer>
+#include <thread>
 #include <QJsonDocument>
 #include <QInputDialog>
 #include <QLabel>
@@ -62,14 +68,40 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <utility>
+#include <thread>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 using forcedisplay::Contribution;
 
 namespace {
 
 constexpr int staticRawValueRole = Qt::UserRole + 10;
+
+void waitForDisplayDeadline(std::chrono::steady_clock::time_point deadline)
+{
+#ifdef Q_OS_WIN
+    // Keep display publication independent of the coarse Windows Sleep timer.
+    const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining.count() <= 0) return;
+    const HANDLE timer = CreateWaitableTimerExW(
+        nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (timer) {
+        const auto closeTimer = qScopeGuard([timer] { CloseHandle(timer); });
+        LARGE_INTEGER due{};
+        due.QuadPart = -std::max<LONGLONG>(1, remaining.count() / 100);
+        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)
+            && WaitForSingleObject(timer, INFINITE) == WAIT_OBJECT_0) return;
+    }
+#endif
+    std::this_thread::sleep_until(deadline);
+}
 
 class StaticValueItem final : public QTreeWidgetItem {
 public:
@@ -250,19 +282,19 @@ QString runtimeText(double seconds)
     return QStringLiteral("%1 s").arg(seconds, 0, 'f', 3);
 }
 
-QString movementValueText(double requested, double confirmed, bool rudder)
+QString movementValueText(double requested, double confirmed, const QString& unit)
 {
-    return rudder
-        ? QStringLiteral("Eingabe %1° · Core %2°")
-            .arg(requested, 0, 'f', 1).arg(confirmed, 0, 'f', 1)
-        : QStringLiteral("Eingabe %1 % · Core %2 %")
-            .arg(requested, 0, 'f', 1).arg(confirmed, 0, 'f', 1);
+    const auto suffix = unit == QStringLiteral("deg") ? QStringLiteral("°")
+        : unit == QStringLiteral("%") ? QStringLiteral(" %")
+        : QStringLiteral(" ") + unit;
+    return QStringLiteral("Eingabe %1%2 · Core %3%2")
+        .arg(requested, 0, 'f', 1).arg(suffix).arg(confirmed, 0, 'f', 1);
 }
 
 const QString folderSettingKey = QStringLiteral("modellordner");
 const QString modelSettingKey = QStringLiteral("modell_id");
 const QString legacyModelSettingKey = QStringLiteral("modell");
-constexpr int liveIntervalMs = 33;
+constexpr int liveIntervalMs = 16;
 constexpr double gravity = 9.81;
 const QColor rejectedModelColor(0x8a, 0x9b, 0xab);
 const QChar warningSign(0x26A0);
@@ -320,6 +352,9 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1500, 940);
     setMinimumSize(1024, 680);
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks);
+    auto* settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
+    airSettingsAction_ = settingsMenu->addAction(QStringLiteral("Lufteigenschaften"));
+    connect(airSettingsAction_, &QAction::triggered, this, [this] { setupAirProperties(); });
 
     auto* central = new QWidget(this);
     auto* root = new QVBoxLayout(central);
@@ -524,6 +559,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     runButton_ = new QPushButton(QStringLiteral("Core-Lauf starten"));
     runButton_->setObjectName(QStringLiteral("primaryButton"));
+    runButton_->setProperty("sailforceRunButton", true);
     cancelButton_ = new QPushButton(QStringLiteral("Lauf stoppen"));
     cancelButton_->setObjectName(QStringLiteral("stopSimulation"));
     cancelButton_->setEnabled(false);
@@ -584,6 +620,11 @@ MainWindow::MainWindow(QWidget* parent)
     windForm->addRow(QStringLiteral("Dynamik"), windMode_);
     windForm->addRow(windStatus_);
     panelLayout->addWidget(windPanel_);
+    sailPanel_ = new QGroupBox(QStringLiteral("Segelphysik"));
+    sailLayout_ = new QFormLayout(sailPanel_);
+    sailStatus_ = new QLabel(QStringLiteral("Keine explizite Segelmodellzuordnung."));
+    sailStatus_->setWordWrap(true);
+    panelLayout->addWidget(sailPanel_);
     const auto windInput = [this](QLineEdit* edit, double& stored, bool direction, bool height) {
         if (!edit->isModified()) return;
         bool ok = false;
@@ -786,6 +827,7 @@ MainWindow::MainWindow(QWidget* parent)
     addDockWidget(Qt::BottomDockWidgetArea, valuesDock_);
 
     liveTimer_ = new QTimer(this);
+    liveTimer_->setTimerType(Qt::PreciseTimer);
     liveTimer_->setInterval(liveIntervalMs);
 
     connect(chooseFolderButton_, &QPushButton::clicked, this, [this] { chooseModelFolder(); });
@@ -828,6 +870,14 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     scene_->onPicked = [this](const QString& id) { selectContribution(id); };
+    scene_->onFramePresented = [this] {
+        awaitingPresentation_ = false;
+        if (pendingPresentation_) QTimer::singleShot(0, this, [this] {
+            auto present = std::move(pendingPresentation_);
+            pendingPresentation_ = {};
+            if (present) present();
+        });
+    };
     scene_->onReferencesChanged = [this] {
         storeReferences();
         updateReferenceLabel();
@@ -1317,6 +1367,32 @@ QWidget* MainWindow::buildDisplayPanel()
     layout->addWidget(new QLabel(QStringLiteral("Druckpunkte")));
     layout->addWidget(lateralCheck_);
     layout->addWidget(sailCenterCheck_);
+    aeroCenterCheck_ = new QCheckBox(QStringLiteral("SDP Segel gesamt"));
+    aeroCenterCheck_->setObjectName(QStringLiteral("displayAeroCenter"));
+    aeroCenterCheck_->setChecked(true);
+    aeroIndividualPanel_ = new QWidget;
+    aeroIndividualLayout_ = new QVBoxLayout(aeroIndividualPanel_);
+    aeroIndividualLayout_->setContentsMargins(0, 0, 0, 0);
+    aeroBoundariesCheck_ = new QCheckBox(QStringLiteral("Streifengrenzen"));
+    aeroBoundariesCheck_->setObjectName(QStringLiteral("displayAeroBoundaries"));
+    layout->addWidget(aeroCenterCheck_);
+    layout->addWidget(aeroIndividualPanel_);
+    layout->addWidget(aeroBoundariesCheck_);
+    auto* aeroGrid = new QGridLayout;
+    aeroGrid->addWidget(new QLabel(QStringLiteral("Segellasten")), 0, 0);
+    const std::array<QString, 3> aeroNames{QStringLiteral("Streifen"), QStringLiteral("je Segel"), QStringLiteral("gesamt")};
+    for (int i = 0; i < 3; ++i) {
+        aeroGrid->addWidget(new QLabel(aeroNames[static_cast<std::size_t>(i)]), 0, i + 1);
+        sailForceChecks_[static_cast<std::size_t>(i)] = new QCheckBox;
+        sailMomentChecks_[static_cast<std::size_t>(i)] = new QCheckBox;
+        sailForceChecks_[static_cast<std::size_t>(i)]->setChecked(i != 1);
+        sailMomentChecks_[static_cast<std::size_t>(i)]->setChecked(i == 2);
+        aeroGrid->addWidget(sailForceChecks_[static_cast<std::size_t>(i)], 1, i + 1);
+        aeroGrid->addWidget(sailMomentChecks_[static_cast<std::size_t>(i)], 2, i + 1);
+    }
+    aeroGrid->addWidget(new QLabel(QStringLiteral("Kraft")), 1, 0);
+    aeroGrid->addWidget(new QLabel(QStringLiteral("Moment um S")), 2, 0);
+    layout->addLayout(aeroGrid);
     windArrowsCheck_ = new QCheckBox(QStringLiteral("Windpfeile anzeigen"));
     windArrowsCheck_->setObjectName(QStringLiteral("displayWindArrows"));
     windArrowsCheck_->setChecked(true);
@@ -1355,7 +1431,10 @@ QWidget* MainWindow::buildDisplayPanel()
     valuesCheck_->setChecked(true);
     layout->addWidget(valuesCheck_);
 
-    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_, sailCenterCheck_, windArrowsCheck_};
+    QList<QCheckBox*> displayChecks{forcesCheck_, leverCheck_, lateralCheck_, sailCenterCheck_, windArrowsCheck_,
+        aeroCenterCheck_, aeroBoundariesCheck_};
+    for (auto* check : sailForceChecks_) displayChecks << check;
+    for (auto* check : sailMomentChecks_) displayChecks << check;
     for (auto* check : forceChecks_) {
         displayChecks << check;
     }
@@ -1508,8 +1587,9 @@ MainWindow::~MainWindow()
     scene_->dockNavigation(nullptr);
     shuttingDown_.store(true);
     cancellation_.store(true);
+    if (stateFetchThread_) stateFetchThread_->quit();
     for (auto* thread : openThreads_) thread->wait();
-    for (const auto& thread : {openThread_, simulationThread_, catalogThread_,
+    for (const auto& thread : {openThread_, simulationThread_, stateFetchThread_, catalogThread_,
              fingerprintThread_}) {
         if (thread != nullptr) {
             thread->wait();
@@ -1534,6 +1614,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
 void MainWindow::loadSettings()
 {
     QSettings settings;
+    const double density = settings.value(QStringLiteral("luft/dichte_kg_m3"), 1.225).toDouble();
+    const double viscosity = settings.value(QStringLiteral("luft/kinematische_viskositaet_m2_s"), 1.5e-5).toDouble();
+    if (std::isfinite(density) && density > 0.) airDensity_ = density;
+    if (std::isfinite(viscosity) && viscosity > 0.) airViscosity_ = viscosity;
     const auto geometry = settings.value(QStringLiteral("fenster/geometrie")).toByteArray();
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
@@ -1561,6 +1645,12 @@ void MainWindow::loadSettings()
     restoreCheck(leverCheck_, QStringLiteral("darstellung/hebelarm"));
     restoreCheck(lateralCheck_, QStringLiteral("darstellung/lateraldruckpunkt"));
     restoreCheck(sailCenterCheck_, QStringLiteral("darstellung/ersatz_sdp"));
+    restoreCheck(aeroCenterCheck_, QStringLiteral("darstellung/sailforce_sdp_gesamt"));
+    restoreCheck(aeroBoundariesCheck_, QStringLiteral("darstellung/sailforce_grenzen"));
+    for (std::size_t i = 0; i < sailForceChecks_.size(); ++i) {
+        restoreCheck(sailForceChecks_[i], QStringLiteral("darstellung/sailforce_kraft_%1").arg(i));
+        restoreCheck(sailMomentChecks_[i], QStringLiteral("darstellung/sailforce_moment_%1").arg(i));
+    }
     for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
         auto& style = staticForceStyles_[i];
         const QString key = QStringLiteral("statisch/kraftmenue/%1/").arg(style.key);
@@ -1616,6 +1706,63 @@ void MainWindow::loadSettings()
     applyDisplayOptions();
 }
 
+void MainWindow::setupAirProperties()
+{
+    if (simulationThread_ != nullptr) return;
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Lufteigenschaften"));
+    auto* form = new QFormLayout(&dialog);
+    auto* density = new QLineEdit(QString::number(airDensity_, 'g', 17), &dialog);
+    auto* viscosity = new QLineEdit(QString::number(airViscosity_, 'g', 17), &dialog);
+    density->setObjectName(QStringLiteral("airDensity"));
+    viscosity->setObjectName(QStringLiteral("airViscosity"));
+    form->addRow(QStringLiteral("Dichte (kg/m³)"), density);
+    form->addRow(QStringLiteral("Kinematische Viskosität (m²/s)"), viscosity);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        auto parse = [](QString text, bool* ok) {
+            text.replace(QLatin1Char(','), QLatin1Char('.'));
+            return text.toDouble(ok);
+        };
+        bool densityOk = false, viscosityOk = false;
+        const double rho = parse(density->text(), &densityOk);
+        const double nu = parse(viscosity->text(), &viscosityOk);
+        if (!densityOk || !viscosityOk || !std::isfinite(rho) || !std::isfinite(nu)
+            || rho <= 0. || nu <= 0.) {
+            QMessageBox::warning(&dialog, QStringLiteral("Lufteigenschaften"),
+                QStringLiteral("Beide Werte müssen endliche positive Zahlen sein."));
+            return;
+        }
+        if (validation_.valid && !modelPath_.isEmpty()) {
+            QJsonArray choices;
+            for (auto it = sailActive_.cbegin(); it != sailActive_.cend(); ++it)
+                choices.append(QJsonObject{{QStringLiteral("element_id"), it.key()},
+                    {QStringLiteral("aktiv"), it.value()->isChecked()},
+                    {QStringLiteral("stellwinkel_grad"), sailAngles_.value(it.key())->value()}});
+            const QJsonObject input{{QStringLiteral("sailforce_eingabe"), QJsonObject{
+                {QStringLiteral("luft"), QJsonObject{{QStringLiteral("dichte_kg_m3"), rho},
+                    {QStringLiteral("kinematische_viskositaet_m2_s"), nu}}},
+                {QStringLiteral("segel"), choices}}}};
+            const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
+            const auto error = validateSailforceInput(modelPath_, input,
+                opened ? opened->data.inspection : nullptr);
+            if (!error.isEmpty()) {
+                QMessageBox::warning(&dialog, QStringLiteral("Lufteigenschaften"), error);
+                return;
+            }
+        }
+        airDensity_ = rho;
+        airViscosity_ = nu;
+        QSettings storage;
+        storage.setValue(QStringLiteral("luft/dichte_kg_m3"), rho);
+        storage.setValue(QStringLiteral("luft/kinematische_viskositaet_m2_s"), nu);
+        dialog.accept();
+    });
+    dialog.exec();
+}
+
 void MainWindow::saveDisplaySettings()
 {
     if (!graphicsReady_ || workspaceIndex_ <= 0) return;
@@ -1631,6 +1778,12 @@ void MainWindow::saveDisplaySettings()
     settings.setValue(QStringLiteral("darstellung/hebelarm"), leverCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/lateraldruckpunkt"), lateralCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/ersatz_sdp"), sailCenterCheck_->isChecked());
+    settings.setValue(QStringLiteral("darstellung/sailforce_sdp_gesamt"), aeroCenterCheck_->isChecked());
+    settings.setValue(QStringLiteral("darstellung/sailforce_grenzen"), aeroBoundariesCheck_->isChecked());
+    for (std::size_t i = 0; i < sailForceChecks_.size(); ++i) {
+        settings.setValue(QStringLiteral("darstellung/sailforce_kraft_%1").arg(i), sailForceChecks_[i]->isChecked());
+        settings.setValue(QStringLiteral("darstellung/sailforce_moment_%1").arg(i), sailMomentChecks_[i]->isChecked());
+    }
     settings.setValue(QStringLiteral("darstellung/skala_kraft"), forceScaleCombo_->currentData());
     settings.setValue(QStringLiteral("darstellung/skala_moment"), momentScaleCombo_->currentData());
     for (const auto& style : staticForceStyles_) {
@@ -1800,6 +1953,14 @@ void MainWindow::applyDisplayOptions(bool restoreHistory)
     options.leverArm = leverCheck_->isChecked();
     options.lateralCenter = lateralCheck_->isChecked();
     options.sailCenter = sailCenterCheck_->isChecked();
+    options.aeroCenter = aeroCenterCheck_->isChecked();
+    for (auto it = aeroIndividualChecks_.cbegin(); it != aeroIndividualChecks_.cend(); ++it)
+        if (it.value()->isChecked()) options.aeroIndividualCenters.insert(it.key());
+    options.aeroBoundaries = aeroBoundariesCheck_->isChecked();
+    for (std::size_t i = 0; i < sailForceChecks_.size(); ++i) {
+        options.sailForce[i] = sailForceChecks_[i]->isChecked();
+        options.sailMoment[i] = sailMomentChecks_[i]->isChecked();
+    }
     options.windArrows = windArrowsCheck_->isChecked();
     if (workspaceIndex_ > 0) {
         options.forces = false;
@@ -1842,14 +2003,17 @@ void MainWindow::updateStaticForceMenu()
     for (std::size_t i = 0; i < staticForceStyles_.size(); ++i) {
         const auto& style = staticForceStyles_[i];
         auto* check = staticForceChecks_[i];
-        check->setStyleSheet(QStringLiteral("QCheckBox { color: %1; }").arg(style.color));
+        const auto checkStyle = QStringLiteral("QCheckBox { color: %1; }").arg(style.color);
+        if (check->styleSheet() != checkStyle) check->setStyleSheet(checkStyle);
         check->setEnabled(hasForces_ && sums[i].available);
         check->setToolTip(style.explanation + QStringLiteral("\n")
             + (i >= 5 ? QStringLiteral(
                 "Resultierende, Bezug S: kein nachgewiesener Angriffspunkt und keine vollständige Momentenäquivalenz.\n") : QString())
             + (hasForces_ ? sums[i].diagnostic : QStringLiteral("Noch kein Core-Ergebnis")));
-        staticColorButtons_[i]->setStyleSheet(
-            QStringLiteral("QPushButton { background-color: %1; border: 1px solid #8794a2; }").arg(style.color));
+        const auto buttonStyle = QStringLiteral(
+            "QPushButton { background-color: %1; border: 1px solid #8794a2; }").arg(style.color);
+        if (staticColorButtons_[i]->styleSheet() != buttonStyle)
+            staticColorButtons_[i]->setStyleSheet(buttonStyle);
         staticColorButtons_[i]->setToolTip(QStringLiteral("%1: %2").arg(style.name, style.color));
     }
 }
@@ -2231,21 +2395,26 @@ void MainWindow::updateVisualizationFingerprint(const QString& modelId)
 
 void MainWindow::resetResults()
 {
+    renderedSailVersions_.clear();
     live_.reset();
     for (auto it = movementSliders_.cbegin(); it != movementSliders_.cend(); ++it) {
         const auto id = it.key();
-        const bool rudder = movementIsRudder_.value(id, false);
-        const double initial = rudder ? 0.0 : 100.0;
+        const double initial = stationaryMovements_.value(id)->value();
+        const auto range = movementSliderRanges_.value(id);
+        const double fraction = range[1] > range[0]
+            ? (initial - range[0]) / (range[1] - range[0]) : 0.0;
         const QSignalBlocker blocker(it.value());
-        it.value()->setValue(rudder ? 900 : 1000);
+        it.value()->setValue(static_cast<int>(std::lround(
+            std::clamp(fraction, 0.0, 1.0) * it.value()->maximum())));
         movementConfirmedValues_[id] = initial;
         movementInputPending_[id] = false;
         if (auto* label = movementValueLabels_.value(id, nullptr))
-            label->setText(movementValueText(initial, initial, rudder));
+            label->setText(movementValueText(initial, initial, movementValueUnits_.value(id)));
     }
     states_.clear();
     runtimeInfo_.clear();
     displayedIndex_ = -1;
+    desiredStateIndex_ = -1;
     updateSliderRange(0);
     stateLabel_->setText(QStringLiteral("Zustand 0 / 0"));
     scene_->clearState();
@@ -2344,6 +2513,20 @@ void MainWindow::openModel(const QString& id)
                             .arg(QString::fromStdString(diagnostic.fehler_id),
                                 QString::fromStdString(diagnostic.text));
                     validation.diagnostic = diagnostics.join(QLatin1Char('\n'));
+                    if (validation.valid) {
+                        try {
+                            const auto model = segelphysik::modellAusInspektion(*opened->data.inspection);
+                            const auto prepared = segelphysik::sailforce_start(model, {},
+                                std::filesystem::path(selected.path.toStdWString()));
+                            opened->sailIds.clear();
+                            opened->sailDiagnostic.clear();
+                            if (prepared.sailforce)
+                                for (const auto& sail : prepared.sailforce->konfiguration.segel)
+                                    opened->sailIds.push_back(QString::fromStdString(sail.element_id));
+                        } catch (const std::exception& exception) {
+                            opened->sailDiagnostic = QString::fromUtf8(exception.what());
+                        }
+                    }
                 } else {
                     validation.diagnostic = selected.diagnostics.join(QLatin1Char('\n'));
                 }
@@ -2421,6 +2604,7 @@ void MainWindow::modelDisplayOpened(const ModelEntry& entry,
     scene_->setElementGroups(opened->data.elementGroups);
     for (auto* view : staticScenes_) view->setElementGroups(opened->data.elementGroups);
     configureMovementControls(opened->data);
+    configureSailControls(*opened);
     if (opened->parts.isEmpty()) {
         scene_->clearModel();
         for (auto* view : staticScenes_) view->clearModel();
@@ -2446,7 +2630,7 @@ void MainWindow::modelDisplayOpened(const ModelEntry& entry,
         cameraCombo_->setCurrentIndex(0);
     }
     initialReferences(opened->data);
-    applyGraphicsProfile();
+    applyDisplayOptions();
     clearValues();
     statusLabel_->setText(QStringLiteral("Objektbaum und Darstellung geladen"));
     statusLabel_->setToolTip(QStringLiteral(
@@ -2457,10 +2641,73 @@ void MainWindow::modelDisplayOpened(const ModelEntry& entry,
     setBusy(false);
 }
 
+void MainWindow::configureSailControls(const OpenedModel& model)
+{
+    while (auto* item = aeroIndividualLayout_->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    aeroIndividualChecks_.clear();
+    while (auto* item = sailLayout_->takeAt(0)) {
+        if (item->widget() && item->widget() != sailStatus_) delete item->widget();
+        delete item;
+    }
+    sailActive_.clear();
+    sailAngles_.clear();
+    sailPending_.clear();
+    sailPendingRevision_.clear();
+    for (const auto& id : model.sailIds) {
+        auto* pointCheck = new QCheckBox(QStringLiteral("SDP %1").arg(id), aeroIndividualPanel_);
+        const QString pointKey = QStringLiteral("darstellung/sailforce_sdp/%1/%2").arg(modelId_, id);
+        pointCheck->setChecked(QSettings().value(pointKey, false).toBool());
+        aeroIndividualChecks_.insert(id, pointCheck);
+        aeroIndividualLayout_->addWidget(pointCheck);
+        connect(pointCheck, &QCheckBox::toggled, this, [this, pointKey](bool on) {
+            QSettings().setValue(pointKey, on);
+            applyDisplayOptions();
+        });
+        auto* row = new QWidget(sailPanel_);
+        auto* layout = new QHBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* active = new QCheckBox(QStringLiteral("aktiv"), row);
+        const QString key = QStringLiteral("sailforce/%1/%2/aktiv").arg(modelId_, id);
+        active->setChecked(QSettings().value(key, true).toBool());
+        auto* angle = new QDoubleSpinBox(row);
+        angle->setRange(-180., 180.);
+        angle->setDecimals(2);
+        angle->setSuffix(QStringLiteral("°"));
+        layout->addWidget(active);
+        layout->addWidget(angle);
+        sailActive_.insert(id, active);
+        sailAngles_.insert(id, angle);
+        sailLayout_->addRow(id, row);
+        connect(active, &QCheckBox::toggled, this, [key](bool checked) {
+            QSettings().setValue(key, checked);
+        });
+        connect(angle, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, id](double value) {
+            if (!live_ || simulationThread_ == nullptr || !modeCombo_->currentData().toBool()) return;
+            QString error;
+            const auto priorRevision = live_->progress().sailforceRevision;
+            if (!live_->setSailAngle(id, value, &error)) {
+                sailStatus_->setText(error);
+                return;
+            }
+            sailPending_.insert(id, value);
+            sailPendingRevision_.insert(id, priorRevision);
+            sailStatus_->setText(QStringLiteral("%1: Stellung ausstehend bis zur nächsten Schrittgrenze.").arg(id));
+        });
+    }
+    sailStatus_->setText(!model.sailDiagnostic.isEmpty() ? model.sailDiagnostic
+        : model.sailIds.isEmpty() ? QStringLiteral("Keine explizite Segelmodellzuordnung.")
+        : QStringLiteral("Aktivierung gilt für den nächsten Lauf."));
+    sailLayout_->addRow(sailStatus_);
+}
+
 void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<OpenedModel>& opened,
     const ModelValidation& validation)
 {
     QString error;
+    renderedSailVersions_.clear();
     inspection_->setSnapshot(opened->data.inspection, catalog_.catalog, true,
         opened->sailConfiguration);
     inspection_->setEnabled(true);
@@ -2470,6 +2717,7 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
     for (auto* view : staticScenes_) view->setHydrodynamicRoles(hydrodynamicRoles_);
     for (auto* view : staticScenes_) view->setElementGroups(opened->data.elementGroups);
     configureMovementControls(opened->data);
+    configureSailControls(*opened);
     if (opened->parts.isEmpty()) {
         scene_->clearModel();
         for (auto* view : staticScenes_) view->clearModel();
@@ -2506,7 +2754,7 @@ void MainWindow::modelOpened(const ModelEntry& entry, const std::shared_ptr<Open
         showError(QStringLiteral("Kameraansicht"), error);
     }
     initialReferences(opened->data);
-    applyGraphicsProfile();
+    applyDisplayOptions();
     clearValues();
     validation_ = validation;
     QStringList tooltip{QStringLiteral("%1 · Fassung %2").arg(entry.id, entry.version),
@@ -2546,7 +2794,9 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
     }
     movementSliders_.clear();
     movementValueLabels_.clear();
-    movementIsRudder_.clear();
+    movementSliderRanges_.clear();
+    movementCoreRanges_.clear();
+    movementValueUnits_.clear();
     movementConfirmedValues_.clear();
     movementInputPending_.clear();
     stationaryMovements_.clear();
@@ -2555,13 +2805,48 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
     for (const auto& id : ids) {
         const auto definition = displayData.elementMovements.value(id);
         const bool rudder = definition.ruderwinkel;
+        const auto groupId = displayData.movementGroups.value(id);
+        const bool groupMovement = !groupId.isEmpty();
+        const auto groupPreview = groupMovement && displayData.inspection
+            ? segelphysik::getGroupMovementPreview(*displayData.inspection,
+                groupId.toStdString())
+            : std::nullopt;
         auto* slider = new QSlider(Qt::Horizontal, movementPanel_);
         slider->setObjectName(QStringLiteral("movement_%1").arg(id));
         slider->setRange(0, rudder ? 1800 : 1000);
-        slider->setValue(rudder ? 900 : 1000);
         slider->setEnabled(false);
-        auto* valueLabel = new QLabel(movementValueText(rudder ? 0.0 : 100.0,
-            rudder ? 0.0 : 100.0, rudder), movementPanel_);
+        const auto preview = !groupMovement && displayData.inspection
+            ? segelphysik::getMovementPreview(*displayData.inspection, id.toStdString())
+            : std::nullopt;
+        const bool movementAvailable = (groupMovement && groupPreview.has_value())
+            || preview.has_value();
+        const double defaultValue = groupMovement && groupPreview
+            ? groupPreview->reference_value
+            : preview ? preview->reference_value : (rudder ? 0.0 : 100.0);
+        const std::array<double, 2> sliderRange{
+            groupMovement && groupPreview && groupPreview->minimum_value
+                ? *groupPreview->minimum_value : rudder ? -90.0 : 0.0,
+            groupMovement && groupPreview && groupPreview->maximum_value
+                ? *groupPreview->maximum_value : rudder ? 90.0 : 100.0};
+        const QString unit = groupMovement && groupPreview
+            ? QString::fromStdString(groupPreview->value_unit)
+            : preview ? QString::fromStdString(preview->value_unit)
+                      : rudder ? QStringLiteral("deg") : QStringLiteral("%");
+        auto coreRange = sliderRange;
+        if (groupMovement && !rudder && groupPreview &&
+            definition.art == segelphysik::Bewegungsart::drehen && unit == QStringLiteral("deg")) {
+            for (auto& value : coreRange)
+                value = 100.0 - (value - groupPreview->reference_value) / 0.9;
+        }
+        movementSliderRanges_.insert(id, sliderRange);
+        movementCoreRanges_.insert(id, coreRange);
+        movementValueUnits_.insert(id, unit);
+        const int sliderMaximum = slider->maximum();
+        const double sliderFraction = sliderRange[1] > sliderRange[0]
+            ? (defaultValue - sliderRange[0]) / (sliderRange[1] - sliderRange[0]) : 0.0;
+        slider->setValue(static_cast<int>(std::lround(
+            std::clamp(sliderFraction, 0.0, 1.0) * sliderMaximum)));
+        auto* valueLabel = new QLabel(movementValueText(defaultValue, defaultValue, unit), movementPanel_);
         valueLabel->setObjectName(QStringLiteral("movementValue_%1").arg(id));
         valueLabel->setMinimumWidth(125);
         auto* row = new QWidget(movementPanel_);
@@ -2574,21 +2859,25 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
         fixed->setObjectName(QStringLiteral("stationaryMovement_%1").arg(id));
         fixed->setDecimals(3);
         fixed->setKeyboardTracking(false);
-        const auto preview = displayData.inspection
-            ? segelphysik::getMovementPreview(*displayData.inspection, id.toStdString())
-            : std::nullopt;
-        fixed->setRange(preview && preview->minimum_value ? *preview->minimum_value : -1e6,
-            preview && preview->maximum_value ? *preview->maximum_value : 1e6);
-        fixed->setProperty("coreMovementAvailable", preview.has_value());
-        if (preview) {
-            fixed->setValue(preview->reference_value);
-            fixed->setSuffix(QStringLiteral(" ") + QString::fromStdString(preview->value_unit));
+        const auto minimum = preview && preview->minimum_value ? *preview->minimum_value
+            : groupMovement && groupPreview && groupPreview->minimum_value
+                ? *groupPreview->minimum_value : rudder ? -1e6 : 0.0;
+        const auto maximum = preview && preview->maximum_value ? *preview->maximum_value
+            : groupMovement && groupPreview && groupPreview->maximum_value
+                ? *groupPreview->maximum_value : rudder ? 1e6 : 100.0;
+        fixed->setRange(minimum, maximum);
+        fixed->setProperty("coreMovementAvailable", movementAvailable);
+        if (movementAvailable) {
+            fixed->setValue(defaultValue);
+            fixed->setSuffix(QStringLiteral(" ") + unit);
         } else {
             fixed->setSpecialValueText(QStringLiteral("Core-Bewegungsmetadaten fehlen"));
             fixed->setValue(fixed->minimum());
         }
-        const bool bounded = preview && preview->minimum_value && preview->maximum_value;
-        fixed->setToolTip(!preview
+        const bool bounded = movementAvailable &&
+            ((preview && preview->minimum_value && preview->maximum_value) ||
+             (groupPreview && groupPreview->minimum_value && groupPreview->maximum_value));
+        fixed->setToolTip(!movementAvailable
             ? QStringLiteral("Statischer Lauf gesperrt: Core-Bewegungsmetadaten für dieses Element fehlen.")
             : (rudder
             ? QStringLiteral("Core-Ruderwinkel in Grad.")
@@ -2601,7 +2890,7 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
         connect(fixed, &QDoubleSpinBox::valueChanged, this, [this, id, fixed] {
             if (live_ && simulationThread_ && lastRunDynamic_.value_or(false)) {
                 QString error;
-                if (!live_->setMovementValue(id, fixed->value(), &error)) {
+                if (!live_->setMovementValue(id, coreMovementValue(id, fixed->value()), &error)) {
                     showError(QStringLiteral("Ruder-/Schwertstellung"), error);
                     return;
                 }
@@ -2615,24 +2904,29 @@ void MainWindow::configureMovementControls(const ModelDisplayData& displayData)
         });
         movementSliders_.insert(id, slider);
         movementValueLabels_.insert(id, valueLabel);
-        movementIsRudder_.insert(id, rudder);
-        movementConfirmedValues_.insert(id, rudder ? 0.0 : 100.0);
+        movementConfirmedValues_.insert(id, defaultValue);
         movementInputPending_.insert(id, false);
         connect(slider, &QSlider::valueChanged, this, [this, id, slider, valueLabel, rudder](int position) {
-            const double value = rudder ? (position - 900) / 10.0 : position / 10.0;
+            const auto range = movementSliderRanges_.value(id);
+            const double fraction = static_cast<double>(position) / slider->maximum();
+            const double value = range[0] + fraction * (range[1] - range[0]);
             movementInputPending_[id] = true;
             valueLabel->setText(movementValueText(value,
-                movementConfirmedValues_.value(id, rudder ? 0.0 : 100.0), rudder));
+                movementConfirmedValues_.value(id, rudder ? 0.0 : 100.0),
+                movementValueUnits_.value(id)));
             if (!live_ || simulationThread_ == nullptr) return;
             QString error;
-            if (!live_->setMovementValue(id, value, &error)) {
+            if (!live_->setMovementValue(id, coreMovementValue(id, value), &error)) {
                 movementInputPending_[id] = false;
                 const double confirmed = movementConfirmedValues_.value(id, rudder ? 0.0 : 100.0);
+                const auto sliderRange = movementSliderRanges_.value(id);
+                const double confirmedFraction = sliderRange[1] > sliderRange[0]
+                    ? (confirmed - sliderRange[0]) / (sliderRange[1] - sliderRange[0]) : 0.0;
                 const QSignalBlocker blocker(slider);
-                slider->setValue(rudder
-                    ? static_cast<int>(std::lround((confirmed + 90.0) * 10.0))
-                    : static_cast<int>(std::lround(confirmed * 10.0)));
-                valueLabel->setText(movementValueText(confirmed, confirmed, rudder));
+                slider->setValue(static_cast<int>(std::lround(
+                    std::clamp(confirmedFraction, 0.0, 1.0) * slider->maximum())));
+                valueLabel->setText(movementValueText(confirmed, confirmed,
+                    movementValueUnits_.value(id)));
                 showError(QStringLiteral("Ruder-/Schwertstellung"), error);
             }
         });
@@ -2649,24 +2943,47 @@ void MainWindow::updateMovementControls(const QJsonObject& state)
         auto* slider = movementSliders_.value(id, nullptr);
         auto* label = movementValueLabels_.value(id, nullptr);
         if (slider == nullptr || label == nullptr || !value.isDouble()) continue;
-        const bool rudder = movementIsRudder_.value(id, false);
-        const double setting = value.toDouble();
+        const double setting = displayMovementValue(id, value.toDouble());
         movementConfirmedValues_[id] = setting;
-        const double requested = rudder
-            ? (slider->value() - 900) / 10.0 : slider->value() / 10.0;
+        const auto range = movementSliderRanges_.value(id);
+        const double requested = range[0] +
+            static_cast<double>(slider->value()) / slider->maximum() *
+            (range[1] - range[0]);
         const bool pending = movementInputPending_.value(id, false);
         if (pending && std::abs(requested - setting) < 1e-9)
             movementInputPending_[id] = false;
         if (!movementInputPending_.value(id, false)) {
             const QSignalBlocker blocker(slider);
-            slider->setValue(rudder
-                ? static_cast<int>(std::lround((setting + 90.0) * 10.0))
-                : static_cast<int>(std::lround(setting * 10.0)));
+            const double fraction = range[1] > range[0]
+                ? (setting - range[0]) / (range[1] - range[0]) : 0.0;
+            slider->setValue(static_cast<int>(std::lround(
+                std::clamp(fraction, 0.0, 1.0) * slider->maximum())));
         }
         const double displayedRequest = movementInputPending_.value(id, false)
             ? requested : setting;
-        label->setText(movementValueText(displayedRequest, setting, rudder));
+        label->setText(movementValueText(displayedRequest, setting,
+            movementValueUnits_.value(id)));
     }
+}
+
+double MainWindow::coreMovementValue(const QString& elementId, double displayValue) const
+{
+    const auto displayRange = movementSliderRanges_.value(elementId);
+    const auto coreRange = movementCoreRanges_.value(elementId, displayRange);
+    const double span = displayRange[1] - displayRange[0];
+    if (!(span > 0.0)) return coreRange[0];
+    const double fraction = (displayValue - displayRange[0]) / span;
+    return coreRange[0] + fraction * (coreRange[1] - coreRange[0]);
+}
+
+double MainWindow::displayMovementValue(const QString& elementId, double coreValue) const
+{
+    const auto displayRange = movementSliderRanges_.value(elementId);
+    const auto coreRange = movementCoreRanges_.value(elementId, displayRange);
+    const double span = coreRange[1] - coreRange[0];
+    if (std::abs(span) <= 1e-12) return displayRange[0];
+    const double fraction = (coreValue - coreRange[0]) / span;
+    return displayRange[0] + fraction * (displayRange[1] - displayRange[0]);
 }
 
 void MainWindow::startSimulation()
@@ -2740,7 +3057,8 @@ void MainWindow::startValidatedSimulation()
         stepSpin_->setValue(step);
         realtimeCheck_->setChecked(paced->isChecked());
     }
-    QJsonObject start;
+    QJsonObject start = nextRunInitialState_;
+    nextRunInitialState_ = {};
     lastRunDynamic_ = dynamic;
     cancellation_.store(false);
     resetResults();
@@ -2768,6 +3086,16 @@ void MainWindow::startValidatedSimulation()
         windStatus_->setText(QString::fromStdString(mast.diagnose));
     }
     start.insert(QStringLiteral("wind_eingabe"), wind);
+    QJsonArray sailChoices;
+    for (auto it = sailActive_.cbegin(); it != sailActive_.cend(); ++it)
+        sailChoices.append(QJsonObject{{QStringLiteral("element_id"), it.key()},
+            {QStringLiteral("aktiv"), it.value()->isChecked()},
+            {QStringLiteral("stellwinkel_grad"), sailAngles_.value(it.key())->value()}});
+    start.insert(QStringLiteral("sailforce_eingabe"), QJsonObject{
+        {QStringLiteral("luft"), QJsonObject{
+            {QStringLiteral("dichte_kg_m3"), airDensity_},
+            {QStringLiteral("kinematische_viskositaet_m2_s"), airViscosity_}}},
+        {QStringLiteral("segel"), sailChoices}});
     stationary.insert(QStringLiteral("aktiv"), stationaryForceActive_->isChecked());
     stationary.insert(QStringLiteral("kurvenfahrt"), true);
     stationary.insert(QStringLiteral("modellfest"), true);
@@ -2780,10 +3108,11 @@ void MainWindow::startValidatedSimulation()
     stationary.insert(QStringLiteral("angriffspunkt_modell_m"), point);
     for (auto it = stationaryMovements_.cbegin(); it != stationaryMovements_.cend(); ++it)
         settings.append(QJsonObject{{QStringLiteral("element_id"), it.key()},
-            {QStringLiteral("wert"), it.value()->value()}});
+            {QStringLiteral("wert"), coreMovementValue(it.key(), it.value()->value())}});
     stationary.insert(QStringLiteral("stellungen"), settings);
     if (dynamic) {
         start.insert(QStringLiteral("dynamische_fremdkraft"), stationary);
+        lastRunInput_ = start;
         startLiveSimulation(duration, step, realtimeCheck_->isChecked(), start);
         return;
     }
@@ -2824,6 +3153,11 @@ void MainWindow::startValidatedSimulation()
 
 void MainWindow::startLiveSimulation(double duration, double step, bool paced, const QJsonObject& start)
 {
+    performanceSamples_ = {};
+    lastFetchTimings_ = {};
+    nextStateFetch_ = {};
+    pendingPresentation_ = {};
+    awaitingPresentation_ = false;
     const auto path = modelPath_;
     const auto validation = validation_;
     const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
@@ -2863,6 +3197,18 @@ void MainWindow::startPreparedLiveSimulation(
     }
     live_ = live;
     followLive_ = true;
+    QString initialError;
+    const auto initial = live->initialStateJson();
+    if (scene_->updatesActive() && !scene_->appendMotionStates({initial}, &initialError)) {
+        showError(QStringLiteral("Core-Startzustand"), initialError);
+        setBusy(false);
+        return;
+    }
+    displayFetchedState(0, initial, initialError);
+    if (cancellation_.load()) {
+        setBusy(false);
+        return;
+    }
     statusLabel_->setText(paced ? QStringLiteral("Dynamik läuft in Echtzeit …")
                                 : QStringLiteral("Dynamik läuft ungebremst …"));
 
@@ -2879,7 +3225,7 @@ void MainWindow::startPreparedLiveSimulation(
         }
         simulationFinished();
     });
-    thread->start();
+    thread->start(QThread::HighPriority);
     cancelButton_->setEnabled(true);
     liveTimer_->start();
     updateLiveProgress();
@@ -3053,25 +3399,230 @@ void MainWindow::displayState(qsizetype index, bool force)
     if (index < 0 || index >= count) {
         return;
     }
-    const bool live = live_ && simulationThread_ != nullptr;
-    const QString suffix = live
+    const bool isLive = live_ && simulationThread_ != nullptr;
+    const QString suffix = isLive
         ? (followLive_ ? QStringLiteral("  · live") : QStringLiteral("  · Rückblick"))
         : QString();
     stateLabel_->setText(QStringLiteral("Zustand %1 / %2%3").arg(index + 1).arg(count).arg(suffix));
+    if (live_) desiredStateIndex_ = index;
     if (index == displayedIndex_ && !force) {
+        return;
+    }
+    if (live_) {
+        desiredStateIndex_ = index;
+        if (pendingPresentation_ && (!isLive || !scene_->updatesActive())) {
+            auto present = std::move(pendingPresentation_);
+            pendingPresentation_ = {};
+            awaitingPresentation_ = false;
+            present();
+            return;
+        }
+        if (stateFetchBusy_ || (isLive && pendingPresentation_)) return;
+        const auto live = live_;
+        const int generation = simulationGeneration_;
+        auto state = std::make_shared<QJsonObject>();
+        auto error = std::make_shared<QString>();
+        auto timings = std::make_shared<LiveSimulation::JsonTimings>();
+        auto fetchedIndex = std::make_shared<qsizetype>(index);
+        const bool fetchLatest = followLive_ && simulationThread_ != nullptr;
+        const auto now = std::chrono::steady_clock::now();
+        auto readyTime = std::make_shared<std::chrono::steady_clock::time_point>();
+        const auto due = fetchLatest ? std::max(now, nextStateFetch_) : now;
+        if (fetchLatest) nextStateFetch_ = due + std::chrono::milliseconds(24);
+        const auto motionBegin = scene_->motionStateCount();
+        const auto prepareMotion = scene_->motionInputPreparer();
+        const auto prepareWaterlines = scene_->waterlinePreparer();
+        auto waterlines = std::make_shared<std::shared_ptr<const PreparedWaterlines>>();
+        auto motion = std::make_shared<QVector<watermotion::Input>>();
+        auto preparedForces = std::make_shared<forcedisplay::ForceState>();
+        const bool fetchMotion = scene_->updatesActive();
+        auto work = [live, state, error, timings, fetchedIndex, fetchLatest, due,
+                                         motionBegin, prepareMotion, motion, fetchMotion, preparedForces,
+                                         now, readyTime, prepareWaterlines, waterlines] {
+            waitForDisplayDeadline(due);
+            if (fetchLatest) *fetchedIndex = std::max<qsizetype>(0, live->progress().states - 1);
+            *state = live->stateJson(*fetchedIndex, error.get(), timings.get());
+            if (error->isEmpty()) {
+                try {
+                    const auto begin = std::chrono::steady_clock::now();
+                    *preparedForces = forcedisplay::parseForceState(*state);
+                    timings->forceParseMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - begin).count();
+                } catch (const std::exception& exception) {
+                    *error = QString::fromUtf8(exception.what());
+                }
+            }
+            if (fetchMotion && error->isEmpty() && motionBegin <= *fetchedIndex) {
+                try {
+                    const auto begin = std::chrono::steady_clock::now();
+                    const auto rawMotion = live->motionStates(motionBegin, *fetchedIndex + 1, error.get());
+                    const auto readEnd = std::chrono::steady_clock::now();
+                    timings->motionReadMs = std::chrono::duration<double, std::milli>(readEnd - begin).count();
+                    timings->motionStates = rawMotion.size();
+                    if (error->isEmpty()) *motion = prepareMotion(rawMotion);
+                    timings->motionPrepareMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - readEnd).count();
+                    timings->motionMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - begin).count();
+                } catch (const std::exception& exception) {
+                    *error = QString::fromUtf8(exception.what());
+                }
+            }
+            if (fetchMotion && error->isEmpty()) {
+                try {
+                    *waterlines = prepareWaterlines(*state);
+                } catch (const std::exception& exception) {
+                    *error = QString::fromUtf8(exception.what());
+                }
+            }
+            *readyTime = std::chrono::steady_clock::now();
+            timings->fetchMs = std::chrono::duration<double, std::milli>(*readyTime - now).count();
+        };
+        auto onReady = [this, live, generation, state, error, timings,
+                                                  fetchedIndex, motionBegin, motion, preparedForces, readyTime,
+                                                  waterlines] {
+            stateFetchBusy_ = false;
+            if (shuttingDown_.load() || generation != simulationGeneration_ || live_ != live) return;
+            auto present = [this, live, generation, state, error, timings, fetchedIndex,
+                               motionBegin, motion, preparedForces, readyTime, waterlines] {
+                if (shuttingDown_.load() || generation != simulationGeneration_ || live_ != live) return;
+                timings->guiWaitMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - *readyTime).count();
+                lastFetchTimings_ = *timings;
+                const auto readyIndex = *fetchedIndex;
+                if ((followLive_ || desiredStateIndex_ == readyIndex) && error->isEmpty()
+                    && scene_->motionStateCount() >= motionBegin
+                    && scene_->motionStateCount() <= readyIndex) {
+                    const auto skip = scene_->motionStateCount() - motionBegin;
+                    scene_->appendMotionInputs(motion->mid(skip), error.get());
+                }
+                if (followLive_ && simulationThread_ != nullptr) {
+                    // Prefetch while the GUI renders this complete immutable snapshot.
+                    desiredStateIndex_ = std::max(readyIndex, live->progress().states - 1);
+                    displayState(desiredStateIndex_, true);
+                    if (readyIndex > displayedIndex_)
+                        displayFetchedState(readyIndex, *state, *error, preparedForces.get(), waterlines->get());
+                } else if (desiredStateIndex_ == readyIndex)
+                    displayFetchedState(readyIndex, *state, *error, preparedForces.get(), waterlines->get());
+                else if (desiredStateIndex_ >= 0) displayState(desiredStateIndex_, true);
+            };
+            if (followLive_ && simulationThread_ && scene_->updatesActive() && awaitingPresentation_)
+                pendingPresentation_ = std::move(present);
+            else present();
+        };
+        if (!stateFetchThread_) {
+            stateFetchThread_ = new QThread(this);
+            stateReader_ = new QObject;
+            stateReader_->moveToThread(stateFetchThread_);
+            connect(stateFetchThread_, &QThread::finished, stateReader_, &QObject::deleteLater);
+            stateFetchThread_->start(QThread::LowPriority);
+        }
+        stateFetchBusy_ = true;
+        QMetaObject::invokeMethod(stateReader_,
+            [this, work = std::move(work), onReady = std::move(onReady)]() mutable {
+                work();
+                QMetaObject::invokeMethod(this, std::move(onReady), Qt::QueuedConnection);
+            }, Qt::QueuedConnection);
         return;
     }
     QString error;
     const auto state = stateAt(index, &error);
+    displayFetchedState(index, state, error);
+}
+
+void MainWindow::displayFetchedState(qsizetype index, const QJsonObject& state, QString error,
+    const forcedisplay::ForceState* preparedForces, const PreparedWaterlines* waterlines)
+{
+    QElapsedTimer profileTimer;
+    profileTimer.start();
+    const auto renderTotals = [this] {
+        std::array<double, 6> totals{scene_->workCounters().renderMs, scene_->workCounters().waterCutsMs,
+            scene_->workCounters().overlaysMs, scene_->workCounters().environmentMs,
+            scene_->workCounters().opaqueMs, scene_->workCounters().translucentMs};
+        for (auto* view : staticScenes_) {
+            totals[0] += view->workCounters().renderMs;
+            totals[1] += view->workCounters().waterCutsMs;
+            totals[2] += view->workCounters().overlaysMs;
+            totals[3] += view->workCounters().environmentMs;
+            totals[4] += view->workCounters().opaqueMs;
+            totals[5] += view->workCounters().translucentMs;
+        }
+        return totals;
+    };
+    const auto beforeRender = renderTotals();
+    const double mainRenderBefore = scene_->workCounters().renderMs;
+    const auto layersBefore = scene_->workCounters();
     forcedisplay::ForceState forces;
     try {
         if (state.isEmpty()) {
             throw std::runtime_error(error.toStdString());
         }
-        forces = forcedisplay::parseForceState(state);
+        forces = preparedForces ? *preparedForces : forcedisplay::parseForceState(state);
     } catch (const std::exception& exception) {
         error = QString::fromUtf8(exception.what());
     }
+    const double parseMs = profileTimer.nsecsElapsed() / 1e6;
+    if (error.isEmpty() && forces.aero && !forces.aero->sails.isEmpty()) {
+        const auto opened = modelCache_.value(cacheKey(modelId_, modelVersion_));
+        if (!opened || !opened->sailConfiguration
+            || opened->sailConfiguration->modell_fassung != validation_.fingerprint.toStdString()) {
+            error = QStringLiteral("Bestätigte Segelgeometrie zur Modellfassung fehlt.");
+        } else {
+            for (const auto& sail : forces.aero->sails) {
+                const QString version = sail.sourceVersion + QLatin1Char(':')
+                    + QString::number(sail.angle, 'g', 17) + QLatin1Char(':')
+                    + QString::number(sail.mirrored);
+                if (renderedSailVersions_.value(sail.elementId) == version) continue;
+                try {
+                    const auto key = validation_.fingerprint + QLatin1Char(':')
+                        + sail.elementId + QLatin1Char(':') + version;
+                    auto* parts = confirmedSailGeometry_.object(key);
+                    if (!parts) {
+                        const auto groupId = opened->data.elementGroups.value(sail.elementId);
+                        if (!opened->data.inspection || groupId.isEmpty()) {
+                            error = QStringLiteral("Bestätigte Segelstellung kann nicht dargestellt werden: %1").arg(sail.elementId);
+                            break;
+                        }
+                        const auto groupPreview = segelphysik::getGroupMovementPreview(
+                            *opened->data.inspection, groupId.toStdString());
+                        if (!groupPreview) {
+                            renderedSailVersions_.insert(sail.elementId, version);
+                            continue;
+                        }
+                        const auto requestedValue = groupPreview->reference_value + sail.angle;
+                        const auto posedGroup = segelphysik::getGroupMovementPreview(
+                            *opened->data.inspection, groupId.toStdString(), requestedValue);
+                        if (!posedGroup) {
+                            error = QStringLiteral("JSON-Gruppenstellung kann nicht dargestellt werden: %1").arg(groupId);
+                            break;
+                        }
+                        const auto requestedPose = std::find_if(posedGroup->poses.begin(),
+                            posedGroup->poses.end(),
+                            [](const auto& pose) { return pose.label == "requested"; });
+                        if (requestedPose == posedGroup->poses.end()) {
+                            error = QStringLiteral("JSON-Gruppenstellung kann nicht dargestellt werden: %1").arg(groupId);
+                            break;
+                        }
+                        parts = new QVector<DisplayPart>(toDisplayParts(requestedPose->meshes));
+                        confirmedSailGeometry_.insert(key, parts);
+                    }
+                    QSet<QString> posedElements;
+                    for (const auto& part : *parts) posedElements.insert(part.elementId);
+                    for (const auto& elementId : posedElements) {
+                        if (!scene_->setSailGeometry(elementId, *parts, &error)) break;
+                        for (auto* view : staticScenes_)
+                            if (!view->setSailGeometry(elementId, *parts, &error)) break;
+                        if (!error.isEmpty()) break;
+                    }
+                } catch (const std::exception& exception) {
+                    error = QString::fromUtf8(exception.what());
+                }
+                if (!error.isEmpty()) break;
+                renderedSailVersions_.insert(sail.elementId, version);
+            }
+        }
+    }
+    const double geometryMs = profileTimer.nsecsElapsed() / 1e6 - parseMs;
     if (error.isEmpty() && scene_->updatesActive()) {
         QString motionError;
         if (scene_->motionStateCount() > index + 1) scene_->resetMotionHistory();
@@ -3090,8 +3641,10 @@ void MainWindow::displayState(qsizetype index, bool force)
         }
         if (!motionError.isEmpty()) scene_->invalidateMotionHistory(index + 1, motionError);
     }
+    const double sceneBeginMs = profileTimer.nsecsElapsed() / 1e6;
+    if (error.isEmpty() && scene_->updatesActive()) awaitingPresentation_ = true;
     bool rendered = error.isEmpty()
-        && (!scene_->updatesActive() || scene_->setState(state, forces, &error));
+        && (!scene_->updatesActive() || scene_->setState(state, forces, &error, waterlines));
     if (rendered && workspaceIndex_ > 0)
         for (auto* view : staticScenes_)
             if (view->updatesActive() && !view->setState(state, forces, &error)) {
@@ -3106,7 +3659,9 @@ void MainWindow::displayState(qsizetype index, bool force)
             error = QString::fromUtf8(exception.what());
         }
     }
+    const double sceneEndMs = profileTimer.nsecsElapsed() / 1e6;
     if (!rendered) {
+        renderedSailVersions_.clear();
         scene_->clearState();
         for (auto* view : staticScenes_) view->clearState();
         cancellation_.store(true);
@@ -3128,11 +3683,62 @@ void MainWindow::displayState(qsizetype index, bool force)
         "LDP: äquivalenter Angriffspunkt der Seitenkraft, darf bei Gegenkräften außerhalb liegen. "
         "SDP (Ersatz): eingefrorener Ansatzpunkt der Fremdkraft, keine berechnete Segelphysik. "
         "Bei Näherungszuständen sind auch die Druckpunkte nur Näherungswerte."));
+    if (forces.aero) {
+        pressureStatus_->setText(pressureStatus_->text() + QStringLiteral("\nSDP gesamt: %1")
+            .arg(forces.aero->center.status));
+        for (const auto& sail : forces.aero->sails) {
+            pressureStatus_->setText(pressureStatus_->text() + QStringLiteral("\nSDP %1: %2")
+                .arg(sail.elementId, sail.center.status));
+            const auto pending = sailPending_.constFind(sail.elementId);
+            if (followLive_ && pending != sailPending_.cend() && *pending == sail.angle
+                && static_cast<quint64>(forces.aero->revision) > sailPendingRevision_.value(sail.elementId)) {
+                sailPending_.remove(sail.elementId);
+                sailPendingRevision_.remove(sail.elementId);
+                if (sailPending_.isEmpty())
+                    sailStatus_->setText(QStringLiteral("Segelstellung im angezeigten Core-Zustand bestätigt."));
+            }
+        }
+        pressureStatus_->setToolTip(pressureStatus_->toolTip() + QStringLiteral(
+            "\nAerodynamischer SDP: projizierter Seitenkraft-Ersatzpunkt; kein Angriffspunkt der gesamten Segellast."));
+    } else pressureStatus_->setText(pressureStatus_->text() + QStringLiteral("\nSegel-SDP: nicht verfügbar (Altstand oder keine Zuordnung)"));
     updateMovementControls(state);
     updateValues();
     const auto time = state.value(QStringLiteral("zeit_s")).toDouble();
     timeLabel_->setText(
         QStringLiteral("Simulationszeit: %1 s  ·  %2").arg(time, 0, 'f', 3).arg(runtimeInfo_));
+    if (performanceDiagnostics_) {
+        const auto afterRender = renderTotals();
+        performanceSamples_.append(QJsonObject{
+            {QStringLiteral("index"), static_cast<double>(index)},
+            {QStringLiteral("core_json_ms"), lastFetchTimings_.coreMs},
+            {QStringLiteral("snapshot_cache_treffer"), lastFetchTimings_.snapshotHit},
+            {QStringLiteral("snapshot_capture_ms"), lastFetchTimings_.snapshotCaptureMs},
+            {QStringLiteral("fetch_ms"), lastFetchTimings_.fetchMs},
+            {QStringLiteral("gui_wait_ms"), lastFetchTimings_.guiWaitMs},
+            {QStringLiteral("follow_live"), followLive_},
+            {QStringLiteral("json_decode_ms"), lastFetchTimings_.decodeMs},
+            {QStringLiteral("worker_motion_ms"), lastFetchTimings_.motionMs},
+            {QStringLiteral("worker_motion_read_ms"), lastFetchTimings_.motionReadMs},
+            {QStringLiteral("worker_motion_prepare_ms"), lastFetchTimings_.motionPrepareMs},
+            {QStringLiteral("worker_motion_zustaende"), static_cast<double>(lastFetchTimings_.motionStates)},
+            {QStringLiteral("worker_force_parse_ms"), lastFetchTimings_.forceParseMs},
+            {QStringLiteral("json_bytes"), static_cast<double>(lastFetchTimings_.bytes)},
+            {QStringLiteral("force_parse_ms"), parseMs},
+            {QStringLiteral("sail_geometry_ms"), geometryMs},
+            {QStringLiteral("motion_ms"), sceneBeginMs - parseMs - geometryMs},
+            {QStringLiteral("scene_ms"), sceneEndMs - sceneBeginMs},
+            {QStringLiteral("render_ms"), afterRender[0] - beforeRender[0]},
+            {QStringLiteral("main_render_ms"), scene_->workCounters().renderMs - mainRenderBefore},
+            {QStringLiteral("main_layer_ms"), scene_->workCounters().mainLayerMs - layersBefore.mainLayerMs},
+            {QStringLiteral("force_layer_ms"), scene_->workCounters().forceLayerMs - layersBefore.forceLayerMs},
+            {QStringLiteral("axes_layer_ms"), scene_->workCounters().axesLayerMs - layersBefore.axesLayerMs},
+            {QStringLiteral("water_cuts_ms"), afterRender[1] - beforeRender[1]},
+            {QStringLiteral("overlays_ms"), afterRender[2] - beforeRender[2]},
+            {QStringLiteral("environment_ms"), afterRender[3] - beforeRender[3]},
+            {QStringLiteral("opaque_ms"), afterRender[4] - beforeRender[4]},
+            {QStringLiteral("translucent_ms"), afterRender[5] - beforeRender[5]},
+            {QStringLiteral("ui_ms"), profileTimer.nsecsElapsed() / 1e6 - sceneEndMs}});
+    }
 }
 
 void MainWindow::setBusy(bool busy)
@@ -3141,6 +3747,7 @@ void MainWindow::setBusy(bool busy)
     const bool hasModel = validation_.valid && !modelPath_.isEmpty();
     const bool dynamic = modeCombo_->currentData().toBool();
     const bool running = simulationThread_ != nullptr;
+    airSettingsAction_->setEnabled(!busy && !running);
     const bool editing = inspection_->manualModeActive();
     testDrivePanel_->hide();
     cameraFramePanel_->setVisible(dynamic);
@@ -3151,6 +3758,8 @@ void MainWindow::setBusy(bool busy)
     windSpeedEdit_->setEnabled(!busy || (dynamic && running));
     windHeightEdit_->setEnabled(!busy);
     windMode_->setEnabled(dynamic && (!busy || running));
+    for (auto* active : sailActive_) active->setEnabled(hasModel && !busy);
+    for (auto* angle : sailAngles_) angle->setEnabled(hasModel && (!busy || (dynamic && running)));
     movementPanel_->setVisible(!movementSliders_.isEmpty());
     for (auto* fixed : stationaryMovements_) {
         movementLayout_->setRowVisible(fixed, true);
@@ -3278,7 +3887,6 @@ void MainWindow::filterStaticValues()
 void MainWindow::updateStaticValues()
 {
     const QSignalBlocker blocker(staticValues_);
-    staticValues_->setSortingEnabled(false);
     QHash<QString, QTreeWidgetItem*> rows;
     for (int i = 0; i < staticValues_->topLevelItemCount(); ++i) {
         auto* row = staticValues_->topLevelItem(i);
@@ -3371,7 +3979,6 @@ void MainWindow::updateStaticValues()
         if (!c.errorId.isEmpty()) row->setToolTip(9, c.errorId);
     }
     for (auto* stale : rows) delete stale;
-    staticValues_->setSortingEnabled(true);
     filterStaticValues();
 }
 
@@ -3382,6 +3989,7 @@ void MainWindow::updateValues()
     }
     const auto& forces = currentForces_;
     updateStaticValues();
+    if (workspaceIndex_ > 0) return;
     const auto summary = forcedisplay::balanceSummary(forces);
     QString card = QStringLiteral("<b>%1</b>").arg(summary.title.toHtmlEscaped());
     if (!forces.flooded.isEmpty()) {
@@ -3416,8 +4024,9 @@ void MainWindow::updateValues()
     balanceLabel_->setText(card);
     const bool stationaryConverged = stationaryContext.isEmpty()
         || stationaryContext.value(QStringLiteral("konvergiert")).toBool();
-    balanceLabel_->setStyleSheet(summary.complete && stationaryConverged
-        ? QStringLiteral("color:#b8e7c3;") : QStringLiteral("color:#ffd8a0;"));
+    const auto balanceStyle = summary.complete && stationaryConverged
+        ? QStringLiteral("color:#b8e7c3;") : QStringLiteral("color:#ffd8a0;");
+    if (balanceLabel_->styleSheet() != balanceStyle) balanceLabel_->setStyleSheet(balanceStyle);
     stepInfoLabel_->setText(stationaryContext.isEmpty()
         ? QStringLiteral("Zeit: %1 s  ·  Schritt: %2  ·  Vertrag V%3")
             .arg(forcedisplay::formatFixed(forces.time, 2))
@@ -3428,6 +4037,8 @@ void MainWindow::updateValues()
             .arg(forces.contract));
 
     const QSignalBlocker blocker(valuesTree_);
+    const bool valuesUpdates = valuesTree_->updatesEnabled();
+    valuesTree_->setUpdatesEnabled(false);
     if (rootItem_ == nullptr) {
         rootItem_ = new QTreeWidgetItem(valuesTree_);
         rootItem_->setExpanded(true);
@@ -3545,6 +4156,7 @@ void MainWindow::updateValues()
                 angle(orientation.heading));
         }
     }
+    valuesTree_->setUpdatesEnabled(valuesUpdates);
     updateDetail();
 }
 

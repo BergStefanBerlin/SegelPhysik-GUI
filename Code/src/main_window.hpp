@@ -9,6 +9,8 @@
 #include <segelphysik/segelkonfigurator.hpp>
 
 #include <QHash>
+#include <QCache>
+#include <QJsonArray>
 #include <QList>
 #include <QMainWindow>
 #include <QPointer>
@@ -17,6 +19,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
 
@@ -36,12 +39,14 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class VtkSceneWidget;
+struct PreparedWaterlines;
 class BoatInspection;
 class QStackedWidget;
 class QHBoxLayout;
 class QVBoxLayout;
 class QScrollArea;
 class QLineEdit;
+class QAction;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -52,15 +57,30 @@ public:
     // Modell-ID oder Pfad einer modells_data.json; wird nach dem Katalogabruf
     // ausgewertet. Leer: zuletzt gewähltes oder erstes verwendbares Modell.
     void selectInitialModel(const QString& preferred);
+    std::optional<LiveSimulation::Progress> liveProgress() const
+    { return live_ ? std::optional<LiveSimulation::Progress>(live_->progress()) : std::nullopt; }
+    void setNextRunInitialState(const QJsonObject& state) { nextRunInitialState_ = state; }
+    QJsonObject lastRunInput() const { return lastRunInput_; }
+    void setPerformanceDiagnostics(bool enabled) { performanceDiagnostics_ = enabled; }
+    QJsonArray performanceSamples() const { return performanceSamples_; }
 
 protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    bool performanceDiagnostics_ = false;
+    QJsonArray performanceSamples_;
+    LiveSimulation::JsonTimings lastFetchTimings_;
+    std::chrono::steady_clock::time_point nextStateFetch_{};
+    bool awaitingPresentation_ = false;
+    std::function<void()> pendingPresentation_;
+    QCache<QString, QVector<DisplayPart>> confirmedSailGeometry_{32};
     struct OpenedModel {
         ModelDisplayData data;
         QVector<DisplayPart> parts;
         std::optional<segelphysik::SegelKonfigurationSnapshot> sailConfiguration;
+        QStringList sailIds;
+        QString sailDiagnostic;
     };
 
     QWidget* buildDisplayPanel();
@@ -93,12 +113,19 @@ private:
     qsizetype stateCount() const;
     QJsonObject stateAt(qsizetype index, QString* error) const;
     void displayState(qsizetype index, bool force = false);
+    void displayFetchedState(qsizetype index, const QJsonObject& state, QString error,
+        const forcedisplay::ForceState* preparedForces = nullptr,
+        const PreparedWaterlines* waterlines = nullptr);
     void displaySimulationResult(const SimulationResult& result);
     void resetResults();
     void setBusy(bool busy);
     void updateModeControls();
     void configureMovementControls(const ModelDisplayData& data);
     void updateMovementControls(const QJsonObject& state);
+    double coreMovementValue(const QString& elementId, double displayValue) const;
+    double displayMovementValue(const QString& elementId, double coreValue) const;
+    void configureSailControls(const OpenedModel& model);
+    void setupAirProperties();
     void showError(const QString& title, const QString& message);
 
     void applyDisplayOptions(bool restoreHistory = true);
@@ -177,6 +204,13 @@ private:
     QGroupBox* movementPanel_ = nullptr;
     QGroupBox* stationaryForcePanel_ = nullptr;
     QGroupBox* windPanel_ = nullptr;
+    QGroupBox* sailPanel_ = nullptr;
+    QFormLayout* sailLayout_ = nullptr;
+    QLabel* sailStatus_ = nullptr;
+    QHash<QString, QCheckBox*> sailActive_;
+    QHash<QString, QDoubleSpinBox*> sailAngles_;
+    QHash<QString, double> sailPending_;
+    QHash<QString, quint64> sailPendingRevision_;
     QLineEdit* windDirectionEdit_ = nullptr;
     QLineEdit* windSpeedEdit_ = nullptr;
     QLineEdit* windHeightEdit_ = nullptr;
@@ -185,6 +219,9 @@ private:
     double windDirection_ = 0.;
     double windSpeed_ = 5.;
     double windHeight_ = 10.;
+    double airDensity_ = 1.225;
+    double airViscosity_ = 1.5e-5;
+    QAction* airSettingsAction_ = nullptr;
     QCheckBox* stationaryForceActive_ = nullptr;
     std::array<QDoubleSpinBox*, 3> stationaryForce_{};
     std::array<QDoubleSpinBox*, 3> stationaryPoint_{};
@@ -192,9 +229,12 @@ private:
     QFormLayout* movementLayout_ = nullptr;
     QHash<QString, QSlider*> movementSliders_;
     QHash<QString, QLabel*> movementValueLabels_;
-    QHash<QString, bool> movementIsRudder_;
+    QHash<QString, std::array<double, 2>> movementSliderRanges_;
+    QHash<QString, std::array<double, 2>> movementCoreRanges_;
+    QHash<QString, QString> movementValueUnits_;
     QHash<QString, double> movementConfirmedValues_;
     QHash<QString, bool> movementInputPending_;
+    QHash<QString, QString> renderedSailVersions_;
     double testSpeedLimit_ = 463.0 / 90.0;
     QFormLayout* parameterForm_ = nullptr;
     QSlider* stateSlider_ = nullptr;
@@ -219,6 +259,13 @@ private:
     QCheckBox* leverCheck_ = nullptr;
     QCheckBox* lateralCheck_ = nullptr;
     QCheckBox* sailCenterCheck_ = nullptr;
+    QCheckBox* aeroCenterCheck_ = nullptr;
+    QWidget* aeroIndividualPanel_ = nullptr;
+    QVBoxLayout* aeroIndividualLayout_ = nullptr;
+    QHash<QString, QCheckBox*> aeroIndividualChecks_;
+    QCheckBox* aeroBoundariesCheck_ = nullptr;
+    std::array<QCheckBox*, 3> sailForceChecks_{};
+    std::array<QCheckBox*, 3> sailMomentChecks_{};
     QCheckBox* windArrowsCheck_ = nullptr;
     QLabel* pressureStatus_ = nullptr;
     QCheckBox* valuesCheck_ = nullptr;
@@ -254,6 +301,8 @@ private:
     // Modus des letzten Laufs fuer die Kennzeichnung veralteter Eingaben.
     std::optional<bool> lastRunDynamic_;
     QVector<QJsonObject> states_;
+    QJsonObject nextRunInitialState_;
+    QJsonObject lastRunInput_;
     QString runtimeInfo_;
     QString modelFolder_;
     bool useConfiguredModelFolder_ = false;
@@ -264,6 +313,7 @@ private:
     bool catalogReloadPending_ = false;
     int openGeneration_ = 0;
     qsizetype displayedIndex_ = -1;
+    qsizetype desiredStateIndex_ = -1;
     std::shared_ptr<LiveSimulation> live_;
     bool followLive_ = true;
     bool programmaticSlider_ = false;
@@ -272,6 +322,9 @@ private:
     QPointer<QThread> openThread_;
     QSet<QThread*> openThreads_;
     QPointer<QThread> simulationThread_;
+    QPointer<QThread> stateFetchThread_;
+    QObject* stateReader_ = nullptr;
+    bool stateFetchBusy_ = false;
     QPointer<QThread> catalogThread_;
     QPointer<QThread> fingerprintThread_;
 };
