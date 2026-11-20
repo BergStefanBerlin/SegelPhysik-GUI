@@ -79,6 +79,8 @@
 #include <vtkBillboardTextActor3D.h>
 #include <vtkPropCollection.h>
 #include <vtkActorCollection.h>
+#include <vtkCellLocator.h>
+#include <vtkCleanPolyData.h>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkOutputWindow.h>
 #include <vtkPolyData.h>
@@ -3527,9 +3529,80 @@ void testBodyFixedCamera(const QString& models, const QString& evidencePath)
 
 void captureWaterReflection(const QString& models, const QString& evidencePath)
 {
+    {
+        vtkNew<vtkCubeSource> cube;
+        cube->SetXLength(4.);
+        cube->SetYLength(2.);
+        vtkNew<vtkCleanPolyData> clean;
+        clean->SetInputConnection(cube->GetOutputPort());
+        clean->Update();
+        DisplayPart hull;
+        hull.elementId = QStringLiteral("hull");
+        hull.mesh = clean->GetOutput();
+        cube->SetXLength(2.);
+        cube->SetYLength(1.);
+        cube->SetCenter(1.6, 0.6, 0.);
+        clean->Update();
+        DisplayPart cockpit;
+        cockpit.elementId = QStringLiteral("cockpit");
+        cockpit.surface = DisplayPart::Surface::Invisible;
+        cockpit.mesh = vtkSmartPointer<vtkPolyData>::New();
+        cockpit.mesh->DeepCopy(clean->GetOutput());
+        cube->SetXLength(4.);
+        cube->SetYLength(2.);
+        cube->SetCenter(0., 0., 0.);
+        clean->Update();
+        VtkSceneWidget scene;
+        scene.resize(640, 480);
+        QString error;
+        require(scene.setModel({hull, cockpit}, &error), "overlapping water cutout fixture");
+        scene.show();
+        QApplication::processEvents();
+        auto profile = graphics::defaults(0);
+        scene.setGraphicsProfile(profile);
+        const QJsonObject state{
+            {QStringLiteral("vertragsversion"), QStringLiteral("2")},
+            {QStringLiteral("position_m"), QJsonArray{0., 0., 0.}},
+            {QStringLiteral("orientierung_xyzw"), QJsonArray{0., 0., 0., 1.}},
+            {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}}};
+        require(scene.setState(state, {}, &error), "overlapping water cutout state");
+        auto camera = scene.cameraView();
+        camera.position = {6., -8., 12.};
+        camera.focalPoint = {0., 0., 0.};
+        camera.viewUp = {0., 0., 1.};
+        require(scene.setCameraView(camera), "overlapping water cutout camera");
+        scene.renderNow();
+        auto* actors = scene.findChild<QVTKOpenGLNativeWidget*>()->renderWindow()
+            ->GetRenderers()->GetFirstRenderer()->GetActors();
+        bool checked = false;
+        actors->InitTraversal();
+        while (auto* actor = actors->GetNextActor()) {
+            if (!actor->GetVisibility() || actor->GetPickable()) continue;
+            auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+            if (!mapper) continue;
+            mapper->Update();
+            auto* mesh = mapper->GetInput();
+            if (!mesh || !mesh->GetNumberOfPolys() || !mesh->GetPointData()->GetTCoords()) continue;
+            double bounds[6];
+            mesh->GetBounds(bounds);
+            if (bounds[4] != 0. || bounds[5] != 0.) continue;
+            vtkNew<vtkCellLocator> locator;
+            locator->SetDataSet(mesh);
+            double hullPoint[]{0., 0., 0.}, overlapPoint[]{1.5, 0.5, 0.};
+            double cockpitPoint[]{2.3, 0.8, 0.}, outsidePoint[]{2.3, -0.5, 0.};
+            const auto h = locator->FindCell(hullPoint), o = locator->FindCell(overlapPoint),
+                c = locator->FindCell(cockpitPoint), w = locator->FindCell(outsidePoint);
+            if (!(h < 0 && o < 0 && c < 0 && w >= 0))
+                throw std::runtime_error("overlapping dry contours must exclude water across their union only: " +
+                    std::to_string(h) + "," + std::to_string(o) + "," + std::to_string(c) + "," + std::to_string(w));
+            checked = true;
+        }
+        require(checked, "overlap water surface actor absent");
+    }
     QDir evidence(evidencePath);
     require(evidence.mkpath(QStringLiteral(".")), "water reflection evidence directory");
     const auto catalog = segelphysik::modellkatalog(std::filesystem::path(models.toStdWString()));
+    bool checkedDryCutout = false;
     for (const QString& id : {QStringLiteral("420"), QStringLiteral("optimist")}) {
         const auto* entry = catalog.eintrag(id.toStdString());
         require(entry != nullptr, "water reflection model absent");
@@ -3588,6 +3661,43 @@ void captureWaterReflection(const QString& models, const QString& evidencePath)
                     profile.enabled[static_cast<std::size_t>(graphics::Feature::Reflection)] = reflection;
                     scene.setGraphicsProfile(profile);
                     scene.renderNow();
+                    if (!checkedDryCutout && running && !reflection
+                        && id == QStringLiteral("420") && view.first == QStringLiteral("steep")) {
+                        auto* actors = scene.findChild<QVTKOpenGLNativeWidget*>()->renderWindow()
+                            ->GetRenderers()->GetFirstRenderer()->GetActors();
+                        double surfaceArea = 0.0, depthArea = 0.0;
+                        actors->InitTraversal();
+                        while (auto* actor = actors->GetNextActor()) {
+                            if (!actor->GetVisibility() || actor->GetPickable()) continue;
+                            auto* mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+                            if (!mapper) continue;
+                            auto* mesh = mapper->GetInput();
+                            if (!mesh || !mesh->GetNumberOfPolys()) continue;
+                            double bounds[6];
+                            mesh->GetBounds(bounds);
+                            if (bounds[4] != bounds[5]) continue;
+                            auto* cells = mesh->GetPolys();
+                            cells->InitTraversal();
+                            vtkIdType count = 0;
+                            const vtkIdType* points = nullptr;
+                            double area = 0.0;
+                            while (cells->GetNextCell(count, points)) {
+                                double sum = 0.0;
+                                for (vtkIdType i = 0; i < count; ++i) {
+                                    double a[3], b[3];
+                                    mesh->GetPoint(points[i], a);
+                                    mesh->GetPoint(points[(i + 1) % count], b);
+                                    sum += a[0] * b[1] - a[1] * b[0];
+                                }
+                                area += 0.5 * std::abs(sum);
+                            }
+                            if (bounds[4] == 0.0) surfaceArea = std::max(surfaceArea, area);
+                            else if (bounds[4] < 0.0) depthArea = std::max(depthArea, area);
+                        }
+                        require(surfaceArea > 0.0 && depthArea - surfaceArea > 0.01,
+                            "420 dry cutout must remove surface area without duplicating it at depth");
+                        checkedDryCutout = true;
+                    }
                     const auto image = scene.captureImage();
                     const auto phase = running ? QStringLiteral("_live_") : QStringLiteral("_");
                     require(image.save(evidence.filePath(id + phase + view.first

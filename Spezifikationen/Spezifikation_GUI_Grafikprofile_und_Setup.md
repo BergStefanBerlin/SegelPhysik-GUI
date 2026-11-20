@@ -251,7 +251,13 @@ Achsen werden nicht mitgespiegelt. Transparente Objekte und Reflexionsgrenzen
 müssen nachvollziehbar behandelt und dokumentiert werden.
 
 Tiefenebene und Reflexion dürfen die bestehenden Aussparungen trockener
-Bootsinnenräume nicht mit sichtbarem Wasser füllen. Unterwassergeometrie
+Bootsinnenräume nicht mit sichtbarem Wasser füllen. Die Tiefenebene dient
+als gleichmäßiger Farbhintergrund; Konturen der Wasserlinie werden nur
+auf der tatsächlichen Wasseroberfläche ausgespart, nicht in der Tiefe
+wiederholt. Überlappende trockene Querschnitte werden vor dem Ausschneiden
+vereinigt. Ist der lokale Ausschnitt nicht triangulierbar, bleibt dieser
+Bereich ausgespart, statt eine durchgehende Wasserfläche durch das Boot
+zu zeichnen. Unterwassergeometrie
 bleibt im Technikprofil erkennbar. Keine zusätzliche feste „Bodenplatte“,
 die bei größeren Modellen ungewollt durch deren Geometrie schneidet.
 

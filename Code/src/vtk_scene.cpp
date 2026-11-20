@@ -1746,14 +1746,7 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             }
         }
         for (auto& loop : loops) {
-            if (!loop.dry) continue;
-            for (const auto& other : loops) {
-                if (&other != &loop && other.closed && !isFlooded(bodies_[other.body])
-                    && other.area > loop.area && loopWithin(loop.world, other.world)) {
-                    loop.dry = false;
-                    break;
-                }
-            }
+            if (loop.world.size() < 3 || loop.area == 0.0) loop.dry = false;
         }
         dryLoops_.clear();
         for (const auto& loop : loops) {
@@ -4504,7 +4497,8 @@ void VtkSceneWidget::rebuildEnvironment()
     rebuildWaterDisplay(waterRgba);
     if (graphicsProfile_.on(graphics::Feature::Depth)) {
         auto deepSurfacePoints = vtkSmartPointer<vtkPoints>::New();
-        deepSurfacePoints->DeepCopy(waterDisplay_->GetPoints());
+        // A surface cutout at this depth would appear offset by parallax.
+        deepSurfacePoints->DeepCopy(waterMesh_->GetPoints());
         auto deepSurfaceColors = vtkSmartPointer<vtkUnsignedCharArray>::New();
         deepSurfaceColors->SetNumberOfComponents(4);
         deepSurfaceColors->SetNumberOfTuples(deepSurfacePoints->GetNumberOfPoints());
@@ -4520,7 +4514,7 @@ void VtkSceneWidget::rebuildEnvironment()
         }
         deepMesh_->Initialize();
         deepMesh_->SetPoints(deepSurfacePoints);
-        deepMesh_->SetPolys(waterDisplay_->GetPolys());
+        deepMesh_->SetPolys(waterMesh_->GetPolys());
         deepMesh_->GetPointData()->SetScalars(deepSurfaceColors);
         deepMesh_->Modified();
     }
@@ -4683,12 +4677,40 @@ void VtkSceneWidget::rebuildWaterDisplay(
                 contourLines->InsertNextCell(static_cast<vtkIdType>(chain.size()), chain.data());
             }
         }
+        // Union the dry sections before passing non-intersecting contours to VTK.
+        // Winding fill makes a point covered by two dry sections remain dry.
+        const auto origin = dryLoops_.front().front();
+        QPainterPath dryUnion;
+        dryUnion.setFillRule(Qt::WindingFill);
         for (const auto& loop : dryLoops_) {
-            if (loop.size() < 3) continue;
-            const bool counterClockwise = signedArea(loop) > 0.0;
+            const bool reverse = signedArea(loop) < 0.0;
+            for (std::size_t k = 0; k < loop.size(); ++k) {
+                const auto& p = loop[reverse ? loop.size() - 1 - k : k];
+                const QPointF local{p[0] - origin[0], p[1] - origin[1]};
+                if (k == 0) dryUnion.moveTo(local);
+                else dryUnion.lineTo(local);
+            }
+            dryUnion.closeSubpath();
+        }
+        std::vector<Loop2> boundaries;
+        for (const auto& polygon : dryUnion.simplified().toSubpathPolygons()) {
+            Loop2 boundary;
+            for (const auto& p : polygon) boundary.push_back({p.x(), p.y()});
+            if (boundary.size() > 1 && boundary.front() == boundary.back()) boundary.pop_back();
+            if (boundary.size() >= 3 && signedArea(boundary) != 0.0)
+                boundaries.push_back(std::move(boundary));
+        }
+        for (const auto& loop : boundaries) {
+            std::size_t depth = 0;
+            for (const auto& other : boundaries) {
+                if (&other != &loop && std::abs(signedArea(other)) > std::abs(signedArea(loop))
+                    && insideLoop(other, loop.front()[0], loop.front()[1])) ++depth;
+            }
+            const bool reverse = (signedArea(loop) > 0.0) == (depth % 2 == 0);
             std::vector<vtkIdType> chain;
             for (std::size_t k = 0; k < loop.size(); ++k) {
-                const auto& p = loop[counterClockwise ? loop.size() - 1 - k : k];
+                const auto& local = loop[reverse ? loop.size() - 1 - k : k];
+                const std::array<double, 2> p{local[0] + origin[0], local[1] + origin[1]};
                 unsigned char rgba[4];
                 waterRgba(p[0], p[1], rgba);
                 colors->InsertNextTypedTuple(rgba);
@@ -4705,7 +4727,7 @@ void VtkSceneWidget::rebuildWaterDisplay(
         contour->SetLines(contourLines);
         const double up[3] = {0.0, 0.0, 1.0};
         auto triangles = vtkSmartPointer<vtkCellArray>::New();
-        if (contourLines->GetNumberOfCells() > 0
+        if (!boundaries.empty() && contourLines->GetNumberOfCells() > 0
             && vtkContourTriangulator::TriangulateContours(
                    contour, 0, contourLines->GetNumberOfCells(), triangles, up) == 1
             && triangles->GetNumberOfCells() > 0) {
@@ -4713,13 +4735,16 @@ void VtkSceneWidget::rebuildWaterDisplay(
             while (triangles->GetNextCell(count, cell)) {
                 polys->InsertNextCell(count, cell);
             }
-            waterDisplay_->SetPoints(points);
-            waterDisplay_->SetPolys(polys);
-            waterDisplay_->GetPointData()->SetScalars(colors);
-            waterDisplay_->GetPointData()->SetNormals(normals);
-            waterDisplay_->GetPointData()->SetTCoords(textureCoordinates);
-            holed = true;
+        } else {
+            qWarning("Wasserflaeche: Lokaler Ausschnitt konnte nicht trianguliert werden.");
         }
+        // On failure keep the exterior cells, not a full plane through the boat.
+        waterDisplay_->SetPoints(points);
+        waterDisplay_->SetPolys(polys);
+        waterDisplay_->GetPointData()->SetScalars(colors);
+        waterDisplay_->GetPointData()->SetNormals(normals);
+        waterDisplay_->GetPointData()->SetTCoords(textureCoordinates);
+        holed = true;
     }
     if (!holed) {
         waterDisplay_->ShallowCopy(waterMesh_);
