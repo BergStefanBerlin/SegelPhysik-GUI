@@ -110,7 +110,7 @@ Offscreen-Unit-Tests allein sind kein Leistungs- oder Sichtnachweis.
 |---|---|---|---|
 | A-G-00166 | U-G-000178, U-G-000181, U-G-000183, U-G-000184 | G25-01, G25-05, G25-07, G25-09 | offen; echte Core-SDP-Snapshots integriert und vorbereitete Bildbelege positiv geprueft, gesamte fachliche/DPI-/Regressionsabnahme fehlt |
 | A-G-00167 | U-G-000178, U-G-000180, U-G-000183, U-G-000184 | G25-01, G25-04, G25-07, G25-09 | offen |
-| A-G-00168 | U-G-000178, U-G-000182, U-G-000184 | G25-06, G25-08, G25-09 | offen |
+| A-G-00168 | U-G-000178, U-G-000182, U-G-000184 | G25-06, G25-08, G25-09 | offen; relative Elementbewegung fuer bestaetigte Segelgeometrie und Streifengrenzen implementiert, gezielte GUI-Regression bestanden; reale Core-/Sichtabnahme fehlt |
 | A-G-00169 | U-G-000178, U-G-000179, U-G-000183, U-G-000184 | G25-02, G25-07, G25-09 | offen |
 | A-G-00170 | U-G-000178, U-G-000179, U-G-000184 | G25-03, G25-09 | offen |
 | A-G-00171 | U-G-000178, U-G-000183, U-G-000184 | G25-01, G25-07, G25-09 | offen |
@@ -875,3 +875,19 @@ Alle gestarteten Build-/Test-/Messprozesse beendet; finales Produkt
 liegt am angegebenen EXE-Pfad. Keine weiteren CPU-Arbeiten/Messungen,
 Messfenster an den Hauptagenten zurueckgegeben. Keine Git-Aktion;
 GUI-Code, Tests und Dokumentation uncommittet.
+
+## 17. Bewegte Streifengrenzen, 20.11.2026
+
+Die bestaetigte Segelvorschau speichert die Core-Elementstellung des
+angezeigten Snapshots als Bezug. Bei spaeteren Snapshots wird die relative
+Elementbewegung auf Segelmesh und Streifengrenzen angewandt; das
+Linienoverlay wird bei einer geaenderten Elementmatrix neu aufgebaut.
+
+Nachweise: `gui_force_display` und `gui_group_movement_preview` bestanden.
+`gui_graphics_render_100` bricht zuvor mit der bekannten Fixture-Meldung
+`Folkeboot absent from catalog` ab. Nach Schliessen der laufenden GUI wurde
+der Release-Build erfolgreich abgeschlossen; aktualisierte EXE:
+`C:\spdeps\guibuild\Release\segelphysik_gui.exe` (20.11.2026, 15:59).
+A-G-00168 und G25-06 bleiben bis zur realen Core-/Sichtabnahme offen;
+U-G-000184 bleibt wegen der nicht vollstaendigen GUI-Regression und
+ausstehenden Sichtabnahme offen.

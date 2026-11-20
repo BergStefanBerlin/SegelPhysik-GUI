@@ -7,10 +7,16 @@
 
 **Finaler Nachtrag 17.11.2026:** sailforce fuer G-0.25, Abschnitt 3,
 A-G-00167 bis A-G-00172. Der historische Bestand bleibt erhalten.
-Einziger neuer Versionsplan:
+Der damalige neue Versionsplan:
 [G-0.25](../Umsetzungsplaene/Umsetzungsplan_G-0.25.md).
 SDP-Darstellung A-G-00166 steht ausschliesslich in der
 [Druckpunkt-Spezifikation](Spezifikation_GUI_Lateraldruckpunkt.md#6-g-025-aerodynamische-segeldruckpunkte).
+
+**Finaler Nachtrag 20.11.2026:** Bewegungs- und Kraftdiagnose fuer G-0.26,
+Abschnitt 4, A-G-00173 bis A-G-00177. Die GUI-Anforderungen sind final;
+die Bereitstellung fehlender Beschleunigungsdaten ist ein separates
+Core-Gate. Umsetzungsplan:
+[G-0.26](../Umsetzungsplaene/Umsetzungsplan_G-0.26.md).
 
 ## 1. Zweck und Abgrenzung
 
@@ -440,3 +446,164 @@ Garantie fuer Optikprofil oder beliebige Modelle.
 **Abnahme:** Alle drei integrierten Messlaeufe erfuellen die Grenzen.
 Sichtabnahme und technische Leistung getrennt ausweisen; aktuell
 noch kein sailforce-Laufzeitnachweis vorhanden.
+
+## 4. Bewegungs- und Kraftdiagnose G-0.26
+
+**Stand: 20.11.2026. FINAL auf ausdruecklichen Nutzerauftrag.**
+Herkunft und IDEE-zu-A-Zuordnung bleiben in der bestehenden
+[Entwurfspunkteliste](Entwurfspunkte/GUI_Kraft_und_Momentendarstellung.json).
+Die Anforderungen gelten fuer statische und dynamische Arbeitsbereiche.
+Die Bereitstellung fehlender Beschleunigungsdaten ist ein separates
+Core-Gate und wird nicht durch GUI-Ersatzberechnungen umgangen.
+
+| ID | Finale Anforderung | Herkunft |
+|---|---|---|
+| A-G-00173 | Moduswahl und Erhalt der freien Darstellung | IDEE-G-00108 |
+| A-G-00174 | Kinematik und Beschleunigungen in beiden Arbeitsbereichen | IDEE-G-00109 |
+| A-G-00175 | Momentane 3D-Schraubachse und Schraubsteigung | IDEE-G-00109 |
+| A-G-00176 | Quellenbezogene Kraefte, Momente und Druckpunkte | IDEE-G-00109 |
+| A-G-00177 | Zustandskonsistenz, Gueltigkeitsstatus und Solvergrenzen | IDEE-G-00110 |
+
+### A-G-00173: Moduswahl und Erhalt der freien Darstellung
+
+Oberhalb der bisherigen unabhaengigen Vektor- und Momentenauswahl steht
+eine ComboBox **Darstellungsmodus** mit **Frei (wie bisher)** und
+**Bewegungsanalyse**. Fuer statische und dynamische Arbeitsbereiche wird
+die Auswahl getrennt ueber QSettings gespeichert; wenn fuer einen Bereich
+noch kein Wert gespeichert ist, gilt **Frei**. Die bisherige freie
+Vektor-/Momentenauswahl bleibt beim Umschalten unveraendert und wird bei
+Rueckkehr wiederhergestellt. Die Darstellungswahl aendert weder
+Simulation, Core-Aufruf, Ergebnisdaten, Kraefte noch Toleranzen.
+
+**Abnahme:** Beide Bereiche starten ohne gespeicherten Modus in **Frei**.
+Unterschiedliche gespeicherte Modi bleiben nach Neustart getrennt
+erhalten. Umschalten und Rueckschalten erhalten alle bisherigen freien
+Einzelauswahlen und veraendern keinen Core-Zustand.
+
+### A-G-00174: Kinematik und Beschleunigungen in beiden Arbeitsbereichen
+
+**Bewegungsanalyse** unterscheidet modellfesten Koerper- und Weltbezug.
+Sie zeigt Schwerpunkt S, Modell- und Weltachsen sowie die Core-Werte fuer
+Schwerpunktgeschwindigkeit, Winkelgeschwindigkeit,
+Schwerpunktbeschleunigung und Winkelbeschleunigung. Fuer jeden Vektor
+werden Bezugssystem, Einheit und Gueltigkeitsstatus ausgewiesen.
+Modell- und Weltvektoren duerfen nur mittels derselben Core-Pose
+transformiert werden. Beschleunigung und Winkelbeschleunigung muessen aus
+dem Core-Ergebnis desselben Zustands stammen; die GUI darf sie nicht aus
+Zeitdifferenzen, Momenten oder eigenen Physikannahmen approximieren.
+
+Der aktuelle Core-Ergebnisvertrag serialisiert Geschwindigkeit und
+Winkelgeschwindigkeit, aber keine Beschleunigung oder
+Winkelbeschleunigung. Die Anzeige dieser beiden Groessen ist ein
+verbindliches Integrationsziel, fuer das vor der GUI-Implementierung eine
+separate Core-Spezifikation und ein Core-Ergebnisvertrag beschlossen und
+geliefert werden muessen. Die GUI setzt dieses Core-Gate nicht selbst um.
+Bis zur Lieferung sind die Werte als nicht verfuegbar mit Ursache zu
+kennzeichnen; sie duerfen nicht als Null oder als bestaetigte Messwerte
+erscheinen.
+
+Im stationaeren statischen Kurvenfahrtfall ist die Rotation um die
+Weltvertikale begrenzt. Die Anzeige kennzeichnet diesen Solververtrag.
+Mehrere Modellkomponenten des transformierten Winkelgeschwindigkeitsvektors
+sind keine unabhaengigen Roll-, Stampf- und Gierdrehraten. Element- und
+Gruppenbewegungen bleiben durch die Bewegungsdefinitionen aus Modell-JSON
+und Core bestimmt; die GUI fuehrt keine separaten Bewegungsachsen ein.
+
+**Abnahme:** Bekannte synthetische Core-Zustaende zeigen Geschwindigkeit,
+Winkelgeschwindigkeit und gelieferte Beschleunigungswerte korrekt in
+beiden Arbeitsbereichen. Modell-/Weltvektoren stimmen unter Pose-
+Transformation ueberein. Der statische Kurvenfahrtfall wird nicht als
+allgemeine 6-DOF-Rotation ausgegeben. Fehlende Core-Felder bleiben
+sichtbar nicht verfuegbar.
+
+### A-G-00175: Momentane 3D-Schraubachse und Schraubsteigung
+
+Sofern Schwerpunktgeschwindigkeit v_S und Winkelgeschwindigkeit omega
+fuer denselben Zustand gueltig und in ein gemeinsames Koordinatensystem
+transformierbar sind, zeigt die Bewegungsanalyse die allgemeine
+momentane 3D-Schraubachse parallel zu omega und ihre Schraubsteigung.
+Bezogen auf Schwerpunktposition x_S ist der Achspunkt mit dem kuerzesten
+Abstand zu S:
+
+```text
+x_Achse = x_S + cross(omega, v_S) / dot(omega, omega)
+h       = dot(omega, v_S) / dot(omega, omega)
+```
+
+Die Achse wird entlang omega fortgesetzt; h ist die Verschiebung entlang
+der Achse pro Radiant. Diese geometrische Diagnose beschreibt die
+momentane Starrkoerperbewegung und ist keine Bewegungsdefinition fuer
+einzelne Modellgruppen. Bei fehlender/ungueltiger Eingabe oder verschwindendem
+omega gibt es keine Achsenposition oder Steigung; die GUI zeigt den Grund
+und erfindet keinen Drehpunkt. Numerische Gueltigkeitsgrenzen muessen dem
+bestaetigten Core-Vertrag folgen, keine unabgestimmte GUI-Epsilonregel.
+
+**Abnahme:** Synthetische reine Translation, reine Rotation,
+Schraubbewegung und kombinierte Welt-/Modellpose stimmen mit unabhaengig
+bestimmten Achsen und Steigungen ueberein. Reine Translation und
+ungueltige Werte erzeugen keinen erfundenen Achspunkt.
+
+### A-G-00176: Quellenbezogene Kraefte, Momente und Druckpunkte
+
+Fuer den ausgewählten unveraenderlichen Core-Zustand werden die gelieferten
+Kraefte und Momente je Quelle/Beitrag mit Status und Einheit dargestellt.
+Kraftpfeile liegen nur an einem vom Core gelieferten und gekennzeichneten
+Angriffspunkt oder Darstellungsbezug. Momente werden am gelieferten
+Bezug S dargestellt. Die vollstaendige Momentenbilanz wird getrennt nach
+Modellachsen X/Y/Z und Quelle lesbar gemacht; Summen werden nicht erneut
+als zusaetzliche Last gezaehlt.
+
+LDP und SDP werden weiterhin als Punkte der jeweiligen resultierenden
+Seitenkraft gekennzeichnet. Die Ansicht darf ihre Querkraftanteile und
+den daraus erklaerten Hebelarm erlaeutern; sie leitet daraus kein
+automatisches Urteil „luv-/leegierig“ ab. Insbesondere muessen
+Laengskraft-Hebelarme, freie Momente und sonstige Core-Beitraege in der
+vollstaendigen Momentenbilanz erhalten bleiben. Die Punkte ersetzen
+weder Einzelkraefte noch Core-Momente.
+
+Alle dargestellten Werte, Pose, Winkelgeschwindigkeit, Kraefte, Momente
+und Druckpunkte stammen aus demselben Ergebniszustand. Sichtbarkeit,
+Auswahl und ComboBox duerfen das Ergebnis nicht veraendern. Live,
+Pause und Wiedergabe verwenden den jeweiligen Zustand statt aktueller
+Bedienwerte.
+
+**Abnahme:** Quellenbeitraege, Momentensummen und Druckpunkte stimmen mit
+demselben Core-Snapshot ueberein. Einzelbeitraege, Summen, Angriffspunkte
+und reine Momente sind unterscheidbar; LDP/SDP ersetzen keine
+vollstaendige Last.
+
+### A-G-00177: Zustandskonsistenz, Gueltigkeitsstatus und Solvergrenzen
+
+Pose, Kinematik, Beschleunigungen, Kraefte, Momente und Druckpunkte einer
+Ansicht stammen aus demselben unveraenderlichen Core-Zustand. Live, Pause
+und Wiedergabe verwenden den jeweils sichtbaren Zustand und nicht aktuelle
+Bedienwerte. Fehlende, ungueltige oder nicht berechnete Groessen werden
+mit Status und Ursache gekennzeichnet, nie still als Null, gueltig oder
+veraltet dargestellt. Modus, Zoom und Sichtbarkeit veraendern keine Physik.
+
+Der stationaere statische Kurvenfahrtvertrag ist eine Rotation um die
+Weltvertikale. Die Bewegungsanalyse weist dies aus und stellt transformierte
+Modellkomponenten nicht als unabhaengige Roll-, Stampf- und Gierdrehraten
+dar. Die GUI leitet aus Momenten keine unbelegte Beschleunigungsursache
+oder automatische Luv-/Leegierigkeitsdiagnose ab.
+
+**Abnahme:**
+
+- **Frei** ist nach Neustart und Moduswechsel identisch zur bisherigen
+  unabhaengigen Vektor- und Momentenauswahl.
+- Die Bewegungsanalyse weist bei synthetischen Zustaenden reine
+  Translation, reine Rotation und kombinierte Bewegung korrekt aus;
+  Modell- und Weltvektor stimmen unter Pose-Transformation ueberein.
+- Null-/fehlende Winkelgeschwindigkeit, fehlende Angriffspunkte,
+  ungueltige Rahmen oder nicht anwendbare Schraubachse erzeugen
+  gekennzeichnete Nichtverfuegbarkeit, keine erfundenen Pfeile/Punkte.
+- Bekannte Kraefte und Momente um S stimmen komponentenweise mit dem
+  Core-Snapshot ueberein. Einzelbeitraege und Summen werden nicht
+  doppelt gezaehlt.
+- LDP/SDP bleiben von voller Last, freiem Moment und Momentenbilanz
+  unterscheidbar; Moduswechsel und Druckpunktlage erzeugen keine
+  unbelegte Luv-/Leegierigkeitsdiagnose.
+- ComboBox, Einstellungen und bestehende freie Auswahl bleiben ueber
+  Laufstart, Modellwechsel, Pause und Rueckblick konsistent.
+- Desktop-Sichtpruefung bei 100/150/200 % DPI und Regression fuer
+  bestehende Kraft-, Momenten-, Wind- und Druckpunktdarstellung.

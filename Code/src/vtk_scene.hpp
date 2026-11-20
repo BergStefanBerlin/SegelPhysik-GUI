@@ -84,6 +84,7 @@ public:
         std::array<bool, 3> sailMoment{false, false, true};
         bool courseArrow = true;
         bool windArrows = true;
+        bool motionAnalysis = false;
         bool staticForces = false;
         std::array<forcedisplay::StaticForceStyle, forcedisplay::staticForceCount> staticStyles =
             forcedisplay::staticForceDefaults();
@@ -96,7 +97,8 @@ public:
     ~VtkSceneWidget() override;
 
     bool setModel(const QVector<DisplayPart>& parts, QString* error);
-    bool setSailGeometry(const QString& elementId, const QVector<DisplayPart>& parts, QString* error);
+    bool setSailGeometry(const QString& elementId, const QVector<DisplayPart>& parts,
+        const QJsonObject& state, QString* error);
     void setUpdatesActive(bool active);
     bool updatesActive() const { return updatesActive_; }
     void updateDockedNavigation(const QJsonObject& state,
@@ -246,6 +248,8 @@ private:
         double waterlineOffset = 0.0;
         QString elementId;
         bool confirmedSailGeometry = false;
+        forcedisplay::TransformMatrix confirmedSailMovement =
+            forcedisplay::identityTransform();
         QString group;
         vtkSmartPointer<vtkPlane> localWaterPlane;
         vtkSmartPointer<vtkPlaneCutter> cutter;
@@ -257,10 +261,14 @@ private:
         vtkSmartPointer<vtkActor> headActor;
     };
     QHash<QString, vtkSmartPointer<vtkBillboardTextActor3D>> aeroLabels_;
+    QHash<QString, vtkSmartPointer<vtkBillboardTextActor3D>> motionLabels_;
     QHash<QString, QString> aeroLineVersions_;
+    QHash<QString, forcedisplay::TransformMatrix> aeroLineTransforms_;
+    QHash<QString, forcedisplay::TransformMatrix> displayElementTransforms_;
 
     void onRenderStart(vtkObject* caller, unsigned long event, void* data);
     void rebuildForceGeometry();
+    void rebuildMotionAnalysis();
     void rebuildSchematicForces();
     void rebuildCourseArrow();
     void rebuildWindArrows();

@@ -959,11 +959,13 @@ void MainWindow::updateWorkspace(int index)
     staticViewsColumn_->setVisible(simulation && attitudeViewsCheck_->isChecked());
     attitudeViewsCheck_->setVisible(simulation);
     for (auto* control : vectorControls_) control->setVisible(!simulation);
-    staticForceMenu_->setVisible(simulation);
+    displayModePanel_->setVisible(simulation);
+    staticForceMenu_->setVisible(simulation && displayModeCombo_->currentData().toInt() == 0);
     dynamicMotionPanel_->setVisible(index == 2);
     graphicsStatus_->setVisible(!simulation);
     pressureStatus_->setVisible(!simulation);
     legacyValues_->setVisible(!simulation);
+    staticValuesPanel_->setVisible(simulation);
     staticValues_->setVisible(simulation);
     scene_->setBodyFixedCamera(staticModel || cameraFrameCombo_->currentData().toBool());
     cameraCombo_->ensurePolished();
@@ -1251,6 +1253,24 @@ QWidget* MainWindow::buildDisplayPanel()
     graphicsStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(graphicsStatus_);
 
+    displayModePanel_ = new QWidget;
+    displayModePanel_->setObjectName(QStringLiteral("displayModeControls"));
+    auto* displayModeForm = new QFormLayout(displayModePanel_);
+    displayModeForm->setContentsMargins(0, 0, 0, 0);
+    displayModeCombo_ = new QComboBox;
+    displayModeCombo_->setObjectName(QStringLiteral("displayMode"));
+    displayModeCombo_->addItem(QStringLiteral("Frei (wie bisher)"), 0);
+    displayModeCombo_->addItem(QStringLiteral("Bewegungsanalyse"), 1);
+    displayModeForm->addRow(QStringLiteral("Darstellungsmodus"), displayModeCombo_);
+    layout->addWidget(displayModePanel_);
+    displayModePanel_->hide();
+    connect(displayModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+        [this](int) {
+            if (workspaceIndex_ <= 0) return;
+            staticForceMenu_->setVisible(displayModeCombo_->currentData().toInt() == 0);
+            applyDisplayOptions();
+        });
+
     staticForceMenu_ = new QWidget;
     staticForceMenu_->setObjectName(QStringLiteral("staticForceMenu"));
     auto* staticMenuLayout = new QVBoxLayout(staticForceMenu_);
@@ -1519,6 +1539,20 @@ QDockWidget* MainWindow::buildValuesDock()
     legacyLayout->addLayout(left);
     legacyLayout->addLayout(right, 1);
     layout->addWidget(legacyValues_, 1);
+    staticValuesPanel_ = new QWidget;
+    staticValuesPanel_->setObjectName(QStringLiteral("staticValuesPanel"));
+    auto* staticValuesLayout = new QVBoxLayout(staticValuesPanel_);
+    staticValuesLayout->setContentsMargins(0, 0, 0, 0);
+    staticValuesLayout->setSpacing(6);
+    motionAnalysisLabel_ = new QLabel;
+    motionAnalysisLabel_->setObjectName(QStringLiteral("motionAnalysisValues"));
+    motionAnalysisLabel_->setWordWrap(true);
+    motionAnalysisLabel_->setTextFormat(Qt::RichText);
+    motionAnalysisLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    motionAnalysisLabel_->setStyleSheet(QStringLiteral(
+        "QLabel { background: rgba(30, 48, 62, 150); padding: 8px; border-radius: 6px; }"));
+    motionAnalysisLabel_->hide();
+    staticValuesLayout->addWidget(motionAnalysisLabel_);
     staticValues_ = new QTreeWidget;
     staticValues_->setObjectName(QStringLiteral("staticForceValues"));
     auto* header = new FilterHeader(staticValues_);
@@ -1552,8 +1586,10 @@ QDockWidget* MainWindow::buildValuesDock()
     header->setFilters(staticValueFilters_);
     staticValues_->setSortingEnabled(true);
     staticValues_->sortItems(0, Qt::AscendingOrder);
-    layout->addWidget(staticValues_, 1);
+    staticValuesLayout->addWidget(staticValues_, 1);
     staticValues_->hide();
+    staticValuesPanel_->hide();
+    layout->addWidget(staticValuesPanel_, 1);
     dock->setWidget(content);
 
     connect(copyButton, &QPushButton::clicked, this, [this] { copyValues(); });
@@ -1768,6 +1804,8 @@ void MainWindow::saveDisplaySettings()
     if (!graphicsReady_ || workspaceIndex_ <= 0) return;
     QSettings settings;
     const QString mode = workspaceIndex_ == 2 ? QStringLiteral("dynamisch/") : QStringLiteral("statisch/");
+    settings.setValue(mode + QStringLiteral("darstellungsmodus"),
+        displayModeCombo_->currentData().toInt());
     settings.setValue(mode + QStringLiteral("navigation"), navigationCheck_->isChecked());
     settings.setValue(mode + QStringLiteral("lageansichten"), attitudeViewsCheck_->isChecked());
     settings.setValue(QStringLiteral("darstellung/pfeile"), forcesCheck_->isChecked());
@@ -1802,6 +1840,18 @@ void MainWindow::restoreModeDisplaySettings()
     if (!graphicsReady_ || workspaceIndex_ <= 0) return;
     QSettings settings;
     const QString mode = workspaceIndex_ == 2 ? QStringLiteral("dynamisch/") : QStringLiteral("statisch/");
+    bool displayModeOk = false;
+    int displayMode = settings.value(mode + QStringLiteral("darstellungsmodus"), 0)
+        .toInt(&displayModeOk);
+    if (!displayModeOk || displayMode < 0 || displayMode > 1) {
+        showError(QStringLiteral("Darstellungsmodus"),
+            QStringLiteral("Ungültiger gespeicherter Darstellungsmodus; verwende „Frei (wie bisher)“."));
+        displayMode = 0;
+    }
+    {
+        const QSignalBlocker blocker(displayModeCombo_);
+        displayModeCombo_->setCurrentIndex(displayMode);
+    }
     {
         const QSignalBlocker navigation(navigationCheck_), attitude(attitudeViewsCheck_);
         navigationCheck_->setChecked(settings.value(mode + QStringLiteral("navigation"),
@@ -1963,13 +2013,26 @@ void MainWindow::applyDisplayOptions(bool restoreHistory)
     }
     options.windArrows = windArrowsCheck_->isChecked();
     if (workspaceIndex_ > 0) {
-        options.forces = false;
-        options.staticForces = true;
-        options.staticStyles = staticForceStyles_;
-        options.leverArm = false;
-        options.lateralCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Lateral)].enabled;
-        options.sailCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Sail)].enabled;
-        options.courseArrow = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Direction)].enabled;
+        const bool analysis = displayModeCombo_->currentData().toInt() == 1;
+        options.motionAnalysis = analysis;
+        if (analysis) {
+            options.forces = true;
+            options.force = {true, true, true, true, true};
+            options.moment = {true, true, true, true, true};
+            options.sailForce = {true, true, true};
+            options.sailMoment = {true, true, true};
+            options.staticForces = false;
+            options.lateralCenter = true;
+            options.sailCenter = true;
+        } else {
+            options.forces = false;
+            options.staticForces = true;
+            options.staticStyles = staticForceStyles_;
+            options.leverArm = false;
+            options.lateralCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Lateral)].enabled;
+            options.sailCenter = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Sail)].enabled;
+            options.courseArrow = staticForceStyles_[static_cast<std::size_t>(forcedisplay::StaticForce::Direction)].enabled;
+        }
     }
     options.visibility = profile.throughBody ? VtkSceneWidget::Visibility::ThroughBody
                                             : VtkSceneWidget::Visibility::Spatial;
@@ -1994,6 +2057,8 @@ void MainWindow::applyDisplayOptions(bool restoreHistory)
     saveDisplaySettings();
     // Ausblenden ändert nur die Grafik; die Skala-Spalte folgt dem Skalenmodus.
     updateValues();
+    motionAnalysisLabel_->setVisible(workspaceIndex_ > 0
+        && displayModeCombo_->currentData().toInt() == 1 && hasForces_);
 }
 
 void MainWindow::updateStaticForceMenu()
@@ -3609,9 +3674,9 @@ void MainWindow::displayFetchedState(qsizetype index, const QJsonObject& state, 
                     QSet<QString> posedElements;
                     for (const auto& part : *parts) posedElements.insert(part.elementId);
                     for (const auto& elementId : posedElements) {
-                        if (!scene_->setSailGeometry(elementId, *parts, &error)) break;
+                        if (!scene_->setSailGeometry(elementId, *parts, state, &error)) break;
                         for (auto* view : staticScenes_)
-                            if (!view->setSailGeometry(elementId, *parts, &error)) break;
+                            if (!view->setSailGeometry(elementId, *parts, state, &error)) break;
                         if (!error.isEmpty()) break;
                     }
                 } catch (const std::exception& exception) {
@@ -3799,6 +3864,7 @@ void MainWindow::updateModeControls()
 void MainWindow::clearValues()
 {
     staticValues_->clear();
+    motionAnalysisLabel_->hide();
     pressureStatus_->setText(QStringLiteral("Druckpunkte: kein Ergebnis"));
     const QSignalBlocker blocker(valuesTree_);
     valuesTree_->clear();
@@ -3984,6 +4050,7 @@ void MainWindow::updateStaticValues()
 
 void MainWindow::updateValues()
 {
+    updateMotionAnalysis();
     if (!hasForces_) {
         return;
     }
@@ -4158,6 +4225,94 @@ void MainWindow::updateValues()
     }
     valuesTree_->setUpdatesEnabled(valuesUpdates);
     updateDetail();
+}
+
+void MainWindow::updateMotionAnalysis()
+{
+    const bool enabled = workspaceIndex_ > 0 && hasForces_
+        && displayModeCombo_->currentData().toInt() == 1;
+    if (!enabled) {
+        motionAnalysisLabel_->hide();
+        return;
+    }
+
+    QStringList lines;
+    lines << QStringLiteral("<b>Bewegungsanalyse · Zeit %1 s · Schritt %2</b>")
+        .arg(forcedisplay::formatFixed(currentForces_.time, 2))
+        .arg(currentForces_.step);
+    const auto vectorText = [](const forcedisplay::Vec3& vector, int decimals,
+                               const QString& unit) {
+        return QStringLiteral("[%1; %2; %3] %4")
+            .arg(forcedisplay::formatFixed(vector[0], decimals),
+                forcedisplay::formatFixed(vector[1], decimals),
+                forcedisplay::formatFixed(vector[2], decimals), unit);
+    };
+    const auto pose = largeScene_->statePose();
+    std::optional<forcedisplay::Vec3> centerWorld;
+    if (pose && currentForces_.reference) {
+        centerWorld = forcedisplay::toWorldPoint(*pose, *currentForces_.reference);
+        lines << QStringLiteral("Schwerpunkt S · Modell: %1 · Welt: %2")
+            .arg(vectorText(*currentForces_.reference, 2, QStringLiteral("m")),
+                vectorText(*centerWorld, 2, QStringLiteral("m")));
+    } else {
+        lines << QStringLiteral("Schwerpunkt S: nicht verfügbar (Pose oder Momentenbezug fehlt)");
+    }
+
+    const auto& motion = currentForces_.motion;
+    if (motion.velocityWorld) {
+        lines << QStringLiteral("v_S · Welt: %1 · %2")
+            .arg(vectorText(*motion.velocityWorld, 3, QStringLiteral("m/s")),
+                motion.velocityStatus.toHtmlEscaped());
+        if (pose)
+            lines << QStringLiteral("v_S · Modell: %1 (aus derselben Pose transformiert)")
+                .arg(vectorText(forcedisplay::toModelVector(*pose, *motion.velocityWorld),
+                    3, QStringLiteral("m/s")));
+    } else {
+        lines << QStringLiteral("v_S · Welt [m/s]: %1")
+            .arg(motion.velocityStatus.toHtmlEscaped());
+    }
+    std::optional<forcedisplay::Vec3> omegaWorld;
+    if (motion.omegaModel) {
+        lines << QStringLiteral("ω · Modell: %1 · %2")
+            .arg(vectorText(*motion.omegaModel, 4, QStringLiteral("rad/s")),
+                motion.omegaStatus.toHtmlEscaped());
+        if (pose) {
+            omegaWorld = forcedisplay::toWorldVector(*pose, *motion.omegaModel);
+            lines << QStringLiteral("ω · Welt: %1 (aus derselben Pose transformiert)")
+                .arg(vectorText(*omegaWorld, 4, QStringLiteral("rad/s")));
+        }
+    } else {
+        lines << QStringLiteral("ω · Modell [rad/s]: %1")
+            .arg(motion.omegaStatus.toHtmlEscaped());
+    }
+    lines << QStringLiteral("Schwerpunktbeschleunigung: %1")
+        .arg(motion.accelerationStatus.toHtmlEscaped());
+    lines << QStringLiteral("Winkelbeschleunigung: %1")
+        .arg(motion.angularAccelerationStatus.toHtmlEscaped());
+
+    if (centerWorld) {
+        const auto axis = forcedisplay::screwAxis(
+            *centerWorld, motion.velocityWorld, omegaWorld);
+        if (axis.axis) {
+            lines << QStringLiteral("Momentane Schraubachse · Punkt: %1 · Richtung Welt: %2")
+                .arg(vectorText(axis.axis->pointWorld, 2, QStringLiteral("m")),
+                    vectorText(axis.axis->directionWorld, 3, QString()));
+            lines << QStringLiteral("Schraubsteigung: %1 m/rad")
+                .arg(forcedisplay::formatFixed(axis.axis->pitchMetersPerRadian, 4));
+        } else {
+            lines << QStringLiteral("Schraubachse: %1").arg(axis.diagnostic.toHtmlEscaped());
+        }
+    }
+    lines << QStringLiteral(
+        "Modell- und Weltachsen sind getrennt markiert; Kinematikpfeile sind richtungsbezogen "
+        "und grafisch normiert.");
+    if (currentForces_.stationary.value(QStringLiteral("kurvenfahrt")).toBool()) {
+        lines << QStringLiteral(
+            "<b>Solvergrenze:</b> stationäre Kurvenfahrt dreht um Welt-Z; "
+            "Modellkomponenten von ω sind keine unabhängigen Roll-, Stampf- oder Gierdrehraten.");
+    }
+    motionAnalysisLabel_->setText(lines.join(QStringLiteral("<br>")));
+    motionAnalysisLabel_->show();
 }
 
 void MainWindow::updateDetail()

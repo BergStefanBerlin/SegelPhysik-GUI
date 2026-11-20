@@ -3,7 +3,7 @@
   "erweiterung_sailforce": {"stand": "2026-11-17", "status": "finalisiert", "zielversion": "G-0.25", "umsetzungsplan": "../../Umsetzungsplaene/Umsetzungsplan_G-0.25.md", "hinweis": "Auf ausdruecklichen Nutzerauftrag finalisiert. IDEE-G-00105 bis IDEE-G-00107 sind A-G-00166 bis A-G-00168 zugeordnet. SDP-Anforderung steht ausschliesslich in der bestehenden Druckpunkt-Spezifikation; Kraftanzeige, Linien und Bedienung in der bestehenden Kraftdarstellungs-Spezifikation. Umsetzung und Abnahme offen; keine Git-Aktion.", "zusaetzliche_entscheidungen": [{"anforderung": "A-G-00169", "entscheidung": "Aktivierung je Segel, zunaechst an bei expliziter Modellzuordnung; bestaetigte live-quasistatische Stellwinkel, Aktivierung erst fuer naechsten Lauf."}, {"anforderung": "A-G-00170", "entscheidung": "Settings -> Lufteigenschaften mit rho=1.225 kg/m^3 und nu=1.5e-5 m^2/s als einstellbaren Vorgaben; im Lauf konstant."}, {"anforderung": "A-G-00171", "entscheidung": "Bestehenden asynchronen Worker-/Snapshotpfad erhalten; keine GUI-Taktung der Physik, konsistente Historie und Fehlerzustaende."}, {"anforderung": "A-G-00172", "entscheidung": "Bekannte Ryzen 5 8600G/Radeon760M unter Windows, Technik 1280x720; je 420/Folkeboot/Optimist 60 s Dynamik dt=0.01 s in <=60 s Core-Wandzeit; p95 Bildabstand<=33.3 ms und Maximum<=100 ms, Segel/SDP/Overlay aktiv."}]},
   "thema": "Offene Entscheidungen zur Kraft- und Momentendarstellung in der GUI",
   "spezifikation": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md",
-  "hinweis": "Am 26.10.2026 auf Nutzerentscheidung finalisiert: Vorschläge zu allen Punkten übernommen. Übernommene Punkte verweisen auf ihre A-Kennung; zurückgestellte Punkte sind keine Anforderungen.",
+  "hinweis": "Die urspruengliche Punkterunde wurde am 26.10.2026 finalisiert. Der Nachtrag G-0.26 wurde am 20.11.2026 ausdruecklich finalisiert; IDEE-G-00108 bis IDEE-G-00110 sind den Anforderungen A-G-00173 bis A-G-00177 zugeordnet.",
   "punkte": [
     {
       "id": "IDEE-G-00008",
@@ -100,5 +100,46 @@
       "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md#3-sailforce-darstellung-und-bedienung-g-025",
       "entscheidung": "Die aerodynamische Streifeneinteilung als dezentes Linienoverlay direkt auf der bestehenden 3D-Segelflaeche darstellen. Nur die tatsaechlichen Streifen-Schnittgrenzen sichtbar machen, kein Dreiecksdrahtgitter und keine zusaetzlichen gefuellten oder eingefaerbten Streifenflaechen. Linien folgen der Segelform und aktuellen Lage; keine flackernden koplanaren Ueberlagerungen. Die vom Core gelieferten 3D-Grenzlinien und ihre Segel-/Streifenzuordnung verwenden; keine abweichende Einteilung in der GUI erzeugen. Bei der Konsistenzpruefung am 17.11.2026 wurde bestaetigt: keine zusaetzlichen Teilflaechenmeshes, unveraenderte Linien wiederverwenden und ueber dieselbe Segeltransformation darstellen."
     }
-  ]
+  ],
+  "entwurf_g_0_26": {
+    "status": "finalisiert",
+    "zielversion": "G-0.26",
+    "spezifikation": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md",
+    "umsetzungsplan": "../../Umsetzungsplaene/Umsetzungsplan_G-0.26.md",
+    "hinweis": "Am 20.11.2026 auf ausdruecklichen Nutzerauftrag finalisiert. Die IDEE-zu-A-Zuordnungen stehen bei den Punkten. Beschleunigungsdaten sind ein separates, noch zu spezifizierendes Core-Gate; die GUI berechnet sie nicht selbst.",
+    "zusaetzliche_entscheidungen": [
+      {"anforderung": "A-G-00173", "entscheidung": "Bewegungsanalyse in statischem und dynamischem Arbeitsbereich; ComboBox-Auswahl je Arbeitsbereich getrennt in QSettings speichern, beim erstmaligen Start jeweils Frei."},
+      {"anforderung": "A-G-00174", "entscheidung": "Beschleunigung und Winkelbeschleunigung in den Funktionsumfang aufnehmen. Fehlen die Core-Ergebnisdaten, ist eine separate Core-Spezifikation und Ergebnisvertragserweiterung Voraussetzung; keine GUI-Ersatzberechnung."},
+      {"anforderung": "A-G-00175", "entscheidung": "Neben Winkelgeschwindigkeit die allgemeine 3D-Schraubachse und Schraubsteigung anzeigen, wenn die Core-Daten gueltig und in ein gemeinsames Koordinatensystem transformierbar sind."}
+    ],
+    "punkte": [
+      {
+        "id": "IDEE-G-00108",
+        "status": "übernommen",
+        "uebernommen_als": "A-G-00173",
+        "thema": "ComboBox und Wechsel zwischen freier und kuratierter Darstellung",
+        "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md, Abschnitt 4 (A-G-00173)",
+        "vorschlag": "Eine ComboBox Darstellungsmodus mit den Optionen Frei (wie bisher) und Bewegungsanalyse einführen. Frei ist der Standard und erhält alle bisherigen unabhängigen Vektor-/Momentenauswahlen. Der Wechsel zur Bewegungsanalyse verändert keine Simulation oder Ergebnisdaten; freie Auswahlen bleiben erhalten und werden bei Rückkehr wiederhergestellt. Modus und Geltungsbereich der Einstellung nach der vorhandenen GUI-Einstellungsinfrastruktur festlegen.",
+        "entscheidung": "Nutzerentscheidung 20.11.2026: Die Bewegungsanalyse ist statisch und dynamisch verfuegbar. Die Modusauswahl wird fuer beide Bereiche getrennt gespeichert; ohne gespeicherten Wert gilt jeweils Frei."
+      },
+      {
+        "id": "IDEE-G-00109",
+        "status": "übernommen",
+        "uebernommen_als": ["A-G-00174", "A-G-00175", "A-G-00176"],
+        "thema": "Bewegungsanalyse aus konsistenten Core-Zustandsdaten",
+        "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md, Abschnitt 4 (A-G-00174 bis A-G-00176)",
+        "vorschlag": "In der neuen Ansicht Schwerpunkt S, Modell- und Weltbezug, Schwerpunktgeschwindigkeit, den vom Core gelieferten Winkelgeschwindigkeitsvektor sowie Kraft- und Momentenbeiträge je Quelle zeigen. Winkelgeschwindigkeit und daraus abgeleitete Achse korrekt transformieren; Angriffspunkte, Bezugspunkte, Status und Einheiten aus demselben Core-Zustand übernehmen. LDP und SDP ausschließlich als Seitenkraft-Ersatzpunkte erklären und von vollständigen Lasten und Momenten unterscheiden.",
+        "entscheidung": "Nutzerentscheidung 20.11.2026: Beschleunigung und Winkelbeschleunigung aufnehmen; falls der Core sie nicht liefert, ist eine separate Core-Spezifikation und Ergebnisvertragserweiterung Voraussetzung. Zusätzlich die allgemeine 3D-Schraubachse und Schraubsteigung aus gueltigen, gleichzeitigen Core-Geschwindigkeitsdaten darstellen."
+      },
+      {
+        "id": "IDEE-G-00110",
+        "status": "übernommen",
+        "uebernommen_als": "A-G-00177",
+        "thema": "Gültigkeitsgrenzen und solverabhängige Bewegungsdarstellung",
+        "bezug": "../Spezifikation_GUI_Kraft_und_Momentendarstellung.md, Abschnitt 4 (A-G-00174 bis A-G-00177)",
+        "vorschlag": "Keine Drehachsen, Druckpunkte, Beschleunigungen oder physikalischen Bewertungen erfinden. Schraubachse und Drehmittelpunkt nur bei gültigen Eingangsdaten und anwendbarem geometrischem Fall zeigen. Die stationäre Kurvenfahrt mit Rotation um die Weltvertikale explizit kennzeichnen, sodass mehrere Modellkomponenten nicht als unabhängige Roll-, Stampf- und Gierdrehraten missverstanden werden. Fehlende Größen begründet als nicht verfügbar kennzeichnen.",
+        "entscheidung": "Nutzerentscheidung 20.11.2026: Fehlende Core-Groessen bleiben sichtbar nicht verfuegbar, bis die getrennte Core-Erweiterung vorliegt. Statische und dynamische Resultate sowie Status muessen konsistent und solvergerecht dargestellt werden."
+      }
+    ]
+  }
 }

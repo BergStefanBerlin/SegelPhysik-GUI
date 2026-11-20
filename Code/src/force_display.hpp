@@ -18,6 +18,7 @@
 namespace forcedisplay {
 
 using Vec3 = std::array<double, 3>;
+using TransformMatrix = std::array<double, 16>;
 
 double dot(const Vec3& a, const Vec3& b);
 Vec3 cross(const Vec3& a, const Vec3& b);
@@ -25,6 +26,11 @@ double norm(const Vec3& a);
 Vec3 add(const Vec3& a, const Vec3& b);
 Vec3 sub(const Vec3& a, const Vec3& b);
 Vec3 scale(const Vec3& a, double factor);
+TransformMatrix identityTransform();
+TransformMatrix relativeTransform(const TransformMatrix& current,
+    const TransformMatrix& reference);
+Vec3 transformPoint(const TransformMatrix& transform, const Vec3& point);
+Vec3 transformVector(const TransformMatrix& transform, const Vec3& vector);
 
 // Bildschirmgrößen in logischen Pixeln (A-G-00012).
 constexpr double arrowHeadPx = 10.0;
@@ -63,6 +69,30 @@ struct Pose {
 Pose readPose(const QJsonObject& state);
 Vec3 toWorldPoint(const Pose& pose, const Vec3& modelPoint);
 Vec3 toWorldVector(const Pose& pose, const Vec3& modelVector);
+Vec3 toModelVector(const Pose& pose, const Vec3& worldVector);
+
+struct MotionState {
+    std::optional<Vec3> velocityWorld;
+    std::optional<Vec3> omegaModel;
+    QString velocityStatus;
+    QString omegaStatus;
+    QString accelerationStatus;
+    QString angularAccelerationStatus;
+};
+MotionState parseMotionState(const QJsonObject& state);
+
+struct ScrewAxis {
+    Vec3 pointWorld{};
+    Vec3 directionWorld{};
+    double pitchMetersPerRadian = 0.;
+};
+struct ScrewAxisResult {
+    std::optional<ScrewAxis> axis;
+    QString diagnostic;
+};
+ScrewAxisResult screwAxis(const Vec3& positionWorld,
+    const std::optional<Vec3>& velocityWorld,
+    const std::optional<Vec3>& omegaWorld);
 
 // --- Beiträge (V1 und V2) -----------------------------------------------
 enum class Kind { Force, Moment };
@@ -159,6 +189,7 @@ struct ForceState {
     bool testLimiterApplied = false;
     std::optional<double> courseRateRadS;
     QString courseRateStatus = QStringLiteral("Altvertrag ohne Kursdrehrate");
+    MotionState motion;
     QJsonObject stationary;
 };
 

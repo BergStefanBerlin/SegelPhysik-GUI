@@ -144,6 +144,7 @@ private:
     void showModelProblems(const QVector<ModelProblem>& problems);
     void updateValues();
     void updateStaticValues();
+    void updateMotionAnalysis();
     void filterStaticValues();
     void updateDetail();
     void selectContribution(const QString& id);
@@ -173,6 +174,8 @@ private:
     QWidget* catalogPanel_ = nullptr;
     QHBoxLayout* mainArea_ = nullptr;
     QWidget* displayPanel_ = nullptr;
+    QWidget* displayModePanel_ = nullptr;
+    QComboBox* displayModeCombo_ = nullptr;
     QScrollArea* staticDisplaySidebar_ = nullptr;
     QScrollArea* staticNavigationColumn_ = nullptr;
     QVBoxLayout* simulationControlsLayout_ = nullptr;
@@ -275,9 +278,11 @@ private:
     // Wertefenster (A-G-00016, A-G-00017)
     QDockWidget* valuesDock_ = nullptr;
     QLabel* balanceLabel_ = nullptr;
+    QLabel* motionAnalysisLabel_ = nullptr;
     QLabel* stepInfoLabel_ = nullptr;
     QTreeWidget* valuesTree_ = nullptr;
     QWidget* legacyValues_ = nullptr;
+    QWidget* staticValuesPanel_ = nullptr;
     QTreeWidget* staticValues_ = nullptr;
     std::array<QLineEdit*, 10> staticValueFilters_{};
     QLabel* detailLabel_ = nullptr;

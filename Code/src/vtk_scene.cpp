@@ -443,6 +443,44 @@ vtkSmartPointer<vtkTransform> poseTransform(const forcedisplay::Pose& pose)
     return transform;
 }
 
+forcedisplay::TransformMatrix readElementTransform(const QJsonArray& values)
+{
+    if (values.size() != 16)
+        throw std::runtime_error("Core-Elementtransformation muss eine 4x4-Matrix enthalten.");
+    forcedisplay::TransformMatrix matrix{};
+    for (qsizetype i = 0; i < 16; ++i) {
+        const auto value = values.at(i);
+        if (!value.isDouble() || !std::isfinite(value.toDouble()))
+            throw std::runtime_error("Core-Elementtransformation enthaelt keinen endlichen Wert.");
+        matrix[static_cast<std::size_t>(i)] = value.toDouble();
+    }
+    return matrix;
+}
+
+QJsonArray transformJson(const forcedisplay::TransformMatrix& matrix)
+{
+    QJsonArray values;
+    for (const auto value : matrix) values.push_back(value);
+    return values;
+}
+
+QHash<QString, forcedisplay::TransformMatrix> readElementTransforms(
+    const QJsonArray& values)
+{
+    QHash<QString, forcedisplay::TransformMatrix> result;
+    for (const auto& value : values) {
+        if (!value.isObject())
+            throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
+        const auto entry = value.toObject();
+        const auto id = entry.value(QStringLiteral("element_id")).toString();
+        const auto matrix = entry.value(QStringLiteral("matrix_zeilenweise")).toArray();
+        if (id.isEmpty() || matrix.size() != 16 || result.contains(id))
+            throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
+        result.insert(id, readElementTransform(matrix));
+    }
+    return result;
+}
+
 void applyCoreMatrix(vtkPolyData* mesh, const QJsonArray& values)
 {
     if (mesh == nullptr || values.size() != 16)
@@ -1411,6 +1449,8 @@ void VtkSceneWidget::clearModel()
     visuals_.clear();
     aeroLabels_.clear();
     aeroLineVersions_.clear();
+    aeroLineTransforms_.clear();
+    displayElementTransforms_.clear();
     arcBasis_.clear();
     scaled_.clear();
     screenShapes_.clear();
@@ -1586,8 +1626,18 @@ bool VtkSceneWidget::setModel(const QVector<DisplayPart>& parts, QString* error)
 }
 
 bool VtkSceneWidget::setSailGeometry(const QString& elementId,
-    const QVector<DisplayPart>& parts, QString* error)
+    const QVector<DisplayPart>& parts, const QJsonObject& state, QString* error)
 {
+    QHash<QString, forcedisplay::TransformMatrix> stateTransforms;
+    try {
+        const auto values = state.value(QStringLiteral("elementtransformationen_modell"));
+        if (!values.isUndefined() && !values.isArray())
+            throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
+        stateTransforms = readElementTransforms(values.toArray());
+    } catch (const std::exception& exception) {
+        if (error) *error = QString::fromUtf8(exception.what());
+        return false;
+    }
     std::vector<BodyActor*> matching;
     for (auto& body : bodies_)
         if (body.elementId == elementId) matching.push_back(&body);
@@ -1618,6 +1668,8 @@ bool VtkSceneWidget::setSailGeometry(const QString& elementId,
         matching[i]->preparation = cache;
         // Keep the mesh bound to the actors until setState installs the new one.
         matching[i]->confirmedSailGeometry = true;
+        matching[i]->confirmedSailMovement =
+            stateTransforms.value(elementId, forcedisplay::identityTransform());
     }
     return true;
 }
@@ -1640,17 +1692,12 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
         const auto velocityWorld = readStateVector(
             state, QStringLiteral("geschwindigkeit_welt_m_s"));
         const auto transform = poseTransform(pose);
-        QHash<QString, QJsonArray> elementMatrices;
-        const auto matrixValues = state.value(
-            QStringLiteral("elementtransformationen_modell")).toArray();
-        for (const auto& value : matrixValues) {
-            const auto entry = value.toObject();
-            const auto id = entry.value(QStringLiteral("element_id")).toString();
-            const auto matrix = entry.value(QStringLiteral("matrix_zeilenweise")).toArray();
-            if (id.isEmpty() || matrix.size() != 16 || elementMatrices.contains(id))
-                throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
-            elementMatrices.insert(id, matrix);
-        }
+        const auto matrixValue = state.value(QStringLiteral("elementtransformationen_modell"));
+        if (!matrixValue.isUndefined() && !matrixValue.isArray())
+            throw std::runtime_error("Core-Zustand enthaelt eine ungueltige Elementtransformation.");
+        const auto matrixValues = matrixValue.toArray();
+        const auto elementMatrices = readElementTransforms(matrixValues);
+        displayElementTransforms_.clear();
         const Vec3 waterOrigin = inverseRotate(pose,
             {-pose.position[0], -pose.position[1], -pose.position[2]});
         const Vec3 waterNormal = inverseRotate(pose, {0.0, 0.0, 1.0});
@@ -1684,8 +1731,16 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
             const auto matrix = elementMatrices.constFind(body.elementId);
             if (!matrixValues.isEmpty() && matrix == elementMatrices.cend())
                 throw std::runtime_error("Core-Zustand ohne Transformation fuer sichtbares Element.");
+            const auto currentMatrix = matrix == elementMatrices.cend()
+                ? forcedisplay::identityTransform() : matrix.value();
+            const auto displayMatrix = body.confirmedSailGeometry
+                ? forcedisplay::relativeTransform(currentMatrix, body.confirmedSailMovement)
+                : currentMatrix;
+            displayElementTransforms_.insert(body.elementId, displayMatrix);
+            const bool needsMatrix = !matrixValues.isEmpty()
+                || displayMatrix != forcedisplay::identityTransform();
             const auto prepared = prepareMesh(body.preparation,
-                matrixValues.isEmpty() || body.confirmedSailGeometry ? QJsonArray{} : matrix.value());
+                needsMatrix ? transformJson(displayMatrix) : QJsonArray{});
             if (body.prepared != prepared) {
                 body.prepared = prepared;
                 body.mesh = prepared->mesh;
@@ -1851,6 +1906,8 @@ bool VtkSceneWidget::setState(const QJsonObject& state,
 void VtkSceneWidget::clearState()
 {
     currentState_ = {};
+    displayElementTransforms_.clear();
+    for (auto& label : motionLabels_) label->VisibilityOff();
     for (auto& visual : windVisuals_) {
         visual.lineActor->VisibilityOff();
         visual.headActor->VisibilityOff();
@@ -1872,6 +1929,7 @@ void VtkSceneWidget::clearState()
             body.preparation = body.originalPreparation;
             body.originalPreparation.reset();
             body.confirmedSailGeometry = false;
+            body.confirmedSailMovement = forcedisplay::identityTransform();
         }
         body.prepared = body.preparation->base;
         body.mesh = body.prepared->mesh;
@@ -3456,6 +3514,7 @@ void VtkSceneWidget::hideForceVisuals()
     sailActor_->VisibilityOff();
     sailLabel_->VisibilityOff();
     for (auto& label : aeroLabels_) label->VisibilityOff();
+    for (auto& label : motionLabels_) label->VisibilityOff();
     pressurePoints_ = {};
 }
 
@@ -3684,7 +3743,7 @@ void VtkSceneWidget::rebuildCourseArrow()
 
 void VtkSceneWidget::rebuildSchematicForces()
 {
-    if (orthographicView_ == OrthographicView::Free && !options_.staticForces) return;
+    if (!options_.staticForces) return;
     if (!hasState_ || bodies_.empty() || inspectionMode_) return;
     const auto forceArrow = [this](const Vec3& start, const Vec3& worldForce,
                                   const QString& id, const QString& color) {
@@ -3768,6 +3827,117 @@ void VtkSceneWidget::rebuildSchematicForces()
     }
 }
 
+void VtkSceneWidget::rebuildMotionAnalysis()
+{
+    if (!options_.motionAnalysis || !hasState_ || bodies_.empty()
+        || inspectionMode_ || !forces_.reference)
+        return;
+    const Vec3 origin = forcedisplay::toWorldPoint(pose_, *forces_.reference);
+    const double perPixel = worldPerLogicalPixel(origin);
+    if (!(perPixel > 0.)) return;
+
+    const auto setLabel = [this](const QString& id, const QString& text,
+                                 const Vec3& position, const QString& color) {
+        auto& label = motionLabels_[id];
+        if (!label) {
+            label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
+            label->PickableOff();
+            forceRenderer()->AddActor(label);
+        }
+        const auto utf8 = text.toUtf8();
+        label->SetInput(utf8.constData());
+        label->SetPosition(position[0], position[1], position[2]);
+        const QColor tint(color);
+        label->GetTextProperty()->SetColor(tint.redF(), tint.greenF(), tint.blueF());
+        label->GetTextProperty()->SetFontSize(
+            static_cast<int>(13. * vtkWidget_->devicePixelRatioF()));
+        label->VisibilityOn();
+    };
+    const auto drawArrow = [this, perPixel, &setLabel](
+        const QString& id, const Vec3& start, const Vec3& direction,
+        double lengthPx, const QString& color, const QString& label, bool dashed) {
+        const double headLength = std::min(8., lengthPx * .3) * perPixel;
+        const auto arrow = forcedisplay::arrowGeometry(
+            start, direction, lengthPx * perPixel, headLength);
+        if (!arrow) return;
+        PolyBuilder lines, head;
+        if (dashed) lines.dashed(arrow->start, arrow->headBase, 4. * perPixel, 3. * perPixel);
+        else lines.segment(arrow->start, arrow->headBase);
+        head.cone(arrow->tip, arrow->direction, headLength, headLength * .4);
+        auto& visual = visualFor(id);
+        lines.storeLines(visual.lines);
+        head.storePolys(visual.head);
+        setActorColor(visual.lineActor, color);
+        setActorColor(visual.headActor, color);
+        visual.lineActor->GetProperty()->SetLineWidth(
+            static_cast<float>(2. * vtkWidget_->devicePixelRatioF()));
+        visual.lineActor->VisibilityOn();
+        visual.headActor->VisibilityOn();
+        setLabel(id, label, arrow->tip, color);
+    };
+    const auto& axes = std::array<Vec3, 3>{{{1., 0., 0.}, {0., 1., 0.}, {0., 0., 1.}}};
+    const std::array<QString, 3> axisNames{
+        QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+    const std::array<QString, 3> axisColors{
+        QStringLiteral("#ff6b6b"), QStringLiteral("#69db7c"), QStringLiteral("#74c0fc")};
+
+    vtkNew<vtkPoints> centerPoints;
+    centerPoints->SetDataTypeToDouble();
+    const auto centerId = centerPoints->InsertNextPoint(origin.data());
+    vtkNew<vtkCellArray> centerVertices;
+    centerVertices->InsertNextCell(1, &centerId);
+    auto& centerVisual = visualFor(QStringLiteral("motion:center"));
+    centerVisual.lines->Initialize();
+    centerVisual.lines->SetPoints(centerPoints);
+    centerVisual.lines->SetVerts(centerVertices);
+    setActorColor(centerVisual.lineActor, QStringLiteral("#f8f9fa"));
+    centerVisual.lineActor->GetProperty()->SetPointSize(
+        static_cast<float>(10. * vtkWidget_->devicePixelRatioF()));
+    centerVisual.lineActor->GetProperty()->RenderPointsAsSpheresOn();
+    centerVisual.lineActor->VisibilityOn();
+    setLabel(QStringLiteral("motion:center"), QStringLiteral("S"), origin,
+        QStringLiteral("#f8f9fa"));
+
+    for (std::size_t i = 0; i < axes.size(); ++i) {
+        const auto suffix = axisNames[i];
+        drawArrow(QStringLiteral("motion:world:") + suffix, origin, axes[i],
+            34., axisColors[i], QStringLiteral("W-%1").arg(suffix), false);
+        drawArrow(QStringLiteral("motion:model:") + suffix, origin,
+            forcedisplay::toWorldVector(pose_, axes[i]), 52., axisColors[i],
+            QStringLiteral("M-%1").arg(suffix), true);
+    }
+
+    if (forces_.motion.velocityWorld)
+        drawArrow(QStringLiteral("motion:velocity"), origin,
+            *forces_.motion.velocityWorld, 68., QStringLiteral("#42d9ff"),
+            QStringLiteral("v_S"), false);
+
+    std::optional<Vec3> omegaWorld;
+    if (forces_.motion.omegaModel) {
+        omegaWorld = forcedisplay::toWorldVector(pose_, *forces_.motion.omegaModel);
+        drawArrow(QStringLiteral("motion:omega"), origin, *omegaWorld, 54.,
+            QStringLiteral("#d0a4ff"), QStringLiteral("ω"), false);
+    }
+    if (!forces_.motion.velocityWorld || !omegaWorld) return;
+    const auto axis = forcedisplay::screwAxis(
+        origin, forces_.motion.velocityWorld, omegaWorld);
+    if (!axis.axis) return;
+    const double span = std::isfinite(sceneSpan_) && sceneSpan_ > 0. ? sceneSpan_ : 1.;
+    const Vec3 extent = forcedisplay::scale(axis.axis->directionWorld, .75 * span);
+    const Vec3 start = forcedisplay::sub(axis.axis->pointWorld, extent);
+    const Vec3 end = forcedisplay::add(axis.axis->pointWorld, extent);
+    PolyBuilder axisLine;
+    axisLine.segment(start, end);
+    auto& axisVisual = visualFor(QStringLiteral("motion:screw-axis"));
+    axisLine.storeLines(axisVisual.lines);
+    setActorColor(axisVisual.lineActor, QStringLiteral("#ffe066"));
+    axisVisual.lineActor->GetProperty()->SetLineWidth(
+        static_cast<float>(3. * vtkWidget_->devicePixelRatioF()));
+    axisVisual.lineActor->VisibilityOn();
+    setLabel(QStringLiteral("motion:screw-axis"), QStringLiteral("Schraubachse"),
+        end, QStringLiteral("#ffe066"));
+}
+
 void VtkSceneWidget::rebuildForceGeometry()
 {
     hideForceVisuals();
@@ -3814,11 +3984,17 @@ void VtkSceneWidget::rebuildForceGeometry()
             const auto id = QStringLiteral("aero:linien:") + sail.elementId;
             auto& visual = visualFor(id);
             const auto version = QString::number(aero.revision) + QLatin1Char(':') + sail.sourceVersion;
-            if (aeroLineVersions_.value(id) != version) {
+            const auto elementTransform = displayElementTransforms_.value(
+                sail.elementId, forcedisplay::identityTransform());
+            if (aeroLineVersions_.value(id) != version
+                || !aeroLineTransforms_.contains(id)
+                || aeroLineTransforms_.value(id) != elementTransform) {
                 PolyBuilder lines;
                 for (const auto& line : sail.boundaryLines) lines.polyline(line);
                 lines.storeLines(visual.lines);
+                applyCoreMatrix(visual.lines, transformJson(elementTransform));
                 aeroLineVersions_.insert(id, version);
+                aeroLineTransforms_.insert(id, elementTransform);
             }
             visual.lineActor->SetUserTransform(poseTransform(pose_));
             setActorColor(visual.lineActor, QStringLiteral("#9ac5b9"));
@@ -3867,7 +4043,8 @@ void VtkSceneWidget::rebuildForceGeometry()
             marker(*forces_.sailCenter->position, true);
     }
     rebuildSchematicForces();
-    if ((!options_.forces && !forces_.aero) || !hasState_ || bodies_.empty()) {
+    if ((!options_.forces && !forces_.aero && !options_.motionAnalysis)
+        || !hasState_ || bodies_.empty()) {
         return;
     }
     const double ratio = vtkWidget_->devicePixelRatioF();
@@ -4027,6 +4204,7 @@ void VtkSceneWidget::rebuildForceGeometry()
             break;
         }
     }
+    rebuildMotionAnalysis();
 }
 
 QString VtkSceneWidget::pickInspectionElement(const QPoint& position) const

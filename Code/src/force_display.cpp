@@ -89,6 +89,46 @@ double segmentDistance(const QPointF& a, const QPointF& b, const QPointF& p)
     return std::sqrt(ex * ex + ey * ey);
 }
 
+TransformMatrix inverseRigidTransform(const TransformMatrix& matrix)
+{
+    constexpr double tolerance = 1e-8;
+    for (const auto value : matrix) {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("Elementtransformation enthält keinen endlichen Wert.");
+    }
+    if (std::abs(matrix[12]) > tolerance || std::abs(matrix[13]) > tolerance
+        || std::abs(matrix[14]) > tolerance || std::abs(matrix[15] - 1.) > tolerance)
+        throw std::invalid_argument("Elementtransformation ist keine affine Starrkörpertransformation.");
+
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t other = 0; other < 3; ++other) {
+            double product = 0.;
+            for (std::size_t column = 0; column < 3; ++column)
+                product += matrix[row * 4 + column] * matrix[other * 4 + column];
+            const double expected = row == other ? 1. : 0.;
+            if (std::abs(product - expected) > tolerance)
+                throw std::invalid_argument("Elementtransformation enthält keine orthogonale Drehung.");
+        }
+    }
+    const double determinant =
+        matrix[0] * (matrix[5] * matrix[10] - matrix[6] * matrix[9])
+        - matrix[1] * (matrix[4] * matrix[10] - matrix[6] * matrix[8])
+        + matrix[2] * (matrix[4] * matrix[9] - matrix[5] * matrix[8]);
+    if (std::abs(determinant - 1.) > tolerance)
+        throw std::invalid_argument("Elementtransformation enthält keine positiv orientierte Drehung.");
+
+    TransformMatrix inverse = {
+        matrix[0], matrix[4], matrix[8], 0.,
+        matrix[1], matrix[5], matrix[9], 0.,
+        matrix[2], matrix[6], matrix[10], 0.,
+        0., 0., 0., 1.};
+    for (std::size_t row = 0; row < 3; ++row)
+        inverse[row * 4 + 3] = -(inverse[row * 4] * matrix[3]
+            + inverse[row * 4 + 1] * matrix[7]
+            + inverse[row * 4 + 2] * matrix[11]);
+    return inverse;
+}
+
 } // namespace
 
 double dot(const Vec3& a, const Vec3& b)
@@ -120,6 +160,57 @@ Vec3 sub(const Vec3& a, const Vec3& b)
 Vec3 scale(const Vec3& a, double factor)
 {
     return {a[0] * factor, a[1] * factor, a[2] * factor};
+}
+
+TransformMatrix identityTransform()
+{
+    return {1., 0., 0., 0.,
+        0., 1., 0., 0.,
+        0., 0., 1., 0.,
+        0., 0., 0., 1.};
+}
+
+TransformMatrix relativeTransform(const TransformMatrix& current,
+    const TransformMatrix& reference)
+{
+    (void)inverseRigidTransform(current);
+    const auto inverseReference = inverseRigidTransform(reference);
+    TransformMatrix result{};
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            for (std::size_t k = 0; k < 4; ++k)
+                result[row * 4 + column] +=
+                    current[row * 4 + k] * inverseReference[k * 4 + column];
+        }
+    }
+    for (const auto value : result) {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("Relative Elementbewegung ist numerisch ungültig.");
+    }
+    return result;
+}
+
+Vec3 transformPoint(const TransformMatrix& transform, const Vec3& point)
+{
+    Vec3 result{};
+    for (std::size_t row = 0; row < 3; ++row) {
+        result[row] = transform[row * 4] * point[0]
+            + transform[row * 4 + 1] * point[1]
+            + transform[row * 4 + 2] * point[2]
+            + transform[row * 4 + 3];
+    }
+    return result;
+}
+
+Vec3 transformVector(const TransformMatrix& transform, const Vec3& vector)
+{
+    Vec3 result{};
+    for (std::size_t row = 0; row < 3; ++row) {
+        result[row] = transform[row * 4] * vector[0]
+            + transform[row * 4 + 1] * vector[1]
+            + transform[row * 4 + 2] * vector[2];
+    }
+    return result;
 }
 
 // --- Skalierung ------------------------------------------------------------
@@ -210,6 +301,63 @@ Vec3 toWorldPoint(const Pose& pose, const Vec3& p)
     return add(toWorldVector(pose, p), pose.position);
 }
 
+Vec3 toModelVector(const Pose& pose, const Vec3& worldVector)
+{
+    Pose inverse;
+    inverse.quaternionXyzw = pose.quaternionXyzw;
+    for (std::size_t i = 0; i < 3; ++i) inverse.quaternionXyzw[i] *= -1.;
+    return toWorldVector(inverse, worldVector);
+}
+
+MotionState parseMotionState(const QJsonObject& state)
+{
+    MotionState motion;
+    motion.velocityWorld = readOptionalVector(
+        state.value(QStringLiteral("geschwindigkeit_welt_m_s")),
+        QStringLiteral("geschwindigkeit_welt_m_s"));
+    motion.omegaModel = readOptionalVector(
+        state.value(QStringLiteral("omega_modell_rad_s")),
+        QStringLiteral("omega_modell_rad_s"));
+    motion.velocityStatus = motion.velocityWorld
+        ? QStringLiteral("Core-Feld vorhanden; kein separates Statusfeld geliefert")
+        : QStringLiteral("nicht verfügbar: geschwindigkeit_welt_m_s fehlt im Snapshot");
+    motion.omegaStatus = motion.omegaModel
+        ? QStringLiteral("Core-Feld vorhanden; kein separates Statusfeld geliefert")
+        : QStringLiteral("nicht verfügbar: omega_modell_rad_s fehlt im Snapshot");
+    motion.accelerationStatus = QStringLiteral(
+        "nicht verfügbar: separates Core-Ergebnisfeld und Core-Gate fehlen");
+    motion.angularAccelerationStatus = QStringLiteral(
+        "nicht verfügbar: separates Core-Ergebnisfeld und Core-Gate fehlen");
+    return motion;
+}
+
+ScrewAxisResult screwAxis(const Vec3& positionWorld,
+    const std::optional<Vec3>& velocityWorld,
+    const std::optional<Vec3>& omegaWorld)
+{
+    if (!velocityWorld) return {std::nullopt, QStringLiteral("Schwerpunktgeschwindigkeit fehlt")};
+    if (!omegaWorld) return {std::nullopt, QStringLiteral("Winkelgeschwindigkeit fehlt")};
+    const auto finite = [](const Vec3& vector) {
+        return std::all_of(vector.cbegin(), vector.cend(),
+            [](double value) { return std::isfinite(value); });
+    };
+    if (!finite(positionWorld) || !finite(*velocityWorld) || !finite(*omegaWorld))
+        return {std::nullopt, QStringLiteral("Eingabe enthält ungültige Werte")};
+    const double omegaMagnitude = std::hypot((*omegaWorld)[0],
+        (*omegaWorld)[1], (*omegaWorld)[2]);
+    if (!std::isfinite(omegaMagnitude))
+        return {std::nullopt, QStringLiteral("Winkelgeschwindigkeit ist numerisch ungültig")};
+    if (omegaMagnitude == 0.)
+        return {std::nullopt, QStringLiteral("keine Drehung: Winkelgeschwindigkeit ist null")};
+    const Vec3 direction = scale(*omegaWorld, 1. / omegaMagnitude);
+    const Vec3 offset = scale(cross(direction, *velocityWorld), 1. / omegaMagnitude);
+    const double pitch = dot(direction, *velocityWorld) / omegaMagnitude;
+    const Vec3 point = add(positionWorld, offset);
+    if (!finite(point) || !std::isfinite(pitch))
+        return {std::nullopt, QStringLiteral("Schraubachse ist numerisch nicht darstellbar")};
+    return {ScrewAxis{point, direction, pitch}, QStringLiteral("gültig")};
+}
+
 // --- Beiträge --------------------------------------------------------------
 
 ForceState parseForceState(const QJsonObject& object)
@@ -221,6 +369,7 @@ ForceState parseForceState(const QJsonObject& object)
     state.step = static_cast<qint64>(object.value(QStringLiteral("schritt")).toDouble());
     state.status = object.value(QStringLiteral("status")).toString();
     state.diagnostic = object.value(QStringLiteral("diagnose")).toString();
+    state.motion = parseMotionState(object);
     state.reference = readOptionalVector(
         object.value(QStringLiteral("moment_bezug_modell_m")),
         QStringLiteral("moment_bezug_modell_m"));

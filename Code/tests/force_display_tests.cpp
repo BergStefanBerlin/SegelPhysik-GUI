@@ -105,6 +105,97 @@ void testPoseAndArrow()
     require(!arrowGeometry({0, 0, 0}, {0, 0, 0}, 2.0, 0.5), "Null vector produced an arrow.");
 }
 
+void testRelativeElementTransform()
+{
+    const auto rotation = [](double degrees, double xTranslation) {
+        const double angle = degrees * std::acos(-1.) / 180.;
+        return TransformMatrix{
+            std::cos(angle), -std::sin(angle), 0., xTranslation,
+            std::sin(angle), std::cos(angle), 0., 0.,
+            0., 0., 1., 0.,
+            0., 0., 0., 1.};
+    };
+    const auto baseline = rotation(30., 0.);
+    const auto current = rotation(90., 2.);
+    const auto delta = relativeTransform(current, baseline);
+    require(nearVec(transformPoint(delta, {1, 0, 0}), {2.5, std::sqrt(3.) / 2., 0.}),
+        "Relative element transform must move preview points from their baseline pose.");
+    require(nearVec(transformVector(delta, {1, 0, 0}), {.5, std::sqrt(3.) / 2., 0.}),
+        "Relative element transform must rotate vectors without translating them.");
+    require(nearVec(transformPoint(relativeTransform(baseline, baseline), {1, 2, 3}),
+            {1, 2, 3}),
+        "An unchanged element pose must preserve the confirmed sail geometry.");
+
+    const auto aroundPivot = [](double degrees, const Vec3& pivot) {
+        const double angle = degrees * std::acos(-1.) / 180.;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        return TransformMatrix{
+            cosine, -sine, 0., pivot[0] - cosine * pivot[0] + sine * pivot[1],
+            sine, cosine, 0., pivot[1] - sine * pivot[0] - cosine * pivot[1],
+            0., 0., 1., 0.,
+            0., 0., 0., 1.};
+    };
+    const Vec3 pivot{.85, -.4, 1.35};
+    const auto pivotDelta = relativeTransform(aroundPivot(90., pivot),
+        aroundPivot(30., pivot));
+    require(nearVec(transformPoint(pivotDelta, pivot), pivot),
+        "Relative sail movement must preserve the Core-defined rotation pivot.");
+
+    bool rejected = false;
+    try {
+        auto invalid = identityTransform();
+        invalid[0] = 2.;
+        (void)relativeTransform(current, invalid);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "Non-rigid reference element transforms must be rejected.");
+}
+
+void testMotionAnalysis()
+{
+    const double s = std::sqrt(0.5);
+    const auto pose = readPose(parse(
+        R"({"position_m":[1,2,3],"orientierung_xyzw":[0,0,0.7071067811865476,0.7071067811865476]})"));
+    require(nearVec(toModelVector(pose, {0, 1, 0}), {1, 0, 0}),
+        "World vector must transform into the model frame.");
+    require(near(pose.quaternionXyzw[3], s), "Motion pose must use the normalized Core quaternion.");
+
+    const auto motion = parseMotionState(parse(
+        R"({"geschwindigkeit_welt_m_s":[1,2,3],"omega_modell_rad_s":[0,0,0.5]})"));
+    require(motion.velocityWorld && nearVec(*motion.velocityWorld, {1, 2, 3}),
+        "World velocity must be read from the Core snapshot.");
+    require(motion.omegaModel && nearVec(*motion.omegaModel, {0, 0, .5}),
+        "Model angular velocity must be read from the Core snapshot.");
+    require(motion.velocityStatus.contains(QStringLiteral("kein separates Statusfeld"))
+        && motion.accelerationStatus.contains(QStringLiteral("Core-Ergebnisfeld")),
+        "Missing Core status and acceleration fields must remain explicit.");
+    const auto missing = parseMotionState({});
+    require(!missing.velocityWorld && !missing.omegaModel
+        && missing.velocityStatus.contains(QStringLiteral("fehlt")),
+        "Missing kinematic fields must not become zero vectors.");
+
+    const auto pureTranslation = screwAxis({0, 0, 0}, Vec3{1, 0, 0}, Vec3{0, 0, 0});
+    require(!pureTranslation.axis
+        && pureTranslation.diagnostic.contains(QStringLiteral("keine Drehung")),
+        "Pure translation must not invent a screw axis.");
+    const auto pureRotation = screwAxis({1, 2, 3}, Vec3{0, 0, 0}, Vec3{0, 0, 2});
+    require(pureRotation.axis && nearVec(pureRotation.axis->pointWorld, {1, 2, 3})
+        && nearVec(pureRotation.axis->directionWorld, {0, 0, 1})
+        && near(pureRotation.axis->pitchMetersPerRadian, 0.),
+        "Pure rotation must place the screw axis through S with zero pitch.");
+    const auto combined = screwAxis({0, 0, 0}, Vec3{-2, 4, 6}, Vec3{0, 0, 2});
+    require(combined.axis && nearVec(combined.axis->pointWorld, {-2, -1, 0})
+        && nearVec(combined.axis->directionWorld, {0, 0, 1})
+        && near(combined.axis->pitchMetersPerRadian, 3.),
+        "Combined motion must follow the screw-axis and pitch formulas.");
+    const auto missingOmega = screwAxis({0, 0, 0}, Vec3{1, 0, 0}, std::nullopt);
+    require(!missingOmega.axis
+        && missingOmega.diagnostic.contains(QStringLiteral("Winkelgeschwindigkeit fehlt")),
+        "Missing angular velocity must suppress the screw axis with a reason.");
+}
+
 void testArc()
 {
     const Vec3 center{1, 1, 1};
@@ -764,6 +855,8 @@ int main()
         testStaticResultants();
         testScale();
         testPoseAndArrow();
+        testRelativeElementTransform();
+        testMotionAnalysis();
         testArc();
         testCourseArrow();
         testLeverArm();

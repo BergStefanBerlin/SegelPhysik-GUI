@@ -2476,6 +2476,83 @@ void testBoatInspection(const QString& models, const QDir& evidence, QJsonObject
     report.insert(QStringLiteral("boatInspectionTreesMeshesValuesFixedSnapshotAndLayout"), true);
 }
 
+void testDisplayModes(MainWindow& window, VtkSceneWidget& scene, QJsonObject& report)
+{
+    auto* tabs = window.findChild<QTabBar*>(QStringLiteral("workspaceTabs"));
+    auto* mode = window.findChild<QComboBox*>(QStringLiteral("displayMode"));
+    auto* modePanel = window.findChild<QWidget*>(QStringLiteral("displayModeControls"));
+    auto* staticMenu = window.findChild<QWidget*>(QStringLiteral("staticForceMenu"));
+    auto* vectors = window.findChild<QCheckBox*>(QStringLiteral("displayVectors"));
+    require(tabs && mode && modePanel && staticMenu && vectors,
+        "display mode controls exist");
+    const auto sameSelection = [](const VtkSceneWidget::VectorSelection& a,
+                                  const VtkSceneWidget::VectorSelection& b) {
+        return a.weightTotal == b.weightTotal && a.weightParts == b.weightParts
+            && a.buoyancyTotal == b.buoyancyTotal
+            && a.buoyancyParts == b.buoyancyParts && a.sum == b.sum;
+    };
+
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    require(modePanel->isVisible() && mode->currentData().toInt() == 0
+        && staticMenu->isVisible(), "static workspace defaults to free display mode");
+    const auto freeOptions = scene.options();
+    const bool freeVectors = vectors->isChecked();
+    mode->setCurrentIndex(1);
+    QApplication::processEvents();
+    require(scene.options().motionAnalysis && scene.options().forces
+        && !scene.options().staticForces && !staticMenu->isVisible(),
+        "analysis mode enables source forces, moments and kinematic overlays");
+    mode->setCurrentIndex(0);
+    QApplication::processEvents();
+    require(!scene.options().motionAnalysis && scene.options().staticForces
+        && staticMenu->isVisible() && vectors->isChecked() == freeVectors
+        && sameSelection(scene.options().force, freeOptions.force)
+        && sameSelection(scene.options().moment, freeOptions.moment),
+        "returning to free mode preserves existing independent selections");
+
+    mode->setCurrentIndex(1);
+    tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 0 && !scene.options().motionAnalysis,
+        "dynamic workspace retains its independent free-mode default");
+    mode->setCurrentIndex(1);
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 1 && scene.options().motionAnalysis,
+        "static mode choice is restored independently after workspace switching");
+    tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 1 && scene.options().motionAnalysis,
+        "dynamic analysis choice persists independently");
+
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 1 && scene.options().motionAnalysis,
+        "static workspace retains its analysis choice while dynamic is changed");
+    mode->setCurrentIndex(0);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 0 && !scene.options().motionAnalysis,
+        "static workspace can restore free mode without changing dynamic mode");
+    tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 1 && scene.options().motionAnalysis,
+        "switching static back to free leaves dynamic analysis unchanged");
+    mode->setCurrentIndex(0);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 0 && !scene.options().motionAnalysis,
+        "dynamic workspace returns to its saved free mode");
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    require(mode->currentData().toInt() == 0 && !scene.options().motionAnalysis,
+        "display-mode regression leaves the stationary workspace in free mode");
+    tabs->setCurrentIndex(0);
+    QApplication::processEvents();
+    require(!modePanel->isVisible(),
+        "display-mode controls stay hidden in boat selection");
+    report.insert(QStringLiteral("independentMotionAnalysisModesAndFreeSelections"), true);
+}
+
 void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& report)
 {
     require(evidence.mkpath(QStringLiteral("gui-test-settings")), "isolated GUI settings directory");
@@ -2526,6 +2603,7 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
             candidate && candidate->objectName() == QStringLiteral("simulationScene")) scene = candidate;
     }
     require(scene != nullptr, "MainWindow scene absent");
+    testDisplayModes(window, *scene, report);
     testWorkspaceTabs(window, *scene, evidence, report);
     auto* navigationColumn = window.findChild<QScrollArea*>(QStringLiteral("staticNavigationColumn"));
     auto* overlay = navigationColumn->findChild<QWidget*>(QStringLiteral("navigationOverlay"));
@@ -2585,6 +2663,20 @@ void testMainWindow(const QString& models, const QDir& evidence, QJsonObject& re
     require(scene->courseArrowGeometry().has_value(),
         "Zero-rate static result must render the straight direction arrow like Frei.");
     testStaticViews(window, *scene);
+    auto* displayMode = window.findChild<QComboBox*>(QStringLiteral("displayMode"));
+    auto* analysisValues = window.findChild<QLabel*>(QStringLiteral("motionAnalysisValues"));
+    require(displayMode && analysisValues, "motion analysis output controls exist");
+    displayMode->setCurrentIndex(1);
+    QApplication::processEvents();
+    scene->renderNow();
+    require(analysisValues->isVisible()
+        && analysisValues->text().contains(QStringLiteral("Schwerpunkt S"))
+        && analysisValues->text().contains(QStringLiteral("Core-Ergebnisfeld")),
+        "stationary snapshot shows kinematics and explicitly unavailable accelerations");
+    displayMode->setCurrentIndex(0);
+    QApplication::processEvents();
+    require(!analysisValues->isVisible(),
+        "leaving motion analysis hides its values without changing the displayed result");
     navigationCheck->setChecked(false);
     scene->renderNow();
     require(scene->courseArrowGeometry().has_value(),
@@ -4089,23 +4181,84 @@ void runGroupMovementInspectionTests(const QString& sourceRoot)
         const auto parts = toDisplayParts(pose->meshes);
         VtkSceneWidget staticScene;
         QString error;
-        const auto modelParts = toDisplayParts(segelphysik::darstellungsgeometrie(
+        auto modelParts = toDisplayParts(segelphysik::darstellungsgeometrie(
             *catalog, entry->modell_id, entry->modell_fassung));
-        require(staticScene.setModel(modelParts, &error),
-            qPrintable(error));
-        for (const auto& id : {QStringLiteral("Mainsail"), QStringLiteral("Boom")})
-            require(staticScene.setSailGeometry(id, parts, &error), qPrintable(error));
+        for (auto& part : modelParts) {
+            if (part.elementId == QStringLiteral("Mainsail")
+                || part.elementId == QStringLiteral("Boom"))
+                part.surface = DisplayPart::Surface::Invisible;
+        }
+        QJsonArray elementMatrices;
+        QSet<QString> elementIds;
+        const auto identity = forcedisplay::identityTransform();
+        for (const auto& part : modelParts) {
+            if (part.elementId.isEmpty() || elementIds.contains(part.elementId)) continue;
+            elementIds.insert(part.elementId);
+            QJsonArray matrix;
+            for (const auto value : identity) matrix.push_back(value);
+            elementMatrices.push_back(QJsonObject{
+                {QStringLiteral("element_id"), part.elementId},
+                {QStringLiteral("matrix_zeilenweise"), matrix}});
+        }
         const QJsonObject state{
             {QStringLiteral("zeit_s"), 0.0},
             {QStringLiteral("position_m"), QJsonArray{0., 0., 0.}},
             {QStringLiteral("orientierung_xyzw"), QJsonArray{0., 0., 0., 1.}},
             {QStringLiteral("geschwindigkeit_welt_m_s"), QJsonArray{0., 0., 0.}},
-            {QStringLiteral("moment_bezug_modell_m"), QJsonArray{0., 0., 0.}}};
+            {QStringLiteral("moment_bezug_modell_m"), QJsonArray{0., 0., 0.}},
+            {QStringLiteral("elementtransformationen_modell"), elementMatrices}};
+        require(staticScene.setModel(modelParts, &error),
+            qPrintable(error));
+        for (const auto& id : {QStringLiteral("Mainsail"), QStringLiteral("Boom")})
+            require(staticScene.setSailGeometry(id, parts, state, &error), qPrintable(error));
+        auto displayOptions = staticScene.options();
+        displayOptions.aeroBoundaries = true;
+        staticScene.setOptions(displayOptions);
+        forcedisplay::ForceState forceState;
+        forcedisplay::AeroResult aero;
+        aero.revision = 1;
+        forcedisplay::AeroSail sail;
+        sail.elementId = QStringLiteral("Mainsail");
+        sail.sourceVersion = QStringLiteral("movement-fixture");
+        sail.boundaryLines = {{{0.85, 0., 1.35}, {1.4, 0., 2.1}}};
+        aero.sails.push_back(sail);
+        forceState.aero = aero;
+        staticScene.resize(800, 600);
+        staticScene.show();
+        QApplication::processEvents();
         // The static result builds the motion history before installing the state.
         require(staticScene.appendMotionStates({state}, &error), qPrintable(error));
-        require(staticScene.setState(state, {}, &error), qPrintable(error));
+        require(staticScene.setState(state, forceState, &error), qPrintable(error));
         require(staticScene.motionStateCount() == 1 && staticScene.displayedState() == state,
             "static result with a moved sail group is displayed");
+        staticScene.renderNow();
+        const auto initialImage = digest(staticScene.captureImage());
+        auto movedState = state;
+        auto movedMatrices = elementMatrices;
+        const double angle = std::acos(-1.) / 6.;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double pivotX = 0.8507067519354837;
+        const double pivotY = 0.;
+        const QJsonArray rotation{
+            cosine, -sine, 0., pivotX - cosine * pivotX + sine * pivotY,
+            sine, cosine, 0., pivotY - sine * pivotX - cosine * pivotY,
+            0., 0., 1., 0., 0., 0., 0., 1.};
+        for (qsizetype i = 0; i < movedMatrices.size(); ++i) {
+            auto elementMatrixEntry = movedMatrices.at(i).toObject();
+            const auto id = elementMatrixEntry.value(QStringLiteral("element_id")).toString();
+            if (id == QStringLiteral("Mainsail") || id == QStringLiteral("Boom"))
+                elementMatrixEntry.insert(QStringLiteral("matrix_zeilenweise"), rotation);
+            movedMatrices.replace(i, elementMatrixEntry);
+        }
+        movedState.insert(QStringLiteral("elementtransformationen_modell"), movedMatrices);
+        const auto initialMeshPreparations = staticScene.workCounters().meshPreparations;
+        require(staticScene.setState(movedState, forceState, &error), qPrintable(error));
+        require(staticScene.workCounters().meshPreparations > initialMeshPreparations,
+            "confirmed sail mesh did not apply the relative Core element movement");
+        staticScene.renderNow();
+        require(digest(staticScene.captureImage()) != initialImage,
+            "confirmed sail geometry and its strip boundaries must follow Core element motion");
     }
     BoatInspection widget;
     widget.resize(1000, 700);
